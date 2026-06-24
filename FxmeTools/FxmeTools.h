@@ -41,9 +41,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/RmsMeter.h"
 #include "dsp/SignalGenerator.h"
 
-// Components (real-time analyzer display, SPL meter bar)
+// Components (real-time analyzer display, SPL meter bar, help button)
 #include "components/SpectrumDisplay.h"
 #include "components/SplMeterComponent.h"
+#include "components/InfoButton.h"
 
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.
 // Include it directly (<FxmeTools/dsp/FirFilter.h>) where needed.
