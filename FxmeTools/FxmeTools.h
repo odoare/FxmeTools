@@ -39,11 +39,13 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/SpectrumTap.h"
 #include "dsp/SpectrumAnalyzer.h"
 #include "dsp/RmsMeter.h"
+#include "dsp/VuMeter.h"
 #include "dsp/SignalGenerator.h"
 
-// Components (real-time analyzer display, SPL meter bar, help button)
+// Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
 #include "components/SplMeterComponent.h"
+#include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
 
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.

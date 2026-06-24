@@ -56,8 +56,62 @@ struct BiquadCoeffs
         return c;
     }
 
+    /** Low-shelf: boosts/cuts gainDb below freq (RBJ cookbook lowShelf, slope
+        S = 1, so there is no Q parameter — matches the legacy EQ behaviour). */
+    static BiquadCoeffs lowShelf (double sr, float freq, float gainDb)
+    {
+        return shelf (sr, freq, gainDb, true);
+    }
+
+    /** High-shelf: boosts/cuts gainDb above freq (RBJ cookbook highShelf,
+        slope S = 1). */
+    static BiquadCoeffs highShelf (double sr, float freq, float gainDb)
+    {
+        return shelf (sr, freq, gainDb, false);
+    }
+
 private:
     enum class Shape { lp, hp, bp };
+
+    /** Shared RBJ shelving filter (slope S = 1). `low` selects low vs high. */
+    static BiquadCoeffs shelf (double sr, float freq, float gainDb, bool low)
+    {
+        BiquadCoeffs c;
+        const double f = std::fmin ((double) freq, 0.49 * sr);
+        const double A = std::pow (10.0, (double) gainDb / 40.0);
+        const double w0 = 2.0 * 3.14159265358979323846 * f / sr;
+        const double cw = std::cos (w0), sw = std::sin (w0);
+        // S = 1  ->  alpha = sin(w0)/2 * sqrt(2).
+        const double alpha = sw * 0.5 * std::sqrt (2.0);
+        const double tsa = 2.0 * std::sqrt (A) * alpha;
+
+        double b0, b1, b2, a0, a1, a2;
+        if (low)
+        {
+            b0 =        A * ((A + 1.0) - (A - 1.0) * cw + tsa);
+            b1 =  2.0 * A * ((A - 1.0) - (A + 1.0) * cw);
+            b2 =        A * ((A + 1.0) - (A - 1.0) * cw - tsa);
+            a0 =            (A + 1.0) + (A - 1.0) * cw + tsa;
+            a1 = -2.0 *     ((A - 1.0) + (A + 1.0) * cw);
+            a2 =            (A + 1.0) + (A - 1.0) * cw - tsa;
+        }
+        else
+        {
+            b0 =        A * ((A + 1.0) + (A - 1.0) * cw + tsa);
+            b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cw);
+            b2 =        A * ((A + 1.0) + (A - 1.0) * cw - tsa);
+            a0 =            (A + 1.0) - (A - 1.0) * cw + tsa;
+            a1 =  2.0 *     ((A - 1.0) - (A + 1.0) * cw);
+            a2 =            (A + 1.0) - (A - 1.0) * cw - tsa;
+        }
+
+        c.b0 = (float) (b0 / a0);
+        c.b1 = (float) (b1 / a0);
+        c.b2 = (float) (b2 / a0);
+        c.a1 = (float) (a1 / a0);
+        c.a2 = (float) (a2 / a0);
+        return c;
+    }
 
     static BiquadCoeffs fromRbj (double sr, float freq, float q, Shape shape)
     {
