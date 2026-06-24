@@ -2,7 +2,7 @@
 BEGIN_JUCE_MODULE_DECLARATION
   ID:               FxmeTools
   vendor:           odoare
-  version:          0.0.1
+  version:          0.0.2
   name:             FX-Mechanics shared C++ audio tools
   description:      Shared GUI controls, look-and-feel and DSP for FX-Mechanics
                     JUCE plugins. The WDL-backed FirFilter is provided as a
@@ -45,6 +45,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/RmsMeter.h"
 #include "dsp/VuMeter.h"
 #include "dsp/SignalGenerator.h"
+#include "dsp/Lfo.h"
+#include "dsp/CracksGenerator.h"
 
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
