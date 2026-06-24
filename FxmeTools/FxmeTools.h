@@ -38,9 +38,12 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Biquad.h"
 #include "dsp/SpectrumTap.h"
 #include "dsp/SpectrumAnalyzer.h"
+#include "dsp/RmsMeter.h"
+#include "dsp/SignalGenerator.h"
 
-// Spectrum view (real-time analyzer display)
+// Components (real-time analyzer display, SPL meter bar)
 #include "components/SpectrumDisplay.h"
+#include "components/SplMeterComponent.h"
 
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.
 // Include it directly (<FxmeTools/dsp/FirFilter.h>) where needed.
