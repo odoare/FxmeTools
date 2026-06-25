@@ -34,6 +34,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/FxmeButton.h"
 #include "components/FxmeMeters.h"
 
+// MIDI / music-theory (header-only, no external deps)
+#include "midi/Scale.h"
+#include "midi/NeoRiemannGrid.h"
+
 // DSP (header-only, no external deps)
 #include "dsp/Biquad.h"
 #include "dsp/SpectrumTap.h"
