@@ -336,11 +336,11 @@ namespace grid
         if (cornerDelta > 180.0f) cornerDelta = 360.0f - cornerDelta;
 
         constexpr float centreThreshold = 0.22f;   // inner disc  -> Center (letter)
-        constexpr float pointThreshold   = 0.78f;   // near corner tip -> Point
-        constexpr float pointAngleMax    = 17.0f;
-        constexpr float borderThreshold  = 0.82f;   // near edge midpoint -> Border
-        constexpr float spokeAngle       = 14.0f;
-        constexpr float spokeInner       = 0.25f;
+        constexpr float pointThreshold   = 0.68f;   // near corner tip -> Point (enlarged)
+        constexpr float pointAngleMax    = 23.0f;
+        constexpr float borderThreshold  = 0.78f;   // near edge midpoint -> Border (enlarged)
+        constexpr float spokeAngle       = 18.0f;   // segment ray (enlarged)
+        constexpr float spokeInner       = 0.22f;
 
         if (f < centreThreshold)
             return { GridMode::Center, h, 0 };
