@@ -56,16 +56,19 @@ struct Vec2 { float x = 0.0f; float y = 0.0f; };
 enum class GridMode { Center, Point, Face, Spoke, Border };
 
 /** A geometric selection on the grid: a mode, the originating hex and the
-    edge/corner index (0-5) it applies to. */
+    edge/corner index (0-5) it applies to. When `alt` is set, the same geometry
+    is reinterpreted as a root-position four-note chord on the clicked hex (see
+    altChordOffsets). */
 struct Selection
 {
     GridMode mode = GridMode::Face;
     Hex      hex;        // for Border this is hex "A"; the partner is hex+edgeDir
     int      index = 0;  // edge index (Face/Border) or corner index (Spoke)
+    bool     alt = false;// Alt modifier -> rooted seventh/sixth chord on hex
 
     bool operator== (const Selection& o) const
     {
-        return mode == o.mode && hex == o.hex && index == o.index;
+        return mode == o.mode && hex == o.hex && index == o.index && alt == o.alt;
     }
     bool operator!= (const Selection& o) const { return ! (*this == o); }
 };
@@ -213,10 +216,68 @@ namespace grid
         return c;
     }
 
+    /** Alt mode: a four-note chord on the clicked hex X (always the bass), made
+        from one of the six triads that contain X plus one added extension.
+
+          - which TRIAD is read from the grid position (the Tonnetz triangle):
+              Point / Spoke -> the triad at vertex `index`
+              Face  / Border -> the triad at vertex (index + 1) % 6
+          - which EXTENSION comes from the shape TYPE, added above the triad root:
+              Point  -> 7th  (major: +10 dom7, minor: +11 mMaj7)
+              Spoke  -> 6th  (major: +8 #5,    minor: +9 m6)
+              Face   -> 4th  (+5, add11)
+              Border -> 2nd  (+2, add9)
+
+        These are exactly the extensions the modifier-free shapes don't already
+        produce; the bass is X, so you pick it by choosing the hexagon. */
+    inline std::array<int, 4> altChordPitchClasses (const Selection& s, int rootPitchClass)
+    {
+        const auto& d = edgeDirs();
+        const int corner = (s.mode == GridMode::Point || s.mode == GridMode::Spoke)
+                           ? s.index : (s.index + 1) % 6;
+        const Hex x = s.hex;
+        const std::array<Hex, 3> tri { x, x + d[(corner + 5) % 6], x + d[corner] };
+        const std::array<int, 3> tp { pitchClass (tri[0], rootPitchClass),
+                                      pitchClass (tri[1], rootPitchClass),
+                                      pitchClass (tri[2], rootPitchClass) };
+
+        // Root + quality of the triad (search for a major/minor third + fifth).
+        int root = tp[0];
+        bool major = true;
+        for (int k = 0; k < 3; ++k)
+        {
+            bool has3 = false, has4 = false, has7 = false;
+            for (int qi = 0; qi < 3; ++qi)
+            {
+                const int iv = ((tp[qi] - tp[k]) % 12 + 12) % 12;
+                has3 = has3 || (iv == 3);
+                has4 = has4 || (iv == 4);
+                has7 = has7 || (iv == 7);
+            }
+            if (has7 && has4) { root = tp[k]; major = true;  break; }
+            if (has7 && has3) { root = tp[k]; major = false; break; }
+        }
+
+        int off = 2;
+        switch (s.mode)
+        {
+            case GridMode::Point:  off = major ? 10 : 11; break; // 7th
+            case GridMode::Spoke:  off = major ?  8 :  9; break; // 6th
+            case GridMode::Face:   off = 5; break;               // 4th
+            case GridMode::Border: off = 2; break;               // 2nd
+            default: break;
+        }
+
+        return { tp[0], tp[1], tp[2], (root + off) % 12 }; // bass = X = tp[0]
+    }
+
     /** Pitch classes of a selection's notes (padded to four; duplicates collapse
         later in voiceChord / chordMask). */
     inline std::array<int, 4> chordPitchClasses (const Selection& s, int rootPitchClass)
     {
+        if (s.alt && s.mode != GridMode::Center)
+            return altChordPitchClasses (s, rootPitchClass);
+
         const HexChord c = resolve (s);
         std::array<int, 4> pcs {};
         for (int i = 0; i < 4; ++i)
@@ -275,8 +336,8 @@ namespace grid
         if (s.mode == GridMode::Center)
             return { bassC + pitchClass (s.hex, rootPitchClass) };
 
-        const HexChord c = resolve (s);
-        return voiceChord (chordPitchClasses (s, rootPitchClass), c.bassIndex, bassC);
+        // Bass is always the clicked hex (note index 0) for every shape.
+        return voiceChord (chordPitchClasses (s, rootPitchClass), 0, bassC);
     }
 
     /** Enumerates every distinct sub-geometry over a rectangular block of hexes.
