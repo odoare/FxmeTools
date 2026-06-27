@@ -36,6 +36,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 
 // MIDI / music-theory (header-only, no external deps)
 #include "midi/Scale.h"
+#include "midi/ChordName.h"
 #include "midi/NeoRiemannGrid.h"
 
 // DSP (header-only, no external deps)
