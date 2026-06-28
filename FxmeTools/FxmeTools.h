@@ -38,6 +38,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/Scale.h"
 #include "midi/ChordName.h"
 #include "midi/NeoRiemannGrid.h"
+#include "midi/StringSequencer.h"
+#include "midi/SequencerEngine.h"
 
 // DSP (header-only, no external deps)
 #include "dsp/Biquad.h"
@@ -54,6 +56,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
+#include "components/SequencerRubber.h"
 
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.
 // Include it directly (<FxmeTools/dsp/FirFilter.h>) where needed.
