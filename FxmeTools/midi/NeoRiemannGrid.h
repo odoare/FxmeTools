@@ -55,17 +55,28 @@ struct Vec2 { float x = 0.0f; float y = 0.0f; };
       Border  - an outer side (edge): the symmetric axis chord. */
 enum class GridMode { Center, Point, Face, Spoke, Border };
 
+/** Which modifier key(s) are held when the user interacts with the grid.
+    The value is a bitmask: bit 0 = Alt, bit 1 = second modifier (Ctrl/Cmd).
+      0 = no modifier   (base chord tables)
+      1 = Alt           (rooted 7th / 6th chords)
+      2 = Mod2          (user-definable — second modifier key alone)
+      3 = Alt + Mod2    (user-definable — both modifiers together) */
+using SelectionModifier = int;
+
 /** A geometric selection on the grid: a mode, the originating hex and the
-    edge/corner index (0-5) it applies to. */
+    edge/corner index (0-5) it applies to. The `modifier` selects which chord
+    vocabulary table is used for this selection (0 = base, 1 = Alt, 2 = Mod2,
+    3 = Alt+Mod2). */
 struct Selection
 {
-    GridMode mode = GridMode::Face;
-    Hex      hex;        // for Border this is hex "A"; the partner is hex+edgeDir
-    int      index = 0;  // edge index (Face/Border) or corner index (Spoke)
+    GridMode          mode     = GridMode::Face;
+    Hex               hex;        // for Border this is hex "A"; the partner is hex+edgeDir
+    int               index    = 0;  // edge index (Face/Border) or corner index (Spoke)
+    SelectionModifier modifier = 0;  // which chord table to use (0–3)
 
     bool operator== (const Selection& o) const
     {
-        return mode == o.mode && hex == o.hex && index == o.index;
+        return mode == o.mode && hex == o.hex && index == o.index && modifier == o.modifier;
     }
     bool operator!= (const Selection& o) const { return ! (*this == o); }
 };
@@ -213,33 +224,13 @@ namespace grid
         return c;
     }
 
-    /** Pitch classes of a selection's notes (padded to four; duplicates collapse
-        later in voiceChord / chordMask). */
-    inline std::array<int, 4> chordPitchClasses (const Selection& s, int rootPitchClass)
-    {
-        const HexChord c = resolve (s);
-        std::array<int, 4> pcs {};
-        for (int i = 0; i < 4; ++i)
-            pcs[i] = pitchClass (c.hexes[i], rootPitchClass);
-        return pcs;
-    }
-
-    /** 12-bit pitch-class mask of a selection (for scale tests). */
-    inline std::uint16_t chordMask (const Selection& s, int rootPitchClass)
-    {
-        std::uint16_t m = 0;
-        for (int pc : chordPitchClasses (s, rootPitchClass))
-            m |= static_cast<std::uint16_t> (1u << pc);
-        return m;
-    }
-
     /** MIDI-engine voicing (spec section 4): the bass pitch class is anchored at
         octave N (bassC = MIDI number of C in that octave), and the remaining
         notes are wrapped into the single octave above the bass, de-duplicated and
         sorted ascending.
 
-        @param pcs        the four pitch classes
-        @param bassIndex  which of the four is the bass
+        @param pcs        the four pitch classes (pcs[0] is always the bass)
+        @param bassIndex  which of the four is the bass (always 0 in Neorix)
         @param bassC      MIDI note of C in the bass octave (e.g. 36 for C2)
         @returns          ascending MIDI note numbers (bass first), 1..4 notes. */
     inline std::vector<int> voiceChord (const std::array<int, 4>& pcs, int bassIndex, int bassC)
@@ -266,17 +257,6 @@ namespace grid
         for (int n : upper)
             notes.push_back (n);
         return notes;
-    }
-
-    /** Final MIDI notes for a selection, ready to play. Center yields a single
-        note; every other mode goes through the octave-wrapping voicer. */
-    inline std::vector<int> selectionMidiNotes (const Selection& s, int rootPitchClass, int bassC)
-    {
-        if (s.mode == GridMode::Center)
-            return { bassC + pitchClass (s.hex, rootPitchClass) };
-
-        const HexChord c = resolve (s);
-        return voiceChord (chordPitchClasses (s, rootPitchClass), c.bassIndex, bassC);
     }
 
     /** Enumerates every distinct sub-geometry over a rectangular block of hexes.

@@ -36,7 +36,11 @@ BEGIN_JUCE_MODULE_DECLARATION
 
 // MIDI / music-theory (header-only, no external deps)
 #include "midi/Scale.h"
+#include "midi/ChordName.h"
 #include "midi/NeoRiemannGrid.h"
+#include "midi/GridTransform.h"
+#include "midi/StringSequencer.h"
+#include "midi/SequencerEngine.h"
 
 // DSP (header-only, no external deps)
 #include "dsp/Biquad.h"
@@ -53,6 +57,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
+#include "components/SequencerRubber.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.
