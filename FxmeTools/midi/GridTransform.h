@@ -168,17 +168,30 @@ struct GridTransform
 
 // ---- Guarded rules ------------------------------------------------------------
 
-/** A transform guarded on the current ring position. Empty guards match all. */
+/** A transform guarded on the current ring position. Every guard is optional;
+    the ones that are set are AND-ed together, so a rule can match any subset
+    of { level, slot parity, exact slot, modifier, pitch class, exact hex }.
+    An unguarded rule matches everything. */
 struct TransformRule
 {
-    std::optional<bool> requireOuter;   // match only inner (false) / outer (true)
-    std::optional<int>  requireParity;  // 0 = spoke/point, 1 = face/border
+    std::optional<bool> requireOuter;       // inner (false) / outer (true)
+    std::optional<int>  requireParity;      // 0 = spoke/point, 1 = face/border
+    std::optional<int>  requireSlot;        // exact ring slot 0..11
+    std::optional<int>  requireModifier;    // exact modifier table 0..3
+    std::optional<int>  requirePitchClass;  // pitch class of the hex, relative to
+                                            // the grid root (root hex = 0)
+    std::optional<Hex>  requireHex;         // exact axial hex
+
     GridTransform       transform;
 
     bool matches (const RingPos& r) const
     {
-        if (requireOuter  && *requireOuter  != r.outer)      return false;
-        if (requireParity && *requireParity != (r.slot & 1)) return false;
+        if (requireOuter      && *requireOuter      != r.outer)                    return false;
+        if (requireParity     && *requireParity     != (r.slot & 1))               return false;
+        if (requireSlot       && *requireSlot       != r.slot)                     return false;
+        if (requireModifier   && *requireModifier   != r.modifier)                 return false;
+        if (requirePitchClass && *requirePitchClass != grid::pitchClass (r.hex, 0)) return false;
+        if (requireHex        && ! (*requireHex == r.hex))                         return false;
         return true;
     }
 };
