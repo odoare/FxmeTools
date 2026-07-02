@@ -6,3 +6,5 @@
 #include "dsp/SpectrumAnalyzer.cpp"
 #include "components/SpectrumDisplay.cpp"
 #include "dsp/CracksGenerator.cpp"
+#include "presets/PresetManager.cpp"
+#include "components/PresetComponent.cpp"

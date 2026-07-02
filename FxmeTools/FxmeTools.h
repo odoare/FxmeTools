@@ -54,5 +54,11 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
 
+// Preset management (factory presets from BinaryData + user XML files) and
+// its ready-made browser component + compact name/prev/next strip.
+#include "presets/PresetManager.h"
+#include "components/PresetComponent.h"
+#include "components/PresetBarComponent.h"
+
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.
 // Include it directly (<FxmeTools/dsp/FirFilter.h>) where needed.
