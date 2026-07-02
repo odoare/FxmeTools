@@ -38,6 +38,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/Scale.h"
 #include "midi/ChordName.h"
 #include "midi/NeoRiemannGrid.h"
+#include "midi/GridTransform.h"
 #include "midi/StringSequencer.h"
 #include "midi/SequencerEngine.h"
 
