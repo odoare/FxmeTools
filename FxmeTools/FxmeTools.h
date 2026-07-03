@@ -43,6 +43,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/SequencerEngine.h"
 
 // DSP (header-only, no external deps)
+#include "dsp/Ambisonics.h"
+#include "dsp/RoomAcoustics.h"
 #include "dsp/Biquad.h"
 #include "dsp/SpectrumTap.h"
 #include "dsp/SpectrumAnalyzer.h"
