@@ -50,12 +50,21 @@ public:
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
-        if (reader == nullptr || reader->lengthInSamples <= 0)
+        return reader != nullptr && loadFromReader (*reader);
+    }
+
+    /** Load an IR from any AudioFormatReader — e.g. one created by
+        EmbeddedAudio::createReader(), so an impulse embedded in the plugin
+        state (presets, sessions) can feed the filter without a file on disk.
+        Returns true on success. Message thread. */
+    bool loadFromReader (juce::AudioFormatReader& reader)
+    {
+        if (reader.lengthInSamples <= 0 || reader.numChannels < 1)
             return false;
 
-        const int n = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (1 << 20));
-        juce::AudioBuffer<float> temp ((int) reader->numChannels, n);
-        reader->read (&temp, 0, n, 0, true, true);
+        const int n = (int) juce::jmin (reader.lengthInSamples, (juce::int64) (1 << 20));
+        juce::AudioBuffer<float> temp ((int) reader.numChannels, n);
+        reader.read (&temp, 0, n, 0, true, true);
 
         // Collapse to mono
         juce::AudioBuffer<float> mono (1, n);
@@ -66,7 +75,7 @@ public:
         {
             juce::ScopedLock sl (lock);
             sourceIR = std::move (mono);
-            sourceRate = reader->sampleRate;
+            sourceRate = reader.sampleRate;
             rebuildEngineImpulse();
         }
         return true;
