@@ -25,6 +25,10 @@
       diffuseFieldOrderGain (l)    1/sqrt(2l+1): per-degree weight giving an
                                    isotropic (energy-balanced) diffuse field.
       Vec3, normalise()            Minimal 3-vector.
+      capDirection (k, n, angle)   k-th of n quasi-uniform directions in the
+                                   spherical cap of given half-angle around +x
+                                   (Fibonacci spiral; angle = pi covers the
+                                   whole sphere).
       encodeSN3D (dir, gains, order)
                                    Real spherical-harmonic encoding gains for a
                                    unit direction, ACN/SN3D, up to order 3.
@@ -103,6 +107,24 @@ inline Vec3 normalise (Vec3 v) noexcept
         return { 1.0f, 0.0f, 0.0f };   // arbitrary front for a degenerate vector
     const float inv = 1.0f / n;
     return { v.x * inv, v.y * inv, v.z * inv };
+}
+
+//==============================================================================
+// k-th of n quasi-uniform directions (by solid angle) inside the spherical cap
+// of half-angle `capHalfAngle` (radians) centred on +x, i.e. the front.
+// Points follow a Fibonacci spiral: deterministic, well spread for any n, and
+// a given point moves continuously when the cap opens or closes. A half-angle
+// of pi covers the whole sphere.
+inline Vec3 capDirection (int k, int n, float capHalfAngle) noexcept
+{
+    constexpr float goldenAngle = 2.3999632297f;   // pi * (3 - sqrt 5)
+
+    const float w        = ((float) k + 0.5f) / (float) (n > 0 ? n : 1);
+    const float cosTheta = 1.0f - w * (1.0f - std::cos (capHalfAngle));
+    const float sinTheta = std::sqrt (std::fmax (0.0f, 1.0f - cosTheta * cosTheta));
+    const float azimuth  = (float) k * goldenAngle;
+
+    return { cosTheta, sinTheta * std::cos (azimuth), sinTheta * std::sin (azimuth) };
 }
 
 //==============================================================================
