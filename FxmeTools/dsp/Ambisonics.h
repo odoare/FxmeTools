@@ -211,6 +211,22 @@ inline Vec3 directionFromAngles (float azimuth, float elevation = 0.0f) noexcept
     return { ce * std::cos (azimuth), ce * std::sin (azimuth), std::sin (elevation) };
 }
 
+// Decode weights (ACN0..ACN3 = W, Y, Z, X; SN3D) for a first-order virtual
+// microphone with the given polar pattern, pointed at unit direction `axis`.
+// Dot the result against the first four channels of an AmbiX stream (any
+// order >= 1) to render the microphone's signal:
+//     mic(t) = weights[0]*W(t) + weights[1]*Y(t) + weights[2]*Z(t) + weights[3]*X(t)
+// Higher ambisonic orders carry no extra information for a first-order
+// pattern and are correctly ignored.
+inline void micDecodeWeights (int pattern, Vec3 axis, float* weights) noexcept
+{
+    const float alpha = micPatternAlpha (pattern);
+    weights[0] = alpha;
+    weights[1] = (1.0f - alpha) * axis.y;
+    weights[2] = (1.0f - alpha) * axis.z;
+    weights[3] = (1.0f - alpha) * axis.x;
+}
+
 //==============================================================================
 // Small row-major 3x3 rotation matrix, applied as v' = M · v.
 struct Mat3
