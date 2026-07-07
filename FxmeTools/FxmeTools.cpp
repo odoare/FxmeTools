@@ -6,6 +6,7 @@
 #include "dsp/SpectrumAnalyzer.cpp"
 #include "components/SpectrumDisplay.cpp"
 #include "dsp/CracksGenerator.cpp"
+#include "threading/BackgroundTaskRunner.cpp"
 #include "presets/EmbeddedAudio.cpp"
 #include "presets/PresetManager.cpp"
 #include "components/PresetComponent.cpp"

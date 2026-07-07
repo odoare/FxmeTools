@@ -34,6 +34,11 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/FxmeButton.h"
 #include "components/FxmeMeters.h"
 
+// Threading: batch background jobs with progress + a message-thread
+// completion callback (see threading/BackgroundTaskRunner.h for the pattern
+// and a usage example).
+#include "threading/BackgroundTaskRunner.h"
+
 // MIDI / music-theory (header-only, no external deps)
 #include "midi/Scale.h"
 #include "midi/ChordName.h"
