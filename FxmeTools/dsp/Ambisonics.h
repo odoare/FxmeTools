@@ -165,6 +165,53 @@ inline void encodeSN3D (Vec3 d, float* gains, int order = maxOrder) noexcept
 }
 
 //==============================================================================
+// Virtual-microphone polar patterns: the classic first-order family
+//
+//     g(theta) = alpha + (1 - alpha) * cos(theta)
+//
+// where theta is the angle between the microphone axis and the arrival
+// direction, and alpha blends omni (1) into figure-of-eight (0). Negative
+// gains (the rear lobe of tight patterns and of the figure-8) are genuine
+// phase inversions and must be kept signed by renderers; take |g| only for
+// drawing the pattern.
+enum MicPattern
+{
+    micOmni = 0,
+    micCardioid,
+    micSupercardioid,
+    micHypercardioid,
+    micFigure8,
+    numMicPatterns
+};
+
+inline float micPatternAlpha (int pattern) noexcept
+{
+    switch (pattern)
+    {
+        case micOmni:          return 1.0f;
+        case micCardioid:      return 0.5f;
+        case micSupercardioid: return 0.366f;
+        case micHypercardioid: return 0.25f;
+        default:               return 0.0f;    // figure-8
+    }
+}
+
+// Signed pattern gain for unit vectors `axis` (where the microphone points)
+// and `arrival` (from the microphone towards the incoming wavefront origin).
+inline float micGain (float alpha, Vec3 axis, Vec3 arrival) noexcept
+{
+    return alpha + (1.0f - alpha)
+                 * (axis.x * arrival.x + axis.y * arrival.y + axis.z * arrival.z);
+}
+
+// Unit direction from azimuth / elevation (radians, x = front frame).
+inline Vec3 directionFromAngles (float azimuth, float elevation = 0.0f) noexcept
+{
+    const float ce = std::cos (elevation);
+    return { ce * std::cos (azimuth), ce * std::sin (azimuth), std::sin (elevation) };
+}
+
+//==============================================================================
 // Small row-major 3x3 rotation matrix, applied as v' = M · v.
 struct Mat3
 {
