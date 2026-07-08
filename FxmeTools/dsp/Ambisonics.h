@@ -109,20 +109,30 @@ inline Vec3 normalise (Vec3 v) noexcept
     return { v.x * inv, v.y * inv, v.z * inv };
 }
 
+inline Vec3 cross (Vec3 a, Vec3 b) noexcept
+{
+    return { a.y * b.z - a.z * b.y,
+             a.z * b.x - a.x * b.z,
+             a.x * b.y - a.y * b.x };
+}
+
 //==============================================================================
 // k-th of n quasi-uniform directions (by solid angle) inside the spherical cap
 // of half-angle `capHalfAngle` (radians) centred on +x, i.e. the front.
 // Points follow a Fibonacci spiral: deterministic, well spread for any n, and
 // a given point moves continuously when the cap opens or closes. A half-angle
 // of pi covers the whole sphere.
-inline Vec3 capDirection (int k, int n, float capHalfAngle) noexcept
+// `azimuthOffset` turns point k around the cap axis (e.g. for animating the
+// points around their nominal spots).
+inline Vec3 capDirection (int k, int n, float capHalfAngle,
+                          float azimuthOffset = 0.0f) noexcept
 {
     constexpr float goldenAngle = 2.3999632297f;   // pi * (3 - sqrt 5)
 
     const float w        = ((float) k + 0.5f) / (float) (n > 0 ? n : 1);
     const float cosTheta = 1.0f - w * (1.0f - std::cos (capHalfAngle));
     const float sinTheta = std::sqrt (std::fmax (0.0f, 1.0f - cosTheta * cosTheta));
-    const float azimuth  = (float) k * goldenAngle;
+    const float azimuth  = (float) k * goldenAngle + azimuthOffset;
 
     return { cosTheta, sinTheta * std::cos (azimuth), sinTheta * std::sin (azimuth) };
 }

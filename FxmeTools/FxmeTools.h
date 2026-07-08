@@ -59,6 +59,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Lfo.h"
 #include "dsp/CracksGenerator.h"
 #include "dsp/PitchShifter.h"
+#include "dsp/GrainLooper.h"
 
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
