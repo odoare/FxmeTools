@@ -52,8 +52,11 @@ struct Vec2 { float x = 0.0f; float y = 0.0f; };
       Point   - a hexagon vertex, where three hexes meet: a Tonnetz triad.
       Face    - an inner triangle (slice): a 4-note cluster.
       Spoke   - an inner segment (centre -> vertex): 4 notes.
-      Border  - an outer side (edge): the symmetric axis chord. */
-enum class GridMode { Center, Point, Face, Spoke, Border };
+      Border  - an outer side (edge): the symmetric axis chord.
+      Tab     - (Alt-gated) a vertex triad plus one "outer tab" note: the
+                dominant-7th / m7b5 / m6 / add9 family. The selection index packs
+                the corner and the tab sub-index as `corner * 6 + tab`. */
+enum class GridMode { Center, Point, Face, Spoke, Border, Tab };
 
 /** Which modifier key(s) are held when the user interacts with the grid.
     The value is a bitmask: bit 0 = Alt, bit 1 = second modifier (Ctrl/Cmd).
@@ -161,6 +164,58 @@ namespace grid
 
     // ---- chord extraction --------------------------------------------------
 
+    /** The three hexes of the Tonnetz triad meeting at vertex `corner` of `x`. */
+    inline std::array<Hex, 3> triadAtVertex (Hex x, int corner)
+    {
+        const auto& d = edgeDirs();
+        return { x, x + d[(corner + 5) % 6], x + d[corner] };
+    }
+
+    /** The six "outer tabs" of a vertex triad: the cells edge-adjacent to exactly
+        one triad hex (the three "pocket" cells across the triad's edges are
+        excluded — adding one of those just reproduces a slice). Returned ordered
+        by angle around the vertex so a six-sector disc maps onto them. */
+    inline std::array<Hex, 6> tabsAtVertex (Hex x, int corner)
+    {
+        const auto& d = edgeDirs();
+        const auto tri = triadAtVertex (x, corner);
+
+        auto isTriad = [&] (Hex h) { return h == tri[0] || h == tri[1] || h == tri[2]; };
+        auto triadAdjacency = [&] (Hex cell)
+        {
+            int cnt = 0;
+            for (const Hex& t : tri)
+            {
+                const Hex diff { cell.q - t.q, cell.r - t.r };
+                for (const Hex& dir : d) if (dir == diff) { ++cnt; break; }
+            }
+            return cnt;
+        };
+
+        std::array<Hex, 6> tabs {};
+        int n = 0;
+        for (const Hex& t : tri)
+            for (const Hex& dir : d)
+            {
+                const Hex cell = t + dir;
+                if (isTriad (cell) || triadAdjacency (cell) != 1)
+                    continue; // triad member or "pocket" -> not an outer tab
+                bool dup = false;
+                for (int k = 0; k < n; ++k) if (tabs[k] == cell) { dup = true; break; }
+                if (! dup && n < 6) tabs[n++] = cell;
+            }
+
+        const Vec2 vtx = hexCorner (hexCenter (x, 1.0f, { 0, 0 }), 1.0f, corner);
+        std::sort (tabs.begin(), tabs.begin() + n, [&] (Hex a, Hex b)
+        {
+            const Vec2 pa = hexCenter (a, 1.0f, { 0, 0 });
+            const Vec2 pb = hexCenter (b, 1.0f, { 0, 0 });
+            return std::atan2 (pa.y - vtx.y, pa.x - vtx.x)
+                 < std::atan2 (pb.y - vtx.y, pb.x - vtx.x);
+        });
+        return tabs;
+    }
+
     /** The distinct hexagons a selection involves (its bass first). Used both as
         the source of the chord's pitch classes and to highlight the grid letters
         the shape will sound. */
@@ -181,6 +236,16 @@ namespace grid
                 // The clicked hex + the two neighbours sharing that vertex form a
                 // major/minor Tonnetz triad.
                 return { x, x + d[(i + 5) % 6], x + d[i] };
+            }
+
+            case GridMode::Tab:
+            {
+                // index packs corner * 6 + tab.
+                const int corner = i / 6;
+                const int tab    = i % 6;
+                const auto tri  = triadAtVertex (x, corner);
+                const auto tabs = tabsAtVertex (x, corner);
+                return { tri[0], tri[1], tri[2], tabs[(size_t) tab] };
             }
 
             case GridMode::Face:
@@ -287,8 +352,12 @@ namespace grid
         pointing at. Hexes are split into six angular sectors (the six faces);
         within a sector the radial position and proximity to a corner ray decide
         between Face (interior), Spoke (near a corner ray) and Border (near the
-        outer edge). */
-    inline Selection hitTest (Vec2 p, float size, Vec2 origin)
+        outer edge).
+
+        When `tabMode` is set (the Alt key), an enlarged disc around the nearest
+        vertex takes priority and returns a Tab selection (triad + outer tab),
+        the sector chosen by the angle from the vertex toward the six tabs. */
+    inline Selection hitTest (Vec2 p, float size, Vec2 origin, bool tabMode = false)
     {
         const Hex  h = pixelToHex (p, size, origin);
         const Vec2 c = hexCenter (h, size, origin);
@@ -302,6 +371,27 @@ namespace grid
 
         const int edgeIndex   = static_cast<int> (std::floor (ang / 60.0f)) % 6;
         const int nearCorner  = static_cast<int> (std::lround (ang / 60.0f)) % 6;
+
+        if (tabMode)
+        {
+            const Vec2 vtx = hexCorner (c, size, nearCorner);
+            const float dvx = p.x - vtx.x, dvy = p.y - vtx.y;
+            if (std::sqrt (dvx * dvx + dvy * dvy) < size * 0.52f)
+            {
+                const auto tabs = tabsAtVertex (h, nearCorner);
+                const float pang = std::atan2 (dvy, dvx);
+                int best = 0;
+                float bestDiff = 1.0e9f;
+                for (int k = 0; k < 6; ++k)
+                {
+                    const Vec2 tp = hexCenter (tabs[(size_t) k], size, origin);
+                    const float ta = std::atan2 (tp.y - vtx.y, tp.x - vtx.x);
+                    const float diff = std::abs (std::remainder (pang - ta, 6.28318530717959f));
+                    if (diff < bestDiff) { bestDiff = diff; best = k; }
+                }
+                return { GridMode::Tab, h, nearCorner * 6 + best };
+            }
+        }
 
         // Distance from the centre to the hex outline along this angle: the edge
         // midpoint of edge `edgeIndex` sits at angle 60*edgeIndex + 30.
