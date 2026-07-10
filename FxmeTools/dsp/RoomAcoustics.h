@@ -23,8 +23,14 @@
       Wall, numWalls               Wall indexing for a box room.
       BoxRoom                      Geometry + per-wall damping description.
       volume (room)                Box volume (m^3).
-      sabineRT60 (room)            Reverberation time from Sabine's formula:
-                                   RT60 = 0.161 V / A, A = sum of area x damp.
+      energyAbsorption (damp)      alpha = 1 - (1-damp)^2. `damp` is an
+                                   AMPLITUDE loss, so this converts it to the
+                                   energy coefficient the RT60 formulae want.
+      sabineRT60 (room)            RT60 = 0.161 V / A, A = sum of area x alpha.
+      eyringRT60 (room)            RT60 = 0.161 V / A, A = -sum(S ln(1-alpha))
+                                   = -2 sum(S ln(1-damp)). Correct at high
+                                   absorption too; use this one to match an
+                                   image-source early field.
       t60DecayPerSample (rt60, sr) Exponential decay rate k so that
                                    exp(-k n) drops 60 dB over rt60 seconds.
       hfDampingAlpha (hfSum, sr)   One-pole low-pass coefficient for an
@@ -91,15 +97,51 @@ struct BoxRoom
 
 inline float volume (const BoxRoom& r) noexcept { return r.rx * r.ry * r.rz; }
 
-// Sabine's formula: RT60 = 0.161 V / A with A the total equivalent absorption
-// area (wall area x damping). Unclamped apart from a division guard — clamp
-// to your engine's limits at the call site.
-inline float sabineRT60 (const BoxRoom& r) noexcept
+// Energy absorption coefficient of a wall. `damp` is an *amplitude* loss (the
+// image-source model reflects with the factor 1 - damp), so the fraction of
+// *energy* absorbed per reflection is alpha = 1 - (1 - damp)^2. Feeding `damp`
+// straight into Sabine's formula, as if it were already an energy coefficient,
+// makes the predicted RT60 far too long — the tail then decays much more
+// slowly than the image-source field it is supposed to continue.
+inline float energyAbsorption (float damp) noexcept
+{
+    const float refl = 1.0f - damp;             // amplitude reflectance
+    return 1.0f - refl * refl;
+}
+
+// Sum over the six walls of (wall area) x f(damp), for a per-wall weight f.
+template <typename WallWeight>
+inline float weightedWallArea (const BoxRoom& r, WallWeight f) noexcept
 {
     const float axy = r.rx * r.ry, axz = r.rx * r.rz, ayz = r.ry * r.rz;
-    const float a = ayz * (r.damp[wallXmin] + r.damp[wallXmax])
-                  + axz * (r.damp[wallYmin] + r.damp[wallYmax])
-                  + axy * (r.damp[wallZmin] + r.damp[wallZmax]);
+    return ayz * (f (r.damp[wallXmin]) + f (r.damp[wallXmax]))
+         + axz * (f (r.damp[wallYmin]) + f (r.damp[wallYmax]))
+         + axy * (f (r.damp[wallZmin]) + f (r.damp[wallZmax]));
+}
+
+// Sabine's formula: RT60 = 0.161 V / A, with A the equivalent absorption area
+// (wall area x *energy* absorption). Accurate for small alpha; it overestimates
+// RT60 as the room gets more absorbent. Unclamped apart from a division guard.
+inline float sabineRT60 (const BoxRoom& r) noexcept
+{
+    const float a = weightedWallArea (r, energyAbsorption);
+    return 0.161f * volume (r) / std::max (1.0e-3f, a);
+}
+
+// Eyring/Norris: RT60 = 0.161 V / A with A = -sum(S_w * ln(1 - alpha_w)).
+// Since alpha = 1 - (1-damp)^2, the log collapses neatly:
+//     -ln(1 - alpha) = -ln((1-damp)^2) = -2 ln(1 - damp)
+// Valid across the whole absorption range, so this is the one to use when the
+// tail must line up with an image-source early field (which decays exactly as
+// (1-damp)^(2n) in energy).
+inline float eyringRT60 (const BoxRoom& r) noexcept
+{
+    auto weight = [] (float damp)
+    {
+        const float refl = std::max (1.0e-3f, 1.0f - damp);   // amplitude reflectance
+        return -2.0f * std::log (refl);
+    };
+    const float a = weightedWallArea (r, weight);
     return 0.161f * volume (r) / std::max (1.0e-3f, a);
 }
 
@@ -142,19 +184,48 @@ struct ImageTap
 struct ImageSourceConfig
 {
     double sampleRate    = 48000.0;
-    int    maxTaps       = 256;      // keep the earliest-arriving N images
+    int    maxTaps       = 256;      // hard cap on the number of images kept
     float  speedOfSound  = 340.0f;   // m/s
     float  minGain       = 1.0e-5f;  // skip images quieter than this (the
                                      // direct tap is always kept)
     float  minDistance   = 0.1f;     // clamp for near-coincident positions
     float  hfRefFreq     = 20000.0f; // hfDampingAlpha reference frequency
+
+    // Truncation policy.
+    //
+    // maxDelaySamples == 0 (default): keep the `maxTaps` earliest images. The
+    // arrival time of the last one then depends on where the source and the
+    // listener stand, which is fine for a renderer that follows them.
+    //
+    // maxDelaySamples > 0: keep every image arriving no later than this, and
+    // cap the count at `maxTaps` only as a safety net. The enumeration radius
+    // is then derived per axis from the time bound, so flat and tall rooms are
+    // covered correctly — a fixed index box is not, since the image lattice
+    // has the room's aspect ratio. Use this when the truncation time must be
+    // position-independent (e.g. it has to line up with a shared, static
+    // late-reverb impulse response).
+    int    maxDelaySamples = 0;
 };
 
+// Linear amplitude fade-out for the early taps across an absolute-time window:
+// 1 before crossStart, 0 at and after crossEnd. Pair it with a diffuse fade-in
+// of sqrt(w(2-w)) over the same window (w = the normalised position in it):
+// the two are then power-complementary, so an uncorrelated early field and
+// diffuse tail sum to unit energy at every instant, whatever the geometry.
+inline float timeCrossfadeGain (int crossStart, int crossEnd, int delaySamples) noexcept
+{
+    if (delaySamples <= crossStart) return 1.0f;
+    if (delaySamples >= crossEnd)   return 0.0f;
+    return 1.0f - (float) (delaySamples - crossStart)
+                / (float) std::max (1, crossEnd - crossStart);
+}
+
 // Enumerate the image sources of one listener/source pair in a box room,
-// sorted by arrival time and truncated to cfg.maxTaps. Positions are in
-// metres inside the box. `out` is cleared and reused (no reallocation churn
-// across recomputes once it has grown). If `progress` is non-null it is
-// updated in [0, 1] while enumerating, so a UI meter can follow along.
+// sorted by arrival time and truncated per cfg (see ImageSourceConfig).
+// Positions are in metres inside the box. `out` is cleared and reused (no
+// reallocation churn across recomputes once it has grown). If `progress` is
+// non-null it is updated in [0, 1] while enumerating, so a UI meter can
+// follow along.
 //
 // This is CPU-bound work intended for a background thread, never the audio
 // thread.
@@ -166,23 +237,54 @@ inline void computeImageSources (const BoxRoom& room,
 {
     out.clear();
 
-    // Enumeration radius: large enough that the requested number of
-    // earliest-arriving taps are all present after truncation, but bounded.
     const int target = std::max (1, cfg.maxTaps);
-    int N = (int) std::ceil (std::cbrt ((double) (2 * target)) * 0.5) + 1;
-    N = std::min (N, 10);
+    constexpr int maxAxisIndex = 64;      // guard against absurd enumerations
 
-    for (int ix = -N; ix <= N; ++ix)
+    // Enumeration radius, per axis. Always derived from a *radius* in metres
+    // and converted per axis, because the image lattice inherits the room's
+    // aspect ratio: a cube of indices under-samples the thin axis of a flat or
+    // tall room, so the n-th earliest arrival comes out far too late.
+    auto stepsForRadius = [&] (float r)
+    {
+        auto steps = [&] (float dim)
+        {
+            return std::min (maxAxisIndex,
+                             (int) std::ceil (r / std::max (0.01f, dim)) + 1);
+        };
+        return std::array<int, 3> { steps (room.rx), steps (room.ry), steps (room.rz) };
+    };
+
+    std::array<int, 3> Nxyz;
+    if (cfg.maxDelaySamples > 0)
+    {
+        // Time-bounded: cover the sphere of radius r = c * t exactly.
+        Nxyz = stepsForRadius ((float) cfg.maxDelaySamples / (float) cfg.sampleRate
+                               * cfg.speedOfSound);
+    }
+    else
+    {
+        // Count-bounded: the sphere holding `target` images has radius
+        // r = cbrt(3 n V / 4pi) (image density is 1/V). Enumerate a little
+        // beyond it so the truncation to `target` is exact even where the
+        // culling below removes some images.
+        const float V = std::max (1.0e-3f, volume (room));
+        const float r = std::cbrt (3.0f * (float) target * V / (4.0f * 3.14159265f));
+        Nxyz = stepsForRadius (1.35f * r);
+    }
+    const int Nx = Nxyz[0], Ny = Nxyz[1], Nz = Nxyz[2];
+    const int N = Nx;   // for the progress fraction below
+
+    for (int ix = -Nx; ix <= Nx; ++ix)
     {
         const float cx = std::ceil ((float) ix * 0.5f);
         const float x  = 2.0f * cx * room.rx + ((ix & 1) ? -source.x : source.x);
 
-        for (int iy = -N; iy <= N; ++iy)
+        for (int iy = -Ny; iy <= Ny; ++iy)
         {
             const float cy = std::ceil ((float) iy * 0.5f);
             const float y  = 2.0f * cy * room.ry + ((iy & 1) ? -source.y : source.y);
 
-            for (int iz = -N; iz <= N; ++iz)
+            for (int iz = -Nz; iz <= Nz; ++iz)
             {
                 const float cz = std::ceil ((float) iz * 0.5f);
                 const float z  = 2.0f * cz * room.rz + ((iz & 1) ? -source.z : source.z);
@@ -193,9 +295,16 @@ inline void computeImageSources (const BoxRoom& room,
 
                 ImageTap tap;
                 tap.direct = (ix == 0 && iy == 0 && iz == 0);
-                tap.id = (std::int32_t) ((ix + 16) | ((iy + 16) << 6) | ((iz + 16) << 12));
+                // 8 bits per axis (offset 128): the per-axis enumeration radius
+                // can reach 64, which a 6-bit field would silently wrap.
+                tap.id = (std::int32_t) ((ix + 128) | ((iy + 128) << 8) | ((iz + 128) << 16));
                 tap.delaySamples = (int) std::lround (dist / cfg.speedOfSound
                                                       * (float) cfg.sampleRate);
+
+                // Time-bounded truncation: drop late images before doing any of
+                // the expensive per-wall work below.
+                if (cfg.maxDelaySamples > 0 && tap.delaySamples > cfg.maxDelaySamples)
+                    continue;
 
                 // Per-wall reflection counts. Reflections alternate between the
                 // two walls of each axis; the first wall hit depends on the
