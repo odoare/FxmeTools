@@ -2,7 +2,7 @@
 BEGIN_JUCE_MODULE_DECLARATION
   ID:               FxmeTools
   vendor:           odoare
-  version:          0.0.2
+  version:          0.0.3
   name:             FX-Mechanics shared C++ audio tools
   description:      Shared GUI controls, look-and-feel and DSP for FX-Mechanics
                     JUCE plugins. The WDL-backed FirFilter is provided as a
@@ -46,6 +46,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/GridTransform.h"
 #include "midi/StringSequencer.h"
 #include "midi/SequencerEngine.h"
+#include "midi/NoteDuration.h"
 
 // DSP (header-only, no external deps)
 #include "dsp/Ambisonics.h"
@@ -60,6 +61,13 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/CracksGenerator.h"
 #include "dsp/PitchShifter.h"
 #include "dsp/GrainLooper.h"
+#include "dsp/Waveshapers.h"
+#include "dsp/Saturator.h"
+#include "dsp/FormantFilter.h"
+#include "dsp/BitCrusher.h"
+#include "dsp/DelayLine.h"
+#include "dsp/DeterministicRandom.h"
+#include "dsp/ArEnvelope.h"
 
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
@@ -67,6 +75,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
 #include "components/SequencerRubber.h"
+#include "components/TopBar.h"
+#include "components/TextEntryFocusFixer.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.

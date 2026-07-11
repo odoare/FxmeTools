@@ -37,6 +37,12 @@ class SequencerEngine
 public:
     explicit SequencerEngine (EngineCallbacks cbs) : callbacks_ (std::move (cbs)) {}
 
+    /** By default, blocks with empty content are treated as unassigned and
+        never fire callbacks. Consumers whose blocks are meaningful even
+        without content (e.g. the content is an optional annotation) can opt
+        in to entering them too. */
+    void setEnterEmptyBlocks (bool shouldEnter) noexcept { enterEmptyBlocks_ = shouldEnter; }
+
     // ---- transport ---------------------------------------------------------
 
     /** Start playback. If the playhead is currently inside a block, fires
@@ -50,7 +56,7 @@ public:
         {
             const int step = static_cast<int> (playheadBeats_ / ssb);
             const SeqBlock* b = seq.blockAt (step);
-            if (b && ! b->content.empty())
+            if (b && (enterEmptyBlocks_ || ! b->content.empty()))
                 enterBlock (b->id, b->content);
         }
     }
@@ -133,7 +139,7 @@ public:
         if (activeBlockId_ < 0)
         {
             const SeqBlock* nb = seq.blockAt (newStep);
-            if (nb && ! nb->content.empty())
+            if (nb && (enterEmptyBlocks_ || ! nb->content.empty()))
                 enterBlock (nb->id, nb->content);
         }
 
@@ -145,9 +151,10 @@ public:
 
 private:
     EngineCallbacks callbacks_;
-    double playheadBeats_ = 0.0;
-    bool   playing_       = false;
-    int    activeBlockId_ = -1;
+    double playheadBeats_    = 0.0;
+    bool   playing_          = false;
+    bool   enterEmptyBlocks_ = false;
+    int    activeBlockId_    = -1;
 
     void enterBlock (int id, const std::string& content)
     {
@@ -179,14 +186,14 @@ private:
                     exitCurrentBlock();
             }
 
-            // Enter the block that starts at this step (if any, and unassigned
-            // blocks are skipped — their content is empty).
+            // Enter the block that starts at this step (if any; unassigned
+            // blocks — empty content — are skipped unless enterEmptyBlocks_).
             if (activeBlockId_ < 0)
             {
                 for (const auto& b : seq.blocks())
                 {
                     if (b.startStep > s) break;
-                    if (b.startStep == s && ! b.content.empty())
+                    if (b.startStep == s && (enterEmptyBlocks_ || ! b.content.empty()))
                     {
                         enterBlock (b.id, b.content);
                         break;
