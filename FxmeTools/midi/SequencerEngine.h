@@ -201,11 +201,13 @@ private:
     {
         for (int s = from; s < toExclusive; ++s)
         {
-            // Exit active block if it ends at this step.
+            // Exit the active block if this step is outside it — because it
+            // ends here, or because it was moved/resized away from under the
+            // playhead (message-thread edits while playing).
             if (activeBlockId_ >= 0)
             {
                 const SeqBlock* ab = seq.blockById (activeBlockId_);
-                if (! ab || ab->endStep == s)
+                if (! ab || s < ab->startStep || s >= ab->endStep)
                     exitCurrentBlock();
             }
 

@@ -150,6 +150,24 @@ public:
         return true;
     }
 
+    /** Move a whole block to a new start step, preserving its duration.
+        Clamped against the neighbouring blocks and the pattern bounds
+        ("walls", like the resize methods) — overlap is impossible.
+        Returns false if the block was not found. */
+    bool moveBlock (int id, int newStart)
+    {
+        auto it = findById (id);
+        if (it == blocks_.end()) return false;
+        const int dur  = it->endStep - it->startStep;
+        const int minS = prevEnd (it);
+        const int maxS = nextStart (it) - dur;
+        if (maxS < minS) return true;   // wedged between neighbours: no room to move
+        const int s = std::max (minS, std::min (maxS, newStart));
+        it->startStep = s;
+        it->endStep   = s + dur;
+        return true;
+    }
+
     /** Move a block's end step (exclusive), clamped against the next block's start
         and the pattern end. Minimum block duration is 1 step. */
     bool moveBlockEnd (int id, int newEnd)
