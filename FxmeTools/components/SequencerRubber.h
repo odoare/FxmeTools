@@ -41,6 +41,18 @@ public:
         setWantsKeyboardFocus (true);
     }
 
+    /** Minimum width of one step in pixels. When numSteps * min exceeds the
+        component width the strip becomes wider than the component and
+        scrolls horizontally (mouse wheel) — the default 20 px keeps steps
+        grabbable. Set 1 to always fit the whole pattern in the component
+        (e.g. when several strips must stay visually aligned). */
+    void setMinPixelsPerStep (int pixels)
+    {
+        minPixPerStep_ = std::max (1, pixels);
+        scrollPixels_ = 0.0;
+        repaint();
+    }
+
     // ---- state pushed by the outer component --------------------------------
 
     /** Called by a timer (message thread) to update the moving playhead. */
@@ -301,13 +313,15 @@ private:
     int  createStep_     = 0;
 
     static constexpr int kEdgeGrab      = 7;  // px width for edge grab zone
-    static constexpr int kMinPixPerStep = 20; // minimum pixels per step before scroll
+    static constexpr int kMinPixPerStep = 20; // default minimum pixels per step
+
+    int minPixPerStep_ = kMinPixPerStep;
 
     double pixelsPerStep() const noexcept
     {
         const int ns = seq_.getNumSteps();
         if (ns <= 0) return 1.0;
-        return std::max ((double) kMinPixPerStep,
+        return std::max ((double) minPixPerStep_,
                          (double) getWidth() / (double) ns);
     }
 
