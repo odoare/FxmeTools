@@ -14,12 +14,16 @@
       focus in the DAW while JUCE shows a blinking caret — typing then goes
       to the host, and a single focus request loses the race (hosts re-take
       focus while handling the same click). The fixer enforces it instead:
-      every click inside the editor claims the OS focus (which also makes
-      plain keyboard shortcuts work after clicking the UI), and while a
-      field holds the caret the focus is re-asserted at 10 Hz for a bounded
-      ~2 s window, refreshed as long as it actually sticks — so it never
-      fights the host forever, and clicking the field again always restarts
-      the battle. Harmless in standalone.
+      EVERY click inside the editor starts a 10 Hz claim battle for the OS
+      focus — a short (~0.8 s) window for plain clicks, so component
+      shortcuts like Delete-on-a-selected-block work, and a longer ~2 s
+      window while a field holds the caret, refreshed as long as the focus
+      actually sticks. Both windows are bounded, so it never fights the
+      host forever (and never yanks the focus back from a user who clicked
+      into the DAW more than a moment ago); clicking again always restarts
+      the battle. Harmless in standalone. If typing is still dead in a
+      specific DAW, it's the host's keyboard routing (REAPER: FX menu ->
+      "Send all keyboard input to plugin").
 
     - Return commits (the field's own onReturnKey runs first) and *leaves*
       the field — single-line editors only, multiline keeps Return as
@@ -68,7 +72,8 @@ public:
 
 private:
     static constexpr int enforceIntervalMs = 100;    // 10 Hz
-    static constexpr int enforceWindowMs   = 2000;   // give up after ~2 s of losing
+    static constexpr int clickWindowMs     = 800;    // plain clicks: short battle
+    static constexpr int caretWindowMs     = 2000;   // active caret: refreshed battle
 
     juce::Component& root;
     juce::Component::SafePointer<juce::TextEditor> current;
@@ -123,6 +128,7 @@ private:
             }
         };
 
+        grabPeerFocus();   // also covers non-click focus paths (tab, code)
         restartEnforcement();
     }
 
@@ -142,30 +148,38 @@ private:
     // ---- focus enforcement ---------------------------------------------------
     void restartEnforcement()
     {
-        deadline = juce::Time::getMillisecondCounter() + enforceWindowMs;
-        if (current != nullptr)
-            startTimer (enforceIntervalMs);
+        // Plain clicks fight briefly (enough to win the click's focus race,
+        // short enough never to bother a user who moved on to the DAW); an
+        // active caret keeps the longer, refreshed window.
+        deadline = juce::Time::getMillisecondCounter()
+                 + (current != nullptr ? caretWindowMs : clickWindowMs);
+        startTimer (enforceIntervalMs);
     }
 
     void timerCallback() override
     {
-        if (current == nullptr)
-        {
-            stopTimer();
-            return;
-        }
-
         auto* peer = root.getPeer();
         if (peer == nullptr)
             return;
 
         const auto now = juce::Time::getMillisecondCounter();
-        if (peer->isFocused())
-            deadline = now + enforceWindowMs;   // it sticks: keep watching
-        else if (now > deadline)
+        if (now > deadline)
+        {
             stopTimer();                        // don't fight the host forever
+            return;
+        }
+
+        if (peer->isFocused())
+        {
+            // Focus sticks. With a caret, keep watching (the host may steal
+            // it back later); after a plain click just let the window lapse.
+            if (current != nullptr)
+                deadline = now + caretWindowMs;
+        }
         else
+        {
             peer->grabFocus();
+        }
     }
 
     void grabPeerFocus()
