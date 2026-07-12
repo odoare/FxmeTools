@@ -35,7 +35,13 @@
         equal-power crossfade;
       * re-triggering records into the spare buffer while the old grain keeps
         playing, and the loop adopts the new grain at the next instance start
-        (which begins at zero envelope) — no click, no interruption.
+        (which begins at zero envelope) — no click, no interruption;
+      * while the FIRST grain is being recorded the live pass-through is
+        shaped by the same per-instance envelope (seam fades, playFraction
+        silence, attack/release), so the first grain-length already sounds
+        like a repetition. Its seam into the first looped instance is
+        sequential (fade-out then fade-in) rather than overlapped — a subtle
+        one-off dip instead of an unshaped first grain.
 
     Typical use:
 
@@ -153,7 +159,8 @@ public:
 
         if (recording)
         {
-            buffers[(size_t) recordBuffer][(size_t) recordPosition] = x;
+            const int recPos = recordPosition;
+            buffers[(size_t) recordBuffer][(size_t) recPos] = x;
             if (++recordPosition >= recordLength)
             {
                 recording     = false;
@@ -169,6 +176,20 @@ public:
                     for (auto& v : voices)
                         v.pos = -1;
                 }
+            }
+
+            // First grain (nothing looping yet): the raw buffer records the
+            // dry input, but the *output* is shaped like the instance this
+            // grain is about to become, so the first grain-length is already
+            // enveloped instead of passing through unshaped.
+            if (! playing)
+            {
+                const int playLen = std::max (32, (int) (playFraction * (float) recordLength));
+                const int fade    = std::clamp ((int) (sampleRate * (double) fadeSeconds),
+                                                1, playLen / 2);
+                return instanceEnv (recPos, playLen, fade,
+                                    (int) (attackFraction * (float) playLen), attackGamma,
+                                    (int) (releaseFraction * (float) playLen), releaseGamma) * x;
             }
         }
 
@@ -204,23 +225,9 @@ public:
                 if (v.pos < 0)
                     continue;
 
-                // Half-sine edges, unity sustain in between: through a seam
-                // the outgoing cos and the incoming sin are power-complementary.
-                const int sustainEnd = v.playLength - v.fade;
-                float env = 1.0f;
-                if (v.pos < v.fade)
-                    env = std::sin (1.5707963f * ((float) v.pos + 0.5f) / (float) v.fade);
-                else if (v.pos >= sustainEnd)
-                    env = std::cos (1.5707963f * ((float) (v.pos - sustainEnd) + 0.5f) / (float) v.fade);
-
-                // Optional shaped attack/release on top of the seam fades.
-                if (v.pos < v.attack)
-                    env *= std::pow (((float) v.pos + 0.5f) / (float) v.attack, v.attackGamma);
-                if (v.release > 0 && v.playLength - v.pos <= v.release)
-                    env *= std::pow (((float) (v.playLength - v.pos) - 0.5f) / (float) v.release,
-                                     v.releaseGamma);
-
-                grain += env * buffers[(size_t) v.buffer][(size_t) v.pos];
+                grain += instanceEnv (v.pos, v.playLength, v.fade,
+                                      v.attack, v.attackGamma, v.release, v.releaseGamma)
+                       * buffers[(size_t) v.buffer][(size_t) v.pos];
 
                 if (++v.pos >= v.playLength)
                     v.pos = -1;
@@ -239,6 +246,31 @@ public:
     }
 
 private:
+    /** The envelope of one grain instance at sample `pos`: half-sine seam
+        fades (power-complementary through overlapped seams), unity sustain,
+        and the optional shaped attack/release on top. 0 beyond playLength
+        (the playFraction silence). */
+    float instanceEnv (int pos, int playLength, int fade,
+                       int attack, float attGamma, int release, float relGamma) const
+    {
+        if (pos < 0 || pos >= playLength)
+            return 0.0f;
+
+        const int sustainEnd = playLength - fade;
+        float env = 1.0f;
+        if (pos < fade)
+            env = std::sin (1.5707963f * ((float) pos + 0.5f) / (float) fade);
+        else if (pos >= sustainEnd)
+            env = std::cos (1.5707963f * ((float) (pos - sustainEnd) + 0.5f) / (float) fade);
+
+        if (pos < attack)
+            env *= std::pow (((float) pos + 0.5f) / (float) attack, attGamma);
+        if (release > 0 && playLength - pos <= release)
+            env *= std::pow (((float) (playLength - pos) - 0.5f) / (float) release, relGamma);
+
+        return env;
+    }
+
     struct Voice
     {
         int buffer = 0, playLength = 64, fade = 32;
