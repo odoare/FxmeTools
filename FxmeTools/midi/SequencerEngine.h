@@ -146,6 +146,29 @@ public:
         playheadBeats_ = beats;
     }
 
+    /** Like setPositionBeats, but always exits the active block and re-enters
+        the block at the new position — even when it is the same block. Use
+        for host-transport jumps (loop wraps, relocates) where re-entering
+        matters (e.g. per-pass random draws keyed on the loop iteration);
+        setPositionBeats keeps a block active when the jump lands inside it. */
+    void relocate (double beats, const StringSequencer& seq)
+    {
+        if (! playing_) return;
+        const double patLen = seq.getPatternLengthBeats();
+        const double ssb    = seq.getStepSizeBeats();
+        if (patLen <= 0.0 || ssb <= 0.0) return;
+
+        exitCurrentBlock();
+
+        beats = std::fmod (beats, patLen);
+        if (beats < 0.0) beats += patLen;
+        playheadBeats_ = beats;
+
+        const SeqBlock* b = seq.blockAt (static_cast<int> (beats / ssb));
+        if (b && (enterEmptyBlocks_ || ! b->content.empty()))
+            enterBlock (b->id, b->content);
+    }
+
     /** Reset the playhead to 0 (without firing callbacks). */
     void reset() { playheadBeats_ = 0.0; activeBlockId_ = -1; }
 

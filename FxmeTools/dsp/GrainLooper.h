@@ -20,6 +20,14 @@
     train of short grains separated by silence, at the same period as the
     seamless loop. Faded edges are kept (clamped to half the played part).
 
+    setAttack / setRelease (off by default) add a shaped envelope on top of
+    each instance: gain ramps 0 -> 1 over the attack (a fraction of the
+    played length) and 1 -> 0 over the release, each as ramp^gamma
+    (1 = linear; attack: > 1 slow "exponential" swell, < 1 fast; release:
+    > 1 fast, exponential-decay-like tail, < 1 slow). They multiply the seam
+    fades, so extreme settings trade the constant-power seam property for
+    the shape — by design.
+
     While no grain is playing the input passes through unchanged, and every
     transition is glitch-free by construction:
 
@@ -90,6 +98,26 @@ public:
         playFraction = std::clamp (fraction, 0.0f, 1.0f);
     }
 
+    // Per-instance attack envelope: each instance ramps 0 -> 1 over
+    // `fraction` of its played length, shaped as ramp^gamma (1 = linear,
+    // > 1 slow swell, < 1 fast). fraction 0 disables (the default).
+    // Applies from the next instance start.
+    void setAttack (float fraction, float gamma = 1.0f) noexcept
+    {
+        attackFraction = std::clamp (fraction, 0.0f, 1.0f);
+        attackGamma    = std::clamp (gamma, 0.05f, 20.0f);
+    }
+
+    // Per-instance release envelope: gain ramps 1 -> 0 over the last
+    // `fraction` of the played length, shaped as remaining^gamma
+    // (1 = linear, > 1 fast exponential-decay-like tail, < 1 slow).
+    // fraction 0 disables (the default). Applies from the next instance.
+    void setRelease (float fraction, float gamma = 1.0f) noexcept
+    {
+        releaseFraction = std::clamp (fraction, 0.0f, 1.0f);
+        releaseGamma    = std::clamp (gamma, 0.05f, 20.0f);
+    }
+
     // Starts recording a new grain of the given length (clamped to the
     // prepared maximum). Realtime-safe. If a grain is already looping it
     // keeps playing until the new one is ready.
@@ -156,10 +184,14 @@ public:
             if (playing && --samplesToNextStart <= 0)
             {
                 auto& v = voices[(size_t) nextVoice];
-                v.buffer     = currentBuffer;
-                v.playLength = std::max (32, (int) (playFraction * (float) currentLength));
-                v.fade       = std::min (currentFade, v.playLength / 2);
-                v.pos        = 0;
+                v.buffer      = currentBuffer;
+                v.playLength  = std::max (32, (int) (playFraction * (float) currentLength));
+                v.fade        = std::min (currentFade, v.playLength / 2);
+                v.attack       = (int) (attackFraction * (float) v.playLength);
+                v.attackGamma  = attackGamma;
+                v.release      = (int) (releaseFraction * (float) v.playLength);
+                v.releaseGamma = releaseGamma;
+                v.pos          = 0;
                 // The instance period is set by the full grain regardless of
                 // how much of it is played, so setPlayFraction leaves the
                 // grain rate untouched (silence fills the difference).
@@ -180,6 +212,13 @@ public:
                     env = std::sin (1.5707963f * ((float) v.pos + 0.5f) / (float) v.fade);
                 else if (v.pos >= sustainEnd)
                     env = std::cos (1.5707963f * ((float) (v.pos - sustainEnd) + 0.5f) / (float) v.fade);
+
+                // Optional shaped attack/release on top of the seam fades.
+                if (v.pos < v.attack)
+                    env *= std::pow (((float) v.pos + 0.5f) / (float) v.attack, v.attackGamma);
+                if (v.release > 0 && v.playLength - v.pos <= v.release)
+                    env *= std::pow (((float) (v.playLength - v.pos) - 0.5f) / (float) v.release,
+                                     v.releaseGamma);
 
                 grain += env * buffers[(size_t) v.buffer][(size_t) v.pos];
 
@@ -203,6 +242,10 @@ private:
     struct Voice
     {
         int buffer = 0, playLength = 64, fade = 32;
+        int attack = 0;                // shaped-attack length; 0 = off
+        float attackGamma = 1.0f;
+        int release = 0;               // shaped-release length; 0 = off
+        float releaseGamma = 1.0f;
         int pos = -1;                  // sample position; < 0 = idle
     };
 
@@ -218,6 +261,10 @@ private:
     float mix = 0.0f, mixCoeff = 0.01f;
     float fadeSeconds = 0.03f;
     float playFraction = 1.0f;
+    float attackFraction = 0.0f;
+    float attackGamma = 1.0f;
+    float releaseFraction = 0.0f;
+    float releaseGamma = 1.0f;
 };
 
 } // namespace fxme
