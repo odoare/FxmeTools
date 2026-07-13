@@ -65,6 +65,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Saturator.h"
 #include "dsp/FormantFilter.h"
 #include "dsp/BitCrusher.h"
+#include "dsp/Downsampler.h"
 #include "dsp/DelayLine.h"
 #include "dsp/DeterministicRandom.h"
 #include "dsp/ArEnvelope.h"
