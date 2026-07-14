@@ -37,6 +37,12 @@ class SequencerEngine
 public:
     explicit SequencerEngine (EngineCallbacks cbs) : callbacks_ (std::move (cbs)) {}
 
+    /** By default, blocks with empty content are treated as unassigned and
+        never fire callbacks. Consumers whose blocks are meaningful even
+        without content (e.g. the content is an optional annotation) can opt
+        in to entering them too. */
+    void setEnterEmptyBlocks (bool shouldEnter) noexcept { enterEmptyBlocks_ = shouldEnter; }
+
     // ---- transport ---------------------------------------------------------
 
     /** Start playback. If the playhead is currently inside a block, fires
@@ -50,7 +56,7 @@ public:
         {
             const int step = static_cast<int> (playheadBeats_ / ssb);
             const SeqBlock* b = seq.blockAt (step);
-            if (b && ! b->content.empty())
+            if (b && (enterEmptyBlocks_ || ! b->content.empty()))
                 enterBlock (b->id, b->content);
         }
     }
@@ -133,11 +139,34 @@ public:
         if (activeBlockId_ < 0)
         {
             const SeqBlock* nb = seq.blockAt (newStep);
-            if (nb && ! nb->content.empty())
+            if (nb && (enterEmptyBlocks_ || ! nb->content.empty()))
                 enterBlock (nb->id, nb->content);
         }
 
         playheadBeats_ = beats;
+    }
+
+    /** Like setPositionBeats, but always exits the active block and re-enters
+        the block at the new position — even when it is the same block. Use
+        for host-transport jumps (loop wraps, relocates) where re-entering
+        matters (e.g. per-pass random draws keyed on the loop iteration);
+        setPositionBeats keeps a block active when the jump lands inside it. */
+    void relocate (double beats, const StringSequencer& seq)
+    {
+        if (! playing_) return;
+        const double patLen = seq.getPatternLengthBeats();
+        const double ssb    = seq.getStepSizeBeats();
+        if (patLen <= 0.0 || ssb <= 0.0) return;
+
+        exitCurrentBlock();
+
+        beats = std::fmod (beats, patLen);
+        if (beats < 0.0) beats += patLen;
+        playheadBeats_ = beats;
+
+        const SeqBlock* b = seq.blockAt (static_cast<int> (beats / ssb));
+        if (b && (enterEmptyBlocks_ || ! b->content.empty()))
+            enterBlock (b->id, b->content);
     }
 
     /** Reset the playhead to 0 (without firing callbacks). */
@@ -145,9 +174,10 @@ public:
 
 private:
     EngineCallbacks callbacks_;
-    double playheadBeats_ = 0.0;
-    bool   playing_       = false;
-    int    activeBlockId_ = -1;
+    double playheadBeats_    = 0.0;
+    bool   playing_          = false;
+    bool   enterEmptyBlocks_ = false;
+    int    activeBlockId_    = -1;
 
     void enterBlock (int id, const std::string& content)
     {
@@ -171,22 +201,24 @@ private:
     {
         for (int s = from; s < toExclusive; ++s)
         {
-            // Exit active block if it ends at this step.
+            // Exit the active block if this step is outside it — because it
+            // ends here, or because it was moved/resized away from under the
+            // playhead (message-thread edits while playing).
             if (activeBlockId_ >= 0)
             {
                 const SeqBlock* ab = seq.blockById (activeBlockId_);
-                if (! ab || ab->endStep == s)
+                if (! ab || s < ab->startStep || s >= ab->endStep)
                     exitCurrentBlock();
             }
 
-            // Enter the block that starts at this step (if any, and unassigned
-            // blocks are skipped — their content is empty).
+            // Enter the block that starts at this step (if any; unassigned
+            // blocks — empty content — are skipped unless enterEmptyBlocks_).
             if (activeBlockId_ < 0)
             {
                 for (const auto& b : seq.blocks())
                 {
                     if (b.startStep > s) break;
-                    if (b.startStep == s && ! b.content.empty())
+                    if (b.startStep == s && (enterEmptyBlocks_ || ! b.content.empty()))
                     {
                         enterBlock (b.id, b.content);
                         break;

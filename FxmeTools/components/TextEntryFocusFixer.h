@@ -1,50 +1,47 @@
 /*
-  ==============================================================================
-
+  ------------------------------------------------------------------------------
     TextEntryFocusFixer.h
 
-    Makes text entry reliable across hosts, especially Linux plugin windows.
-
-    Hosted plugin windows on Linux often keep the X11 input focus in the host
-    even though JUCE shows a blinking caret in a TextEditor — typing then goes
-    to the DAW, not the field. A single focus request after the click is not
-    enough: many hosts re-take the focus while (or shortly after) handling the
-    same click. This helper therefore *enforces* the focus:
-
-      - every mouse click anywhere inside `root` claims the OS input focus for
-        the plugin window (this also makes plain keyboard shortcuts work after
-        clicking the UI, not just text entry);
-      - while a TextEditor inside `root` holds the caret, the focus is
-        re-asserted at 10 Hz for a bounded window (~2 s, refreshed for as long
-        as the window actually keeps the focus or the user interacts). The
-        bound means we never fight the host forever: if the DAW insists on
-        keeping the keyboard, we give up until the next click — clicking the
-        field again always restarts the battle.
-
-    It also normalises the keyboard behaviour of every TextEditor under
-    `root` (present and future ones — it hooks the global focus change),
-    including the inline editors JUCE creates for editable Labels (e.g. the
-    FxmeSlider right-click value entry):
-
-      - Return commits (the field's own handler runs first) and then *leaves*
-        the field (single-line editors only), so keyboard shortcuts go back
-        to the rest of the UI;
-      - Escape restores the text the field had when it gained focus and
-        leaves without committing.
-
-    Usage: give the plugin editor one member, constructed with itself as root:
+    Reliable keyboard behaviour for juce::TextEditor fields inside (Linux)
+    plugin windows. An editor that contains any TextEditor owns ONE fixer,
+    constructed with the editor as root:
 
         fxme::TextEntryFocusFixer textEntryFixer { *this };
 
-    Two conventions keep the behaviour predictable:
-      - never call setText() on a field from a refresh/timer path without
-        checking `hasKeyboardFocus (true)` first (it would stomp typing);
-      - buttons that must not disturb typing or keyboard shortcuts should get
-        `setMouseClickGrabsKeyboardFocus (false)` — but leave it *enabled* on
-        buttons whose action needs pending edits committed first (the focus
-        loss triggers the field's commit).
+    What it fixes, for every present and future TextEditor under the root:
 
-  ==============================================================================
+    - Linux plugin focus: hosted plugin windows often keep the X11 input
+      focus in the DAW while JUCE shows a blinking caret — typing then goes
+      to the host, and a single focus request loses the race (hosts re-take
+      focus while handling the same click). The fixer enforces it instead:
+      EVERY click inside the editor starts a 10 Hz claim battle for the OS
+      focus — a short (~0.8 s) window for plain clicks, so component
+      shortcuts like Delete-on-a-selected-block work, and a longer ~2 s
+      window while a field holds the caret, refreshed as long as the focus
+      actually sticks. Both windows are bounded, so it never fights the
+      host forever (and never yanks the focus back from a user who clicked
+      into the DAW more than a moment ago); clicking again always restarts
+      the battle. Harmless in standalone. If typing is still dead in a
+      specific DAW, it's the host's keyboard routing (REAPER: FX menu ->
+      "Send all keyboard input to plugin").
+
+    - Return commits (the field's own onReturnKey runs first) and *leaves*
+      the field — single-line editors only, multiline keeps Return as
+      newline.
+
+    - Escape reverts to the text the field had when it was focused, and
+      leaves.
+
+    Conventions the fixer relies on (see the calling code, not this class):
+    refresh paths must guard setText() with hasKeyboardFocus(true), and
+    transport/utility buttons should setMouseClickGrabsKeyboardFocus(false).
+
+    Message thread only.
+
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
+  ------------------------------------------------------------------------------
 */
 
 #pragma once
@@ -54,130 +51,143 @@
 namespace fxme
 {
 
-class TextEntryFocusFixer : private juce::FocusChangeListener,
-                            private juce::MouseListener,
-                            private juce::Timer
+class TextEntryFocusFixer : private juce::MouseListener,
+                            private juce::Timer,
+                            private juce::FocusChangeListener
 {
 public:
-    explicit TextEntryFocusFixer (juce::Component& root) : root_ (root)
+    explicit TextEntryFocusFixer (juce::Component& rootComponent)
+        : root (rootComponent)
     {
+        root.addMouseListener (this, true);
         juce::Desktop::getInstance().addFocusChangeListener (this);
-        root_.addMouseListener (this, true);   // all nested children
     }
 
     ~TextEntryFocusFixer() override
     {
-        root_.removeMouseListener (this);
+        detachCurrent();
         juce::Desktop::getInstance().removeFocusChangeListener (this);
+        root.removeMouseListener (this);
     }
 
 private:
-    void globalFocusChanged (juce::Component* focused) override
-    {
-        auto* ed = dynamic_cast<juce::TextEditor*> (focused);
-        if (ed == nullptr || ! root_.isParentOf (ed))
-        {
-            stopTimer();   // none of our fields holds the caret any more
-            return;
-        }
+    static constexpr int enforceIntervalMs = 100;    // 10 Hz
+    static constexpr int clickWindowMs     = 800;    // plain clicks: short battle
+    static constexpr int caretWindowMs     = 2000;   // active caret: refreshed battle
 
-        current_     = ed;
-        textOnFocus_ = ed->getText();
+    juce::Component& root;
+    juce::Component::SafePointer<juce::TextEditor> current;
+    juce::String textAtFocus;
+    std::function<void()> savedReturn, savedEscape;
+    juce::uint32 deadline = 0;
 
-        // Escape = revert to the text present on focus, and leave.
-        ed->onEscapeKey = [this]
-        {
-            if (auto* e = current_.getComponent())
-            {
-                e->setText (textOnFocus_, false);
-                e->giveAwayKeyboardFocus();
-            }
-        };
-
-        // Return = commit (the field's own handler) and leave — single-line
-        // fields only; multiline editors keep Return as a line break.
-        // Wrapped once per editor.
-        if (! ed->getProperties().contains (kReturnWrapped))
-        {
-            ed->getProperties().set (kReturnWrapped, true);
-            auto prev = ed->onReturnKey;
-            juce::Component::SafePointer<juce::TextEditor> safe (ed);
-            ed->onReturnKey = [prev, safe]
-            {
-                if (prev != nullptr)
-                    prev();
-                if (safe != nullptr && ! safe->isMultiLine())
-                    safe->giveAwayKeyboardFocus();
-            };
-        }
-
-        startEnforcing();
-    }
-
-    // Any click inside the editor: claim the OS input focus for our window
-    // (hosted Linux windows often leave it with the DAW otherwise).
+    // ---- mouse: claim the OS focus on every click inside the editor --------
     void mouseDown (const juce::MouseEvent&) override
     {
         grabPeerFocus();
-        if (fieldHasCaret())
-            startEnforcing();
+        restartEnforcement();
+    }
+
+    // ---- desktop focus: follow the caret ------------------------------------
+    void globalFocusChanged (juce::Component* focused) override
+    {
+        auto* ed = dynamic_cast<juce::TextEditor*> (focused);
+        if (ed != nullptr && root.isParentOf (ed))
+        {
+            if (current == ed)
+                return;
+            detachCurrent();
+            attach (*ed);
+        }
+        else if (current != nullptr && focused != current.getComponent())
+        {
+            detachCurrent();
+        }
+    }
+
+    void attach (juce::TextEditor& ed)
+    {
+        current     = &ed;
+        textAtFocus = ed.getText();
+        savedReturn = ed.onReturnKey;
+        savedEscape = ed.onEscapeKey;
+
+        ed.onReturnKey = [this]
+        {
+            if (savedReturn) savedReturn();
+            if (current != nullptr && ! current->isMultiLine())
+                current->giveAwayKeyboardFocus();
+        };
+        ed.onEscapeKey = [this]
+        {
+            if (savedEscape) savedEscape();
+            if (current != nullptr)
+            {
+                current->setText (textAtFocus, false);
+                current->giveAwayKeyboardFocus();
+            }
+        };
+
+        grabPeerFocus();   // also covers non-click focus paths (tab, code)
+        restartEnforcement();
+    }
+
+    void detachCurrent()
+    {
+        if (current != nullptr)
+        {
+            current->onReturnKey = savedReturn;
+            current->onEscapeKey = savedEscape;
+        }
+        current = nullptr;
+        savedReturn = nullptr;
+        savedEscape = nullptr;
+        stopTimer();
+    }
+
+    // ---- focus enforcement ---------------------------------------------------
+    void restartEnforcement()
+    {
+        // Plain clicks fight briefly (enough to win the click's focus race,
+        // short enough never to bother a user who moved on to the DAW); an
+        // active caret keeps the longer, refreshed window.
+        deadline = juce::Time::getMillisecondCounter()
+                 + (current != nullptr ? caretWindowMs : clickWindowMs);
+        startTimer (enforceIntervalMs);
     }
 
     void timerCallback() override
     {
-        if (! fieldHasCaret())
+        auto* peer = root.getPeer();
+        if (peer == nullptr)
+            return;
+
+        const auto now = juce::Time::getMillisecondCounter();
+        if (now > deadline)
         {
-            stopTimer();
+            stopTimer();                        // don't fight the host forever
             return;
         }
 
-        if (auto* peer = root_.getPeer())
+        if (peer->isFocused())
         {
-            if (peer->isFocused())
-            {
-                // We actually hold the OS focus: keep watching (refresh the
-                // deadline) in case the host snatches it back later.
-                enforceUntil_ = juce::Time::getMillisecondCounter() + kEnforceMs;
-            }
-            else if (juce::Time::getMillisecondCounter() < enforceUntil_)
-            {
-                peer->grabFocus();
-            }
-            else
-            {
-                stopTimer();   // the host insists — give up until the next click
-            }
+            // Focus sticks. With a caret, keep watching (the host may steal
+            // it back later); after a plain click just let the window lapse.
+            if (current != nullptr)
+                deadline = now + caretWindowMs;
         }
-    }
-
-    void startEnforcing()
-    {
-        enforceUntil_ = juce::Time::getMillisecondCounter() + kEnforceMs;
-        grabPeerFocus();
-        startTimer (100);
-    }
-
-    bool fieldHasCaret() const
-    {
-        auto* e = current_.getComponent();
-        return e != nullptr && e->hasKeyboardFocus (true);
+        else
+        {
+            peer->grabFocus();
+        }
     }
 
     void grabPeerFocus()
     {
-        if (auto* peer = root_.getPeer())
+        if (auto* peer = root.getPeer())
             if (! peer->isFocused())
                 peer->grabFocus();
     }
-
-    static constexpr juce::uint32 kEnforceMs = 2000;
-
-    juce::Component& root_;
-    juce::Component::SafePointer<juce::TextEditor> current_;
-    juce::String textOnFocus_;
-    juce::uint32 enforceUntil_ = 0;
-
-    static constexpr const char* kReturnWrapped = "fxmeReturnWrapped";
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TextEntryFocusFixer)
 };

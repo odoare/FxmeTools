@@ -4,9 +4,11 @@
     SequencerRubber.h
 
     JUCE component that renders a StringSequencer as a horizontal rubber band:
-    - Mouse: left-drag on empty space creates a block; left-click selects;
-      dragging a block's left/right edge resizes (walls against neighbours);
-      no overlap is allowed.
+    - Mouse: left-drag on empty space creates a block; left-click selects
+      (clicking the selected block again deselects); dragging a block's body
+      moves it and dragging its left/right edge resizes it (both with walls
+      against the neighbours — no overlap is allowed); alt-click deletes a
+      block.
     - Keyboard: Delete removes the selected block; right-click clears its content.
     - Mouse wheel: horizontal scroll.
     - A moving playhead line and per-block custom painting via a BlockPainter.
@@ -39,6 +41,18 @@ public:
         : seq_ (seq), painter_ (std::move (painter))
     {
         setWantsKeyboardFocus (true);
+    }
+
+    /** Minimum width of one step in pixels. When numSteps * min exceeds the
+        component width the strip becomes wider than the component and
+        scrolls horizontally (mouse wheel) — the default 20 px keeps steps
+        grabbable. Set 1 to always fit the whole pattern in the component
+        (e.g. when several strips must stay visually aligned). */
+    void setMinPixelsPerStep (int pixels)
+    {
+        minPixPerStep_ = std::max (1, pixels);
+        scrollPixels_ = 0.0;
+        repaint();
     }
 
     // ---- state pushed by the outer component --------------------------------
@@ -135,6 +149,26 @@ public:
 
         const auto hit = hitTest (e.getPosition());
 
+        // Alt-click: delete the block (a mouse-only alternative to the
+        // Delete key, which needs the keyboard focus a hosted plugin window
+        // does not always win).
+        if (e.mods.isAltDown())
+        {
+            if (hit.blockId >= 0)
+            {
+                const bool wasSelected = (hit.blockId == selectedBlockId_);
+                if (wasSelected)
+                    selectedBlockId_ = -1;
+                seq_.removeBlock (hit.blockId);
+                if (onBlockDeleted)                onBlockDeleted (hit.blockId);
+                if (wasSelected && onBlockSelected) onBlockSelected (-1);
+                repaint();
+            }
+            dragMode_    = Drag::None;
+            dragBlockId_ = -1;
+            return;
+        }
+
         if (hit.blockId >= 0)
         {
             if (hit.leftEdge || hit.rightEdge)
@@ -145,22 +179,22 @@ public:
                 const auto* b = seq_.blockById (hit.blockId);
                 dragOriginStep_ = hit.leftEdge ? b->startStep : b->endStep;
             }
-            else if (hit.blockId == selectedBlockId_)
-            {
-                // Second click on the selected block → deselect
-                selectedBlockId_ = -1;
-                dragMode_    = Drag::None;
-                dragBlockId_ = -1;
-                if (onBlockSelected) onBlockSelected (-1);
-                repaint();
-            }
             else
             {
-                // Select the block (body click)
-                selectBlock (hit.blockId);
-                if (onBlockSelected) onBlockSelected (hit.blockId);
-                dragMode_    = Drag::None;
-                dragBlockId_ = -1;
+                // Body click: select (if not already) and arm a whole-block
+                // move. A click on the already-selected block that never
+                // turns into a drag deselects on mouse-up.
+                clickedSelected_ = (hit.blockId == selectedBlockId_);
+                if (! clickedSelected_)
+                {
+                    selectBlock (hit.blockId);
+                    if (onBlockSelected) onBlockSelected (hit.blockId);
+                }
+                dragMode_       = Drag::Moving;
+                dragBlockId_    = hit.blockId;
+                dragMoved_      = false;
+                if (const auto* b = seq_.blockById (hit.blockId))
+                    dragGrabOffset_ = xToStep (e.x) - b->startStep;
             }
         }
         else
@@ -207,10 +241,30 @@ public:
             seq_.moveBlockEnd (dragBlockId_, step);
             repaint();
         }
+        else if (dragMode_ == Drag::Moving)
+        {
+            if (const auto* b = seq_.blockById (dragBlockId_))
+            {
+                const int newStart = step - dragGrabOffset_;
+                if (newStart != b->startStep)
+                {
+                    seq_.moveBlock (dragBlockId_, newStart);
+                    dragMoved_ = true;
+                    repaint();
+                }
+            }
+        }
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
+        // A body click that never became a move toggles the selection off.
+        if (dragMode_ == Drag::Moving && ! dragMoved_ && clickedSelected_)
+        {
+            selectedBlockId_ = -1;
+            if (onBlockSelected) onBlockSelected (-1);
+        }
+
         if (dragMode_ == Drag::Creating)
         {
             const int s0 = std::min (dragOriginStep_, createStep_);
@@ -294,20 +348,25 @@ private:
     int    activeBlockId_   = -1;
     int    selectedBlockId_ = -1;
 
-    enum class Drag { None, Creating, ResizingStart, ResizingEnd };
-    Drag dragMode_       = Drag::None;
-    int  dragBlockId_    = -1;
-    int  dragOriginStep_ = 0;
-    int  createStep_     = 0;
+    enum class Drag { None, Creating, ResizingStart, ResizingEnd, Moving };
+    Drag dragMode_        = Drag::None;
+    int  dragBlockId_     = -1;
+    int  dragOriginStep_  = 0;
+    int  createStep_      = 0;
+    int  dragGrabOffset_  = 0;      // Moving: grabbed step relative to block start
+    bool dragMoved_       = false;  // Moving: the block actually moved
+    bool clickedSelected_ = false;  // Moving: the click hit the selected block
 
     static constexpr int kEdgeGrab      = 7;  // px width for edge grab zone
-    static constexpr int kMinPixPerStep = 20; // minimum pixels per step before scroll
+    static constexpr int kMinPixPerStep = 20; // default minimum pixels per step
+
+    int minPixPerStep_ = kMinPixPerStep;
 
     double pixelsPerStep() const noexcept
     {
         const int ns = seq_.getNumSteps();
         if (ns <= 0) return 1.0;
-        return std::max ((double) kMinPixPerStep,
+        return std::max ((double) minPixPerStep_,
                          (double) getWidth() / (double) ns);
     }
 

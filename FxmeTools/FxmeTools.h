@@ -2,7 +2,7 @@
 BEGIN_JUCE_MODULE_DECLARATION
   ID:               FxmeTools
   vendor:           odoare
-  version:          0.0.2
+  version:          0.0.3
   name:             FX-Mechanics shared C++ audio tools
   description:      Shared GUI controls, look-and-feel and DSP for FX-Mechanics
                     JUCE plugins. The WDL-backed FirFilter is provided as a
@@ -34,6 +34,11 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/FxmeButton.h"
 #include "components/FxmeMeters.h"
 
+// Threading: batch background jobs with progress + a message-thread
+// completion callback (see threading/BackgroundTaskRunner.h for the pattern
+// and a usage example).
+#include "threading/BackgroundTaskRunner.h"
+
 // MIDI / music-theory (header-only, no external deps)
 #include "midi/Scale.h"
 #include "midi/ChordName.h"
@@ -41,6 +46,13 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/GridTransform.h"
 #include "midi/StringSequencer.h"
 #include "midi/SequencerEngine.h"
+#include "midi/NoteDuration.h"
+
+// MIDI / music-theory (header-only, JUCE-based). MidiTools keeps its original
+// namespace from CppMusicTools, nested inside fxme (fxme::MidiTools::Chord);
+// the text-pattern arpeggiator engine is fxme::Arpeggiator.
+#include "midi/MidiTools.h"
+#include "midi/Arpeggiator.h"
 
 // DSP (header-only, no external deps)
 #include "dsp/Ambisonics.h"
@@ -54,6 +66,15 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Lfo.h"
 #include "dsp/CracksGenerator.h"
 #include "dsp/PitchShifter.h"
+#include "dsp/GrainLooper.h"
+#include "dsp/Waveshapers.h"
+#include "dsp/Saturator.h"
+#include "dsp/FormantFilter.h"
+#include "dsp/BitCrusher.h"
+#include "dsp/Downsampler.h"
+#include "dsp/DelayLine.h"
+#include "dsp/DeterministicRandom.h"
+#include "dsp/ArEnvelope.h"
 
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
@@ -62,6 +83,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/InfoButton.h"
 #include "components/TextEntryFocusFixer.h"
 #include "components/SequencerRubber.h"
+#include "components/TopBar.h"
+#include "components/TextEntryFocusFixer.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.

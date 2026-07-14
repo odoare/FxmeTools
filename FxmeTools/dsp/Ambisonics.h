@@ -109,20 +109,30 @@ inline Vec3 normalise (Vec3 v) noexcept
     return { v.x * inv, v.y * inv, v.z * inv };
 }
 
+inline Vec3 cross (Vec3 a, Vec3 b) noexcept
+{
+    return { a.y * b.z - a.z * b.y,
+             a.z * b.x - a.x * b.z,
+             a.x * b.y - a.y * b.x };
+}
+
 //==============================================================================
 // k-th of n quasi-uniform directions (by solid angle) inside the spherical cap
 // of half-angle `capHalfAngle` (radians) centred on +x, i.e. the front.
 // Points follow a Fibonacci spiral: deterministic, well spread for any n, and
 // a given point moves continuously when the cap opens or closes. A half-angle
 // of pi covers the whole sphere.
-inline Vec3 capDirection (int k, int n, float capHalfAngle) noexcept
+// `azimuthOffset` turns point k around the cap axis (e.g. for animating the
+// points around their nominal spots).
+inline Vec3 capDirection (int k, int n, float capHalfAngle,
+                          float azimuthOffset = 0.0f) noexcept
 {
     constexpr float goldenAngle = 2.3999632297f;   // pi * (3 - sqrt 5)
 
     const float w        = ((float) k + 0.5f) / (float) (n > 0 ? n : 1);
     const float cosTheta = 1.0f - w * (1.0f - std::cos (capHalfAngle));
     const float sinTheta = std::sqrt (std::fmax (0.0f, 1.0f - cosTheta * cosTheta));
-    const float azimuth  = (float) k * goldenAngle;
+    const float azimuth  = (float) k * goldenAngle + azimuthOffset;
 
     return { cosTheta, sinTheta * std::cos (azimuth), sinTheta * std::sin (azimuth) };
 }
@@ -162,6 +172,69 @@ inline void encodeSN3D (Vec3 d, float* gains, int order = maxOrder) noexcept
     gains[13] = 0.6123724f * x * (5.0f * zz - 1.0f);    // ACN13 L  (sqrt 3/8)
     gains[14] = 1.9364917f * z * (xx - yy);             // ACN14 N  (sqrt 15 / 2)
     gains[15] = 0.7905694f * x * (xx - 3.0f * yy);      // ACN15 P  (sqrt 5/8)
+}
+
+//==============================================================================
+// Virtual-microphone polar patterns: the classic first-order family
+//
+//     g(theta) = alpha + (1 - alpha) * cos(theta)
+//
+// where theta is the angle between the microphone axis and the arrival
+// direction, and alpha blends omni (1) into figure-of-eight (0). Negative
+// gains (the rear lobe of tight patterns and of the figure-8) are genuine
+// phase inversions and must be kept signed by renderers; take |g| only for
+// drawing the pattern.
+enum MicPattern
+{
+    micOmni = 0,
+    micCardioid,
+    micSupercardioid,
+    micHypercardioid,
+    micFigure8,
+    numMicPatterns
+};
+
+inline float micPatternAlpha (int pattern) noexcept
+{
+    switch (pattern)
+    {
+        case micOmni:          return 1.0f;
+        case micCardioid:      return 0.5f;
+        case micSupercardioid: return 0.366f;
+        case micHypercardioid: return 0.25f;
+        default:               return 0.0f;    // figure-8
+    }
+}
+
+// Signed pattern gain for unit vectors `axis` (where the microphone points)
+// and `arrival` (from the microphone towards the incoming wavefront origin).
+inline float micGain (float alpha, Vec3 axis, Vec3 arrival) noexcept
+{
+    return alpha + (1.0f - alpha)
+                 * (axis.x * arrival.x + axis.y * arrival.y + axis.z * arrival.z);
+}
+
+// Unit direction from azimuth / elevation (radians, x = front frame).
+inline Vec3 directionFromAngles (float azimuth, float elevation = 0.0f) noexcept
+{
+    const float ce = std::cos (elevation);
+    return { ce * std::cos (azimuth), ce * std::sin (azimuth), std::sin (elevation) };
+}
+
+// Decode weights (ACN0..ACN3 = W, Y, Z, X; SN3D) for a first-order virtual
+// microphone with the given polar pattern, pointed at unit direction `axis`.
+// Dot the result against the first four channels of an AmbiX stream (any
+// order >= 1) to render the microphone's signal:
+//     mic(t) = weights[0]*W(t) + weights[1]*Y(t) + weights[2]*Z(t) + weights[3]*X(t)
+// Higher ambisonic orders carry no extra information for a first-order
+// pattern and are correctly ignored.
+inline void micDecodeWeights (int pattern, Vec3 axis, float* weights) noexcept
+{
+    const float alpha = micPatternAlpha (pattern);
+    weights[0] = alpha;
+    weights[1] = (1.0f - alpha) * axis.y;
+    weights[2] = (1.0f - alpha) * axis.z;
+    weights[3] = (1.0f - alpha) * axis.x;
 }
 
 //==============================================================================

@@ -88,6 +88,31 @@ public:
         return blk.id;
     }
 
+    /** Adds a block with a caller-chosen id — for restoring saved state where
+        block ids must survive the round-trip (e.g. when ids seed per-block
+        random draws). Returns false if the id is taken/negative or the range
+        is invalid/overlapping. Bumps the internal id counter past `id` so
+        later addBlock() calls stay unique. */
+    bool addBlockWithId (int id, int startStep, int durationSteps)
+    {
+        if (id < 0 || blockById (id) != nullptr)
+            return false;
+        if (startStep < 0 || startStep >= numSteps_ || durationSteps < 1)
+            return false;
+        const int endStep = std::min (startStep + durationSteps, numSteps_);
+        for (const auto& b : blocks_)
+            if (startStep < b.endStep && endStep > b.startStep)
+                return false;
+        SeqBlock blk;
+        blk.id        = id;
+        blk.startStep = startStep;
+        blk.endStep   = endStep;
+        blocks_.push_back (blk);
+        sortBlocks();
+        nextId_ = std::max (nextId_, id + 1);
+        return true;
+    }
+
     bool removeBlock (int id)
     {
         auto it = findById (id);
@@ -122,6 +147,24 @@ public:
         const int maxS = it->endStep - 1;
         it->startStep = std::max (minS, std::min (maxS, newStart));
         sortBlocks();
+        return true;
+    }
+
+    /** Move a whole block to a new start step, preserving its duration.
+        Clamped against the neighbouring blocks and the pattern bounds
+        ("walls", like the resize methods) — overlap is impossible.
+        Returns false if the block was not found. */
+    bool moveBlock (int id, int newStart)
+    {
+        auto it = findById (id);
+        if (it == blocks_.end()) return false;
+        const int dur  = it->endStep - it->startStep;
+        const int minS = prevEnd (it);
+        const int maxS = nextStart (it) - dur;
+        if (maxS < minS) return true;   // wedged between neighbours: no room to move
+        const int s = std::max (minS, std::min (maxS, newStart));
+        it->startStep = s;
+        it->endStep   = s + dur;
         return true;
     }
 

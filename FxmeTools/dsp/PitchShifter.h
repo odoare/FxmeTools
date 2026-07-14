@@ -18,6 +18,11 @@
     from a control thread at any rate without zipper noise. Reads use 4-point
     Catmull-Rom interpolation.
 
+    An optional constant base delay (setBaseDelay) is added to both taps —
+    handy for chorus-type effects where each voice needs its own short delay
+    on top of the detune. It is smoothed like the ratio, so moving it glides
+    (with the natural doppler slur) instead of clicking.
+
     Typical use:
 
         fxme::PitchShifter shifter;
@@ -54,14 +59,17 @@ class PitchShifter
 {
 public:
     // Allocates the delay line — call from prepareToPlay, never from the
-    // audio thread. `maxWindowMs` bounds later setWindow() calls.
-    void prepare (double newSampleRate, float maxWindowMs = 100.0f)
+    // audio thread. `maxWindowMs` / `maxBaseDelayMs` bound later setWindow()
+    // and setBaseDelay() calls.
+    void prepare (double newSampleRate, float maxWindowMs = 100.0f,
+                  float maxBaseDelayMs = 0.0f)
     {
         sampleRate   = newSampleRate;
         maxWindowSamples = (float) (sampleRate * (double) maxWindowMs * 0.001);
+        maxBaseSamples   = (float) (sampleRate * (double) maxBaseDelayMs * 0.001);
 
         std::size_t size = 16;
-        while (size < (std::size_t) (maxWindowSamples + 8.0f))
+        while (size < (std::size_t) (maxWindowSamples + maxBaseSamples + 8.0f))
             size <<= 1;
         buffer.assign (size, 0.0f);
         mask = size - 1;
@@ -88,16 +96,24 @@ public:
         smoothCoeff = 1.0f - std::exp (-1.0f / (float) (sampleRate * (double) std::fmax (1.0e-4f, seconds)));
     }
 
+    // Constant extra delay on both taps (clamped to the prepared maximum).
+    void setBaseDelay (float ms) noexcept
+    {
+        targetBaseDelay = std::fmin (std::fmax (0.0f, (float) (sampleRate * (double) ms * 0.001)),
+                                     maxBaseSamples);
+    }
+
     void setPitchRatio (float ratio) noexcept        { targetRatio = ratio; }
     void setPitchCents (float cents) noexcept        { targetRatio = std::exp2 (cents * (1.0f / 1200.0f)); }
     void setPitchSemitones (float semitones) noexcept { targetRatio = std::exp2 (semitones * (1.0f / 12.0f)); }
 
-    // Clears the delay line and jumps the smoothed ratio to its target.
+    // Clears the delay line and jumps the smoothed values to their targets.
     void reset()
     {
         std::fill (buffer.begin(), buffer.end(), 0.0f);
         writePos = 0;
         currentRatio = targetRatio;
+        currentBaseDelay = targetBaseDelay;
     }
 
     // Sets the tap phase (0..1). Give each voice of a multi-voice effect a
@@ -111,7 +127,8 @@ public:
     {
         buffer[(std::size_t) writePos & mask] = x;
 
-        currentRatio += smoothCoeff * (targetRatio - currentRatio);
+        currentRatio     += smoothCoeff * (targetRatio     - currentRatio);
+        currentBaseDelay += smoothCoeff * (targetBaseDelay - currentBaseDelay);
 
         phase += (1.0f - currentRatio) / windowSamples;
         phase -= std::floor (phase);
@@ -122,8 +139,8 @@ public:
         const float g1 = std::sin (3.14159265f * phase);
         const float g2 = std::sin (3.14159265f * p2);
 
-        const float y = g1 * readInterpolated (2.0f + phase * windowSamples)
-                      + g2 * readInterpolated (2.0f + p2    * windowSamples);
+        const float y = g1 * readInterpolated (2.0f + currentBaseDelay + phase * windowSamples)
+                      + g2 * readInterpolated (2.0f + currentBaseDelay + p2    * windowSamples);
 
         ++writePos;
         return y;
@@ -160,8 +177,10 @@ private:
 
     double sampleRate = 48000.0;
     float windowMs = 50.0f, windowSamples = 2400.0f, maxWindowSamples = 4800.0f;
+    float maxBaseSamples = 0.0f;
     float phase = 0.0f;
     float targetRatio = 1.0f, currentRatio = 1.0f;
+    float targetBaseDelay = 0.0f, currentBaseDelay = 0.0f;
     float smoothingSeconds = 0.05f, smoothCoeff = 0.01f;
 };
 
