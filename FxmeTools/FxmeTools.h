@@ -60,6 +60,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
+#include "components/TextEntryFocusFixer.h"
 #include "components/SequencerRubber.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
