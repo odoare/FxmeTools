@@ -29,6 +29,11 @@
     allocates and probes the FFT round-trip gain — message thread only;
     everything else is realtime-safe.
 
+    SpectralFreezeMulti (below) is the ready-to-use multichannel version:
+    it owns one SpectralFreeze per channel with decorrelated phase streams,
+    and adds a stereo width control (how similar L and R are) and a wet/dry
+    mix — everything a freeze effect needs short of the parameter plumbing.
+
     NOT part of the FxmeTools module umbrella (needs the WDL sources):
         #include <FxmeTools/dsp/SpectralFreeze.h>
     and compile WDL/fft.c into the target (fxmetools_attach does, or add it
@@ -213,6 +218,97 @@ private:
     int     capPos = 0, hopAcc = 0, olaRead = 0, fadePos = 0, frame = 0;
     int64_t nextStart = 0;
     bool    capturing = false, frozen = false;
+};
+
+//==============================================================================
+/** Multichannel spectral freeze: one SpectralFreeze per channel, each with
+    its own phase stream (decorrelated, wide washes), plus:
+
+      - width (0..1): how similar the first two channels are —
+        L' = (1/2+w/2)·L + (1/2−w/2)·R and mirrored; 1 leaves the channels
+        fully decorrelated (bit-transparent width stage), 0 collapses them
+        to the identical mono average. Channels beyond the stereo pair are
+        left independent.
+      - mix (0..1): wet/dry blend of the whole freeze.
+
+    setIdentity() reserves the LOW 8 BITS of `tag` for the channel index —
+    pass a tag with those bits clear. prepare() allocates; the rest is
+    realtime-safe. */
+class SpectralFreezeMulti
+{
+public:
+    /** Allocates — message thread / prepareToPlay only. */
+    void prepare (int numChannels)
+    {
+        chans.resize ((size_t) (numChannels < 1 ? 1 : numChannels));
+        for (auto& c : chans)
+            c.prepare();
+        reset();
+    }
+
+    void reset()
+    {
+        for (auto& c : chans)
+            c.reset();
+    }
+
+    int numChannels() const { return (int) chans.size(); }
+
+    /** Identity of the phase streams; the low 8 bits of `tag` are replaced
+        by the channel index. Takes effect at the next startCapture(). */
+    void setIdentity (uint64_t seed, uint64_t tag)
+    {
+        for (size_t ch = 0; ch < chans.size(); ++ch)
+            chans[ch].setIdentity (seed, tag | (uint64_t) ch);
+    }
+
+    void startCapture()
+    {
+        for (auto& c : chans)
+            c.startCapture();
+    }
+
+    void setWidth (float w) { width = std::clamp (w, 0.0f, 1.0f); }
+    void setMix (float m)   { mix   = std::clamp (m, 0.0f, 1.0f); }
+
+    /** In-place block processing of `numChannels` buffers (uses at most
+        the prepared channel count). */
+    void process (float* const* data, int numChannels, int numSamples)
+    {
+        const int numCh = numChannels < (int) chans.size() ? numChannels
+                                                           : (int) chans.size();
+        if (numCh >= 2)
+        {
+            const float a = 0.5f + 0.5f * width;
+            const float b = 0.5f - 0.5f * width;
+            float* d0 = data[0];
+            float* d1 = data[1];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float dry0 = d0[i], dry1 = d1[i];
+                const float w0 = chans[0].processSample (dry0);
+                const float w1 = chans[1].processSample (dry1);
+                d0[i] = dry0 + mix * ((a * w0 + b * w1) - dry0);
+                d1[i] = dry1 + mix * ((b * w0 + a * w1) - dry1);
+            }
+        }
+
+        // Mono, or any channels beyond the stereo pair: plain per-channel.
+        for (int ch = numCh >= 2 ? 2 : 0; ch < numCh; ++ch)
+        {
+            auto& f = chans[(size_t) ch];
+            float* d = data[ch];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float dry = d[i];
+                d[i] = dry + mix * (f.processSample (dry) - dry);
+            }
+        }
+    }
+
+private:
+    std::vector<SpectralFreeze> chans;
+    float width = 1.0f, mix = 1.0f;
 };
 
 } // namespace fxme
