@@ -48,6 +48,12 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/SequencerEngine.h"
 #include "midi/NoteDuration.h"
 
+// MIDI / music-theory (header-only, JUCE-based). MidiTools keeps its original
+// namespace from CppMusicTools, nested inside fxme (fxme::MidiTools::Chord);
+// the text-pattern arpeggiator engine is fxme::Arpeggiator.
+#include "midi/MidiTools.h"
+#include "midi/Arpeggiator.h"
+
 // DSP (header-only, no external deps)
 #include "dsp/Ambisonics.h"
 #include "dsp/RoomAcoustics.h"
@@ -75,6 +81,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
+#include "components/TextEntryFocusFixer.h"
 #include "components/SequencerRubber.h"
 #include "components/TopBar.h"
 #include "components/TextEntryFocusFixer.h"
