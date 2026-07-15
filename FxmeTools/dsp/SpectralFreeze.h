@@ -225,10 +225,13 @@ private:
     its own phase stream (decorrelated, wide washes), plus:
 
       - width (0..1): how similar the first two channels are —
-        L' = (1/2+w/2)·L + (1/2−w/2)·R and mirrored; 1 leaves the channels
-        fully decorrelated (bit-transparent width stage), 0 collapses them
-        to the identical mono average. Channels beyond the stereo pair are
-        left independent.
+        L' = a·L + b·R and mirrored, with a:b in the ratio
+        (1/2+w/2):(1/2−w/2) and normalised to a²+b² = 1. Because the two
+        washes are incoherent, that keeps the energy constant across the
+        whole width sweep. 1 leaves the channels fully decorrelated
+        (a = 1, b = 0: bit-transparent width stage), 0 collapses them to
+        the identical mono blend. Channels beyond the stereo pair are left
+        independent.
       - mix (0..1): wet/dry blend of the whole freeze.
 
     setIdentity() reserves the LOW 8 BITS of `tag` for the channel index —
@@ -268,8 +271,20 @@ public:
             c.startCapture();
     }
 
-    void setWidth (float w) { width = std::clamp (w, 0.0f, 1.0f); }
-    void setMix (float m)   { mix   = std::clamp (m, 0.0f, 1.0f); }
+    void setWidth (float w)
+    {
+        width = std::clamp (w, 0.0f, 1.0f);
+        // Equal-power blend of the incoherent washes: normalise the
+        // linear-law coefficients to a²+b² = 1, so the energy stays
+        // constant from wide (a=1, b=0) to mono (a=b=1/√2).
+        const float a0 = 0.5f + 0.5f * width;
+        const float b0 = 0.5f - 0.5f * width;
+        const float n  = 1.0f / std::sqrt (a0 * a0 + b0 * b0);
+        a = a0 * n;
+        b = b0 * n;
+    }
+
+    void setMix (float m)   { mix = std::clamp (m, 0.0f, 1.0f); }
 
     /** In-place block processing of `numChannels` buffers (uses at most
         the prepared channel count). */
@@ -279,8 +294,6 @@ public:
                                                            : (int) chans.size();
         if (numCh >= 2)
         {
-            const float a = 0.5f + 0.5f * width;
-            const float b = 0.5f - 0.5f * width;
             float* d0 = data[0];
             float* d1 = data[1];
             for (int i = 0; i < numSamples; ++i)
@@ -309,6 +322,7 @@ public:
 private:
     std::vector<SpectralFreeze> chans;
     float width = 1.0f, mix = 1.0f;
+    float a = 1.0f, b = 0.0f;   // width blend coefficients, a²+b² = 1
 };
 
 } // namespace fxme
