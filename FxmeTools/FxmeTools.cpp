@@ -10,3 +10,5 @@
 #include "presets/EmbeddedAudio.cpp"
 #include "presets/PresetManager.cpp"
 #include "components/PresetComponent.cpp"
+#include "acoustics/FemMesh.cpp"
+#include "acoustics/PlateModes.cpp"

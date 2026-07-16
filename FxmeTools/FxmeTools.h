@@ -86,6 +86,14 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/TopBar.h"
 #include "components/TextEntryFocusFixer.h"
 
+// Finite-element vibro-acoustics: 2D mesh generation, thin-plate modal
+// analysis (Morley elements, mixed boundary conditions, tension term) and a
+// grid / filled-contour display. The numerical core is JUCE-free — see
+// acoustics/README.md.
+#include "acoustics/FemMesh.h"
+#include "acoustics/PlateModes.h"
+#include "acoustics/FemViewComponent.h"
+
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.
 // EmbeddedAudio stores audio files (e.g. impulse responses) inside the state
