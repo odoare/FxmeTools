@@ -168,6 +168,8 @@ bool PresetManager::applyStateXml (const juce::XmlElement& xml, const Preset& pr
     {
         const juce::ScopedValueSetter<bool> svs (suppressDirty, true);
         apvts.replaceState (newState);
+        if (onAfterLoad)
+            onAfterLoad();
     }
 
     dirty = false;
@@ -191,6 +193,8 @@ bool PresetManager::saveUserPreset (const juce::String& rawName)
 
     {
         const juce::ScopedValueSetter<bool> svs (suppressDirty, true);
+        if (onBeforeSave)
+            onBeforeSave();
         apvts.state.setProperty (presetNameProperty, name, nullptr);
         apvts.state.setProperty (presetIsFactoryProperty, false, nullptr);
     }

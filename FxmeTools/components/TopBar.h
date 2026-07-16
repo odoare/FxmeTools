@@ -49,6 +49,41 @@ public:
     void setAccentColour (juce::Colour c)     { accent = c; repaint(); }
     void setBackgroundColour (juce::Colour c) { background = c; repaint(); }
 
+    /** Parks externally-owned controls (e.g. the compact PresetBarComponent
+        and its toggle button) in the free space to the left of the version
+        string; the blurb is shortened so it never runs under them. Pass
+        nullptr for a slot to leave it out. */
+    void setRightControls (juce::Component* bar, int barWidth,
+                           juce::Component* button, int buttonWidth)
+    {
+        rightBar    = bar;    rightBarW    = barWidth;
+        rightButton = button; rightButtonW = buttonWidth;
+
+        if (rightBar != nullptr)    addAndMakeVisible (*rightBar);
+        if (rightButton != nullptr) addAndMakeVisible (*rightButton);
+
+        resized();
+    }
+
+    void resized() override
+    {
+        if (rightBar == nullptr && rightButton == nullptr)
+            return;
+
+        auto area = getLocalBounds().reduced (12, 6);
+        area.removeFromRight (kVersionWidth + 8);   // leave the version alone
+
+        auto strip = area.removeFromRight (reservedRight() - 8);
+        const int stripH = juce::jmin (28, strip.getHeight());
+        strip = strip.withSizeKeepingCentre (strip.getWidth(), stripH);
+
+        if (rightButton != nullptr)
+            rightButton->setBounds (strip.removeFromRight (rightButtonW));
+        strip.removeFromRight (6);
+        if (rightBar != nullptr)
+            rightBar->setBounds (strip);
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
@@ -87,7 +122,11 @@ public:
         g.setColour (dimText);
         g.setFont (juce::Font (juce::FontOptions (12.0f)));
         g.drawText ("v" + version + "  -  FX-Mechanics",
-                    area.removeFromRight (150), juce::Justification::centredRight);
+                    area.removeFromRight (kVersionWidth), juce::Justification::centredRight);
+
+        // Right controls (if any) sit between the version and the blurb;
+        // keep the blurb clear of them.
+        area.removeFromRight (reservedRight());
 
         // Short description next to the name.
         area.removeFromLeft (10);
@@ -97,8 +136,21 @@ public:
     }
 
 private:
+    int reservedRight() const
+    {
+        if (rightBar == nullptr && rightButton == nullptr)
+            return 0;
+        return rightBarW + 6 + rightButtonW + 8;   // strip + gap to the version
+    }
+
+    static constexpr int kVersionWidth = 150;
+
     juce::String name, blurb, version;
     juce::Image logo;
+
+    juce::Component* rightBar = nullptr;
+    juce::Component* rightButton = nullptr;
+    int rightBarW = 0, rightButtonW = 0;
 
     // House palette (same values as Spread's spr::theme).
     juce::Colour background { 0xff14101a };

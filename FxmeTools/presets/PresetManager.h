@@ -96,6 +96,20 @@ public:
     bool renameUserPreset (const Preset& preset, const juce::String& newName);
 
     //==========================================================================
+    // Side-state hooks, for processors that keep non-parameter data outside
+    // apvts.state (extra ValueTree children merged in at save time only).
+    // Both run on the message thread with the dirty tracking suppressed.
+
+    /** Called just before a preset is written: merge any side state into
+        apvts.state so it lands in the preset file. */
+    std::function<void()> onBeforeSave;
+
+    /** Called right after a loaded preset's state has been applied
+        (replaceState), before the change broadcast: rebuild whatever
+        depends on the side state now inside apvts.state. */
+    std::function<void()> onAfterLoad;
+
+    //==========================================================================
     // Current preset info
     juce::String getCurrentPresetName() const;
     bool currentPresetIsFactory() const;
