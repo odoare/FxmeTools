@@ -105,6 +105,8 @@ struct ModalOptions
     int numModes = 32;              // how many modes to return (lowest first)
     double tension = 0.0;           // reference tension T0 (>= 0)
     double poissonRatio = 0.3;
+    int numThreads = 0;             // eigensolver worker threads; 0 = auto
+                                    // (about half the cores, at most 4)
     std::function<void (float)> progress;   // optional, called with 0..1
 };
 

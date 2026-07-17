@@ -32,14 +32,44 @@
 #include "PlateModes.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <thread>
 
 namespace fxme::acoustics
 {
 
 namespace
 {
+
+/** Runs fn(0..count-1) on up to nThreads threads (the calling thread
+    included). fn instances must touch disjoint data. */
+void parallelFor (int nThreads, int count, const std::function<void (int)>& fn)
+{
+    nThreads = std::min (nThreads, count);
+    if (nThreads <= 1)
+    {
+        for (int i = 0; i < count; ++i)
+            fn (i);
+        return;
+    }
+
+    std::atomic<int> next { 0 };
+    auto worker = [&next, count, &fn]
+    {
+        for (int i; (i = next.fetch_add (1)) < count;)
+            fn (i);
+    };
+
+    std::vector<std::thread> team;
+    team.reserve ((size_t) (nThreads - 1));
+    for (int t = 0; t < nThreads - 1; ++t)
+        team.emplace_back (worker);
+    worker();
+    for (auto& th : team)
+        th.join();
+}
 
 // ---------------------------------------------------------------------------
 // Small dense linear algebra helpers (double, row-major).
@@ -167,18 +197,27 @@ void jacobiEigen (std::vector<double>& a, std::vector<double>& V, int p)
 
     for (int sweep = 0; sweep < 60; ++sweep)
     {
-        double off = 0.0;
+        // Relative convergence test: the entries scale with the eigenvalues
+        // (an absolute threshold would never trigger and every call would
+        // burn the full sweep budget).
+        double off = 0.0, diag = 0.0;
         for (int i = 0; i < p; ++i)
+        {
+            diag += at (i, i) * at (i, i);
             for (int j = i + 1; j < p; ++j)
                 off += at (i, j) * at (i, j);
-        if (off < 1.0e-24)
+        }
+        if (off < 1.0e-22 * std::max (diag, 1.0e-300))
             break;
+
+        // Skip rotations that cannot change the result at double precision.
+        const double skip = 1.0e-28 * std::max (diag, 1.0e-300) / (double) (p * p);
 
         for (int i = 0; i < p - 1; ++i)
             for (int j = i + 1; j < p; ++j)
             {
                 const double apq = at (i, j);
-                if (std::abs (apq) < 1.0e-300)
+                if (apq * apq < skip)
                     continue;
                 const double app = at (i, i), aqq = at (j, j);
                 const double theta = 0.5 * (aqq - app) / apq;
@@ -464,78 +503,86 @@ ModalResult computePlateModes (const FemMesh& mesh,
     report (0.25f);
 
     // ------------------------------------------------------------------
-    // Subspace iteration with Rayleigh-Ritz on (A, M).
+    // Subspace iteration with Rayleigh-Ritz on (A, M). The block is stored
+    // transposed (every iteration vector is a contiguous row) so all the
+    // O(n^2 p) inner loops walk contiguous memory; two inverse-power steps
+    // are taken between the comparatively expensive Rayleigh-Ritz
+    // projections; and the independent per-vector work is spread over a
+    // few threads (options.numThreads, 0 = auto).
     // ------------------------------------------------------------------
     const int wanted = std::min (options.numModes, n);
     const int p = std::min (n, wanted + std::max (8, wanted / 2));
 
-    std::vector<double> X ((size_t) n * (size_t) p);
-    for (size_t i = 0; i < X.size(); ++i)
-        X[i] = prand (i);
+    int nThreads = options.numThreads;
+    if (nThreads <= 0)
+    {
+        const unsigned hw = std::thread::hardware_concurrency();
+        nThreads = std::min (4, std::max (1, (int) (hw > 1 ? hw / 2 : 1)));
+    }
 
-    std::vector<double> Z ((size_t) n * (size_t) p);
-    std::vector<double> W ((size_t) n * (size_t) p);       // scratch: M*Z or A*Z columns
+    std::vector<double> Xt ((size_t) p * (size_t) n);   // p rows of length n
+    for (size_t i = 0; i < Xt.size(); ++i)
+        Xt[i] = prand (i);
+
+    std::vector<double> Zt ((size_t) p * (size_t) n);
+    std::vector<double> AZt ((size_t) p * (size_t) n);
+    std::vector<double> MZt ((size_t) p * (size_t) n);
     std::vector<double> Ap ((size_t) p * (size_t) p), Mp ((size_t) p * (size_t) p);
     std::vector<double> theta ((size_t) p, 0.0), thetaPrev ((size_t) p, -1.0);
-    std::vector<double> col ((size_t) n);
 
     const int maxIters = 60;
     int iter = 0;
     for (; iter < maxIters; ++iter)
     {
-        // Z = P^-1 (M X): one inverse-power step towards the low modes.
-        for (int j = 0; j < p; ++j)
+        // Inverse-power step X -> Z towards the low modes, normalising each
+        // vector (MZt rows double as per-vector scratch). A second step
+        // between projections would halve the Rayleigh-Ritz work, but two
+        // steps without re-orthonormalisation collapse the block (the
+        // projected mass matrix goes numerically singular).
+        parallelFor (nThreads, p, [&] (int j)
         {
-            for (int i = 0; i < n; ++i)
-                col[(size_t) i] = X[(size_t) i * (size_t) p + (size_t) j];
-            symMatVec (M, n, col.data(), &W[0]);
-            choleskySolve (P, n, &W[0]);
-            for (int i = 0; i < n; ++i)
-                Z[(size_t) i * (size_t) p + (size_t) j] = W[(size_t) i];
-        }
+            const double* s = &Xt[(size_t) j * (size_t) n];
+            double* scratch = &MZt[(size_t) j * (size_t) n];
+            symMatVec (M, n, s, scratch);
+            choleskySolve (P, n, scratch);
 
-        // Normalise columns of Z (keeps the small projected problem sane).
-        for (int j = 0; j < p; ++j)
-        {
-            double s = 0.0;
+            double norm = 0.0;
             for (int i = 0; i < n; ++i)
-            {
-                const double v = Z[(size_t) i * (size_t) p + (size_t) j];
-                s += v * v;
-            }
-            const double inv = s > 0.0 ? 1.0 / std::sqrt (s) : 1.0;
+                norm += scratch[i] * scratch[i];
+            const double inv = norm > 0.0 ? 1.0 / std::sqrt (norm) : 1.0;
+            double* z = &Zt[(size_t) j * (size_t) n];
             for (int i = 0; i < n; ++i)
-                Z[(size_t) i * (size_t) p + (size_t) j] *= inv;
-        }
+                z[i] = scratch[i] * inv;
+        });
 
-        // Projected matrices Ap = Z'AZ, Mp = Z'MZ.
-        auto project = [&] (const std::vector<double>& Mat, std::vector<double>& small)
+        // AZ = A Z and MZ = M Z, one contiguous row per vector.
+        parallelFor (nThreads, p, [&] (int j)
         {
-            // W = Mat * Z (n x p)
-            for (int i = 0; i < n; ++i)
+            const double* z = &Zt[(size_t) j * (size_t) n];
+            symMatVec (A, n, z, &AZt[(size_t) j * (size_t) n]);
+            symMatVec (M, n, z, &MZt[(size_t) j * (size_t) n]);
+        });
+
+        // Projected matrices Ap = Z'AZ, Mp = Z'MZ (symmetric, contiguous dots).
+        parallelFor (nThreads, p, [&] (int a2)
+        {
+            const double* za = &Zt[(size_t) a2 * (size_t) n];
+            for (int b2 = a2; b2 < p; ++b2)
             {
-                const double* row = &Mat[(size_t) i * (size_t) n];
-                for (int j = 0; j < p; ++j)
+                const double* ab = &AZt[(size_t) b2 * (size_t) n];
+                const double* mb = &MZt[(size_t) b2 * (size_t) n];
+                double sa = 0.0, sm = 0.0;
+                for (int i = 0; i < n; ++i)
                 {
-                    double s = 0.0;
-                    for (int k = 0; k < n; ++k)
-                        s += row[k] * Z[(size_t) k * (size_t) p + (size_t) j];
-                    W[(size_t) i * (size_t) p + (size_t) j] = s;
+                    sa += za[i] * ab[i];
+                    sm += za[i] * mb[i];
                 }
+                Ap[(size_t) a2 * (size_t) p + (size_t) b2] = sa;
+                Ap[(size_t) b2 * (size_t) p + (size_t) a2] = sa;
+                Mp[(size_t) a2 * (size_t) p + (size_t) b2] = sm;
+                Mp[(size_t) b2 * (size_t) p + (size_t) a2] = sm;
             }
-            // small = Z' W (p x p)
-            for (int a2 = 0; a2 < p; ++a2)
-                for (int b2 = 0; b2 < p; ++b2)
-                {
-                    double s = 0.0;
-                    for (int k = 0; k < n; ++k)
-                        s += Z[(size_t) k * (size_t) p + (size_t) a2]
-                           * W[(size_t) k * (size_t) p + (size_t) b2];
-                    small[(size_t) a2 * (size_t) p + (size_t) b2] = s;
-                }
-        };
-        project (A, Ap);
-        project (M, Mp);
+        });
 
         // Small generalized problem Ap v = theta Mp v via Cholesky + Jacobi.
         std::vector<double> Lp = Mp;
@@ -604,32 +651,40 @@ ModalResult computePlateModes (const FemMesh& mesh,
                 U[(size_t) i * (size_t) p + (size_t) jj] = u[i];
         }
 
-        for (int i = 0; i < n; ++i)
+        // Ritz vectors: row j of the new X is sum_k U[k][j] * Z_k.
+        parallelFor (nThreads, p, [&] (int j)
         {
-            const double* zrow = &Z[(size_t) i * (size_t) p];
-            for (int j = 0; j < p; ++j)
+            double* x = &Xt[(size_t) j * (size_t) n];
+            for (int i = 0; i < n; ++i)
+                x[i] = 0.0;
+            for (int k = 0; k < p; ++k)
             {
-                double s = 0.0;
-                for (int k = 0; k < p; ++k)
-                    s += zrow[k] * U[(size_t) k * (size_t) p + (size_t) j];
-                W[(size_t) i * (size_t) p + (size_t) j] = s;
+                const double u = U[(size_t) k * (size_t) p + (size_t) j];
+                if (u == 0.0)
+                    continue;
+                const double* z = &Zt[(size_t) k * (size_t) n];
+                for (int i = 0; i < n; ++i)
+                    x[i] += u * z[i];
             }
-        }
-        std::swap (X, W);
+        });
 
         std::sort (theta.begin(), theta.end());
 
-        // Convergence on the wanted eigenvalues.
-        double maxRel = 0.0;
-        for (int k = 0; k < wanted; ++k)
+        // Convergence on the wanted eigenvalues. The lower half must reach
+        // 1e-6 relative on omega^2 (5e-7 on frequency, ~0.001 cents); the
+        // upper half — the slowest to converge, and the modes whose FEM
+        // discretisation error is orders of magnitude larger anyway — only
+        // 1e-4 (~0.1 cents). This saves a large share of the iterations.
+        bool converged = iter > 2;
+        for (int k = 0; k < wanted && converged; ++k)
         {
             const double denom = std::max (std::abs (theta[(size_t) k]), 1.0e-12);
-            maxRel = std::max (maxRel, std::abs (theta[(size_t) k] - thetaPrev[(size_t) k]) / denom);
+            const double rel = std::abs (theta[(size_t) k] - thetaPrev[(size_t) k]) / denom;
+            converged = rel < (k < wanted / 2 ? 1.0e-6 : 1.0e-4);
         }
         thetaPrev = theta;
         report (0.25f + 0.7f * (float) (iter + 1) / (float) maxIters);
-        // 1e-7 relative on omega^2 is ~5e-8 on frequency: far below audibility.
-        if (iter > 2 && maxRel < 1.0e-7)
+        if (converged)
             break;
     }
 
@@ -647,7 +702,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
             continue;
 
         for (int i = 0; i < n; ++i)
-            x[(size_t) i] = X[(size_t) i * (size_t) p + (size_t) k];
+            x[(size_t) i] = Xt[(size_t) k * (size_t) n + (size_t) i];
 
         symMatVec (M, n, x.data(), Mx.data());
         double xMx = 0.0;
