@@ -32,6 +32,8 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <utility>
+#include <vector>
 
 namespace fxme
 {
@@ -49,39 +51,51 @@ public:
     void setAccentColour (juce::Colour c)     { accent = c; repaint(); }
     void setBackgroundColour (juce::Colour c) { background = c; repaint(); }
 
-    /** Parks externally-owned controls (e.g. the compact PresetBarComponent
-        and its toggle button) in the free space to the left of the version
-        string; the blurb is shortened so it never runs under them. Pass
-        nullptr for a slot to leave it out. */
+    /** Parks externally-owned controls (a level-meter strip, the compact
+        PresetBarComponent, its toggle button...) in the free space to the
+        left of the version string, laid out left to right in the order
+        given; the blurb is shortened so it never runs under them. Entries
+        with a null component are skipped, so a caller can pass an optional
+        control unconditionally. The bar does not take ownership. */
+    void setRightControls (std::initializer_list<std::pair<juce::Component*, int>> controls)
+    {
+        rightControls.clear();
+        for (const auto& [component, width] : controls)
+            if (component != nullptr)
+            {
+                rightControls.emplace_back (component, width);
+                addAndMakeVisible (*component);
+            }
+        resized();
+    }
+
+    /** The common bar + toggle pairing. */
     void setRightControls (juce::Component* bar, int barWidth,
                            juce::Component* button, int buttonWidth)
     {
-        rightBar    = bar;    rightBarW    = barWidth;
-        rightButton = button; rightButtonW = buttonWidth;
-
-        if (rightBar != nullptr)    addAndMakeVisible (*rightBar);
-        if (rightButton != nullptr) addAndMakeVisible (*rightButton);
-
-        resized();
+        setRightControls ({ { bar, barWidth }, { button, buttonWidth } });
     }
 
     void resized() override
     {
-        if (rightBar == nullptr && rightButton == nullptr)
+        if (rightControls.empty())
             return;
 
         auto area = getLocalBounds().reduced (12, 6);
         area.removeFromRight (kVersionWidth + 8);   // leave the version alone
 
+        // The strip is exactly as wide as the controls plus their gaps, so
+        // filling it left to right lands the last one against the version.
         auto strip = area.removeFromRight (reservedRight() - 8);
-        const int stripH = juce::jmin (28, strip.getHeight());
+        const int stripH = juce::jmin (kControlHeight, strip.getHeight());
         strip = strip.withSizeKeepingCentre (strip.getWidth(), stripH);
 
-        if (rightButton != nullptr)
-            rightButton->setBounds (strip.removeFromRight (rightButtonW));
-        strip.removeFromRight (6);
-        if (rightBar != nullptr)
-            rightBar->setBounds (strip);
+        for (size_t i = 0; i < rightControls.size(); ++i)
+        {
+            if (i > 0)
+                strip.removeFromLeft (kControlGap);
+            rightControls[i].first->setBounds (strip.removeFromLeft (rightControls[i].second));
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -138,19 +152,23 @@ public:
 private:
     int reservedRight() const
     {
-        if (rightBar == nullptr && rightButton == nullptr)
+        if (rightControls.empty())
             return 0;
-        return rightBarW + 6 + rightButtonW + 8;   // strip + gap to the version
+
+        int total = 8;   // gap to the version string
+        for (size_t i = 0; i < rightControls.size(); ++i)
+            total += rightControls[i].second + (i > 0 ? kControlGap : 0);
+        return total;
     }
 
-    static constexpr int kVersionWidth = 150;
+    static constexpr int kVersionWidth  = 150;
+    static constexpr int kControlGap    = 6;
+    static constexpr int kControlHeight = 28;
 
     juce::String name, blurb, version;
     juce::Image logo;
 
-    juce::Component* rightBar = nullptr;
-    juce::Component* rightButton = nullptr;
-    int rightBarW = 0, rightButtonW = 0;
+    std::vector<std::pair<juce::Component*, int>> rightControls;
 
     // House palette (same values as Spread's spr::theme).
     juce::Colour background { 0xff14101a };
