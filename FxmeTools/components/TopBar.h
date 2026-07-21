@@ -51,6 +51,14 @@ public:
     void setAccentColour (juce::Colour c)     { accent = c; repaint(); }
     void setBackgroundColour (juce::Colour c) { background = c; repaint(); }
 
+    /** Optional artwork centred in whatever space is left between the blurb
+        and the parked right controls, scaled to the bar's height (aspect
+        preserved, never enlarged). The blurb keeps priority — it takes the
+        width it needs first, and the image shrinks to whatever gap remains.
+        Use a transparent PNG: it is drawn straight onto the header
+        gradient. */
+    void setDecoration (juce::Image image) { decoration = std::move (image); repaint(); }
+
     /** Parks externally-owned controls (a level-meter strip, the compact
         PresetBarComponent, its toggle button...) in the free space to the
         left of the version string, laid out left to right in the order
@@ -141,12 +149,29 @@ public:
         // Right controls (if any) sit between the version and the blurb;
         // keep the blurb clear of them.
         area.removeFromRight (reservedRight());
-
-        // Short description next to the name.
         area.removeFromLeft (10);
+
+        // Short description next to the name, taking only the width it needs
+        // so the decoration can have the rest.
         g.setColour (dimText);
         g.setFont (juce::Font (juce::FontOptions ((float) getHeight() * 0.26f)));
-        g.drawText (blurb, area, juce::Justification::centredLeft);
+        const int blurbWidth = juce::jmin (
+            area.getWidth(),
+            juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), blurb));
+        g.drawText (blurb, area.removeFromLeft (blurbWidth),
+                    juce::Justification::centredLeft);
+
+        // Decoration centred in the gap between the blurb and the parked
+        // controls; `onlyReduceInSize` keeps it inside a narrow gap instead
+        // of overflowing into either.
+        if (decoration.isValid() && decoration.getHeight() > 0)
+        {
+            auto gap = area.reduced (kDecorationGap, 0);
+            if (gap.getWidth() > 0)
+                g.drawImage (decoration, gap.toFloat(),
+                             juce::RectanglePlacement::centred
+                           | juce::RectanglePlacement::onlyReduceInSize);
+        }
     }
 
 private:
@@ -161,12 +186,13 @@ private:
         return total;
     }
 
-    static constexpr int kVersionWidth  = 150;
-    static constexpr int kControlGap    = 6;
-    static constexpr int kControlHeight = 28;
+    static constexpr int kVersionWidth   = 150;
+    static constexpr int kControlGap     = 6;
+    static constexpr int kControlHeight  = 28;
+    static constexpr int kDecorationGap  = 12;
 
     juce::String name, blurb, version;
-    juce::Image logo;
+    juce::Image logo, decoration;
 
     std::vector<std::pair<juce::Component*, int>> rightControls;
 
