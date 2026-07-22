@@ -59,6 +59,25 @@ public:
         gradient. */
     void setDecoration (juce::Image image) { decoration = std::move (image); repaint(); }
 
+    /** Fired when the company logo or the decoration artwork is clicked —
+        plugins hang an about / splash screen off this (see
+        fxme::SplashOverlay). The hit areas are whatever those two images
+        last painted, so they follow the layout automatically. */
+    std::function<void()> onLogoClicked;
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (onLogoClicked != nullptr && isOverArtwork (e.getPosition()))
+            onLogoClicked();
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        setMouseCursor (onLogoClicked != nullptr && isOverArtwork (e.getPosition())
+                        ? juce::MouseCursor::PointingHandCursor
+                        : juce::MouseCursor::NormalCursor);
+    }
+
     /** Parks externally-owned controls (a level-meter strip, the compact
         PresetBarComponent, its toggle button...) in the free space to the
         left of the version string, laid out left to right in the order
@@ -124,11 +143,15 @@ public:
         if (logo.isValid())
         {
             const int side = area.getHeight();
-            auto logoArea = area.removeFromLeft (side);
-            g.drawImage (logo, logoArea.toFloat(),
+            logoHit = area.removeFromLeft (side);
+            g.drawImage (logo, logoHit.toFloat(),
                          juce::RectanglePlacement::centred
                        | juce::RectanglePlacement::onlyReduceInSize);
             area.removeFromLeft (12);
+        }
+        else
+        {
+            logoHit = {};
         }
 
         // Plugin name, large.
@@ -167,10 +190,15 @@ public:
         if (decoration.isValid() && decoration.getHeight() > 0)
         {
             auto gap = area.reduced (kDecorationGap, 0);
+            decorationHit = gap.getWidth() > 0 ? gap : juce::Rectangle<int>();
             if (gap.getWidth() > 0)
                 g.drawImage (decoration, gap.toFloat(),
                              juce::RectanglePlacement::centred
                            | juce::RectanglePlacement::onlyReduceInSize);
+        }
+        else
+        {
+            decorationHit = {};
         }
     }
 
@@ -186,6 +214,11 @@ private:
         return total;
     }
 
+    bool isOverArtwork (juce::Point<int> p) const
+    {
+        return logoHit.contains (p) || decorationHit.contains (p);
+    }
+
     static constexpr int kVersionWidth   = 150;
     static constexpr int kControlGap     = 6;
     static constexpr int kControlHeight  = 28;
@@ -193,6 +226,7 @@ private:
 
     juce::String name, blurb, version;
     juce::Image logo, decoration;
+    juce::Rectangle<int> logoHit, decorationHit;   // set while painting them
 
     std::vector<std::pair<juce::Component*, int>> rightControls;
 

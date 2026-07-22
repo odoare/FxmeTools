@@ -84,6 +84,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/TextEntryFocusFixer.h"
 #include "components/SequencerRubber.h"
 #include "components/TopBar.h"
+#include "components/SplashOverlay.h"
 #include "components/AccentToggle.h"
 #include "components/TextEntryFocusFixer.h"
 
