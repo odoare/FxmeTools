@@ -142,7 +142,9 @@ public:
         const float y = g1 * readInterpolated (2.0f + currentBaseDelay + phase * windowSamples)
                       + g2 * readInterpolated (2.0f + currentBaseDelay + p2    * windowSamples);
 
-        ++writePos;
+        // Wrapped, not free-running: the read arithmetic above depends on
+        // writePos staying inside the buffer.
+        writePos = (writePos + 1) & (long) mask;
         return y;
     }
 
@@ -156,9 +158,16 @@ private:
     // 4-point Catmull-Rom read at `delay` samples behind the write position.
     float readInterpolated (float delay) const noexcept
     {
-        const float readPos = (float) writePos - delay;
-        const auto  i1      = (long) std::floor (readPos);
-        const float frac    = readPos - (float) i1;
+        // The whole-sample and fractional parts are kept apart, and the
+        // position arithmetic stays in integers: `writePos - delay` in float
+        // would silently lose fractional resolution as writePos grows (a
+        // float carries 24 significant bits, so past ~2^22 samples — under
+        // two minutes at 48 kHz — the interpolation fraction quantises and
+        // the sweeping taps start stepping instead of sliding, which sounds
+        // like a slowly worsening aliasing/roughness).
+        const auto  delayInt = (long) delay;              // delay is always >= 2
+        const float frac     = 1.0f - (delay - (float) delayInt);
+        const long  i1       = writePos - delayInt - 1 + (long) (mask + 1);
 
         const float y0 = buffer[(std::size_t) (i1 - 1) & mask];
         const float y1 = buffer[(std::size_t)  i1      & mask];
