@@ -33,6 +33,12 @@
                                    Real spherical-harmonic encoding gains for a
                                    unit direction, ACN/SN3D, up to order 3.
       Mat3                         3x3 rotation matrix (row-major, v' = M·v).
+      rotationAboutAxis (u, angle) Rigid rotation about a unit axis
+                                   (Rodrigues): applying it to several
+                                   directions preserves the angles between
+                                   them.
+      directionFromAngles (az, el) Unit direction from azimuth / elevation,
+      anglesFromDirection (d, ...) and back.
       headRotation (az, el, roll)  Rotation mapping room-frame directions into
                                    the head frame of a listener oriented by
                                    (azimuth, elevation, roll).
@@ -259,6 +265,36 @@ struct Mat3
         return t;
     }
 };
+
+// Right-handed rotation of `angle` radians about the unit vector `axis`
+// (Rodrigues). Unlike accumulating azimuth / elevation offsets, applying one
+// such matrix to several directions is a rigid motion: the angles between
+// them are preserved, so a constellation keeps its shape.
+inline Mat3 rotationAboutAxis (Vec3 axis, float angle) noexcept
+{
+    const Vec3 u = normalise (axis);
+    const float c = std::cos (angle), s = std::sin (angle), t = 1.0f - c;
+
+    Mat3 r;
+    r.m[0][0] = c + u.x * u.x * t;
+    r.m[0][1] = u.x * u.y * t - u.z * s;
+    r.m[0][2] = u.x * u.z * t + u.y * s;
+    r.m[1][0] = u.y * u.x * t + u.z * s;
+    r.m[1][1] = c + u.y * u.y * t;
+    r.m[1][2] = u.y * u.z * t - u.x * s;
+    r.m[2][0] = u.z * u.x * t - u.y * s;
+    r.m[2][1] = u.z * u.y * t + u.x * s;
+    r.m[2][2] = c + u.z * u.z * t;
+    return r;
+}
+
+// Azimuth / elevation (radians) of a unit direction — the inverse of
+// directionFromAngles().
+inline void anglesFromDirection (Vec3 d, float& azimuth, float& elevation) noexcept
+{
+    azimuth   = std::atan2 (d.y, d.x);
+    elevation = std::asin (std::fmax (-1.0f, std::fmin (1.0f, d.z)));
+}
 
 // Rotation mapping room-frame directions into the head frame of a listener
 // oriented by (azimuth, elevation, roll): dHead = headRotation(...) · dRoom.
