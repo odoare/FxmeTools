@@ -23,6 +23,8 @@
                                           // first kSize samples (capture),
                                           // then crossfades into the wash
                                           // and ignores the input
+        retrigger();                      // (optional) re-capture rhythmically
+                                          // without interrupting the wash
 
     The first wash sample costs 4 inverse FFTs (overlap priming, ~tens of
     µs at 2048); afterwards it is one inverse FFT per hop. prepare()
@@ -75,9 +77,11 @@ public:
             window[(size_t) i] = 0.5f - 0.5f * std::cos (6.283185307179586 * i / kSize);
 
         capture.assign ((size_t) kSize, 0.0f);
+        history.assign ((size_t) kSize, 0.0f);
         frameBuf.assign ((size_t) kSize, 0.0f);
         mags.assign ((size_t) kBins, 0.0f);
         ola.assign ((size_t) (2 * kSize), 0.0f);
+        histPos = 0;
 
         calibrate();
         reset();
@@ -108,10 +112,39 @@ public:
         frame     = 0;
     }
 
+    /** Rhythmic re-capture without interrupting the wash: takes the most
+        recent window from the rolling input history and swaps the frozen
+        magnitude spectrum for it *in place*. The wash keeps playing, so
+        there is no dry gap; because the overlap-add carries four frames,
+        the old spectrum bleeds into the new one over ~one window rather
+        than clicking. The frame counter keeps running, so a re-render
+        reproduces the same wash (the captured audio is the same at the same
+        sample position). No-op while still doing the initial capture; falls
+        back to startCapture() if nothing is frozen yet. */
+    void retrigger()
+    {
+        if (capturing)
+            return;
+        if (! frozen)
+        {
+            startCapture();
+            return;
+        }
+
+        // Copy the last kSize inputs oldest -> newest out of the ring.
+        for (int i = 0; i < kSize; ++i)
+            capture[(size_t) i] = history[(size_t) ((histPos + i) % kSize)];
+        computeSpectrum();
+    }
+
     bool isFrozen() const { return frozen; }
 
     float processSample (float in)
     {
+        // Rolling history of the last kSize inputs feeds retrigger().
+        history[(size_t) histPos] = in;
+        histPos = (histPos + 1) % kSize;
+
         if (capturing)
         {
             capture[(size_t) capPos] = in;
@@ -211,11 +244,11 @@ private:
     }
 
     std::vector<WDL_FFT_REAL> capture, frameBuf, ola;
-    std::vector<float> window, mags;
+    std::vector<float> window, mags, history;   // history: rolling input for retrigger
 
     uint64_t seed = 0, tag = 0;
     float   norm = 1.0f;
-    int     capPos = 0, hopAcc = 0, olaRead = 0, fadePos = 0, frame = 0;
+    int     capPos = 0, hopAcc = 0, olaRead = 0, fadePos = 0, frame = 0, histPos = 0;
     int64_t nextStart = 0;
     bool    capturing = false, frozen = false;
 };
@@ -269,6 +302,14 @@ public:
     {
         for (auto& c : chans)
             c.startCapture();
+    }
+
+    /** Seamless rhythmic re-capture on every channel (see
+        SpectralFreeze::retrigger). */
+    void retrigger()
+    {
+        for (auto& c : chans)
+            c.retrigger();
     }
 
     void setWidth (float w)
