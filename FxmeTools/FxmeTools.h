@@ -60,6 +60,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Biquad.h"
 #include "dsp/SpectrumTap.h"
 #include "dsp/WaveformTap.h"
+#include "dsp/SynchronizedSweep.h"
 #include "dsp/SpectrumAnalyzer.h"
 #include "dsp/RmsMeter.h"
 #include "dsp/VuMeter.h"
