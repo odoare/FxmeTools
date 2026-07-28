@@ -92,15 +92,22 @@ public:
     //==========================================================================
     // Sources
 
-    /** Copies the buffer and shows it in full (amplitude fitted). */
-    void setBuffer (const juce::AudioBuffer<float>& data, double newSampleRate)
+    /** Copies the buffer and shows it in full (amplitude fitted). Pass
+        resetViewToFull = false to keep the current zoom/pan — useful when the
+        owner re-renders the same signal after a parameter tweak; the window
+        is still re-clamped to the new data. */
+    void setBuffer (const juce::AudioBuffer<float>& data, double newSampleRate,
+                    bool resetViewToFull = true)
     {
         tap = nullptr;
         stopTimer();
         audio.makeCopyOf (data);
         sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
         rebuildCache();
-        resetView();
+        if (resetViewToFull)
+            resetView();
+        else
+            setTimeWindow (viewStartS, viewLengthS);
     }
 
     /** Loads an audio file (wav/aiff/flac...) into the buffer source. Files
