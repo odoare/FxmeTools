@@ -31,6 +31,8 @@
       * click-drag       pan through the data (static sources)
       * double-click     reset to the full view (fit amplitude to the data)
     A read-out in the top-right corner shows time + amplitude at the cursor.
+    When channel names are set, the legend is clickable: a click on an entry
+    hides/shows that channel's trace.
 
     Palette is injected via setColours() (defaults to the same dark theme as
     SpectrumDisplay); per-channel trace colours via setChannelColours() and
@@ -269,6 +271,18 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
+        // A click on a legend entry shows/hides that channel.
+        for (const auto& hit : legendHits)
+            if (hit.first.contains (e.getPosition()))
+            {
+                channelHidden.resize ((size_t) juce::jmax ((int) channelHidden.size(),
+                                                           hit.second + 1), false);
+                channelHidden[(size_t) hit.second] = ! channelHidden[(size_t) hit.second];
+                dragging = false;
+                repaint();
+                return;
+            }
+
         dragging = tap == nullptr && getPlotArea().contains (e.position);
         dragStartX = e.position.x;
         dragStartViewS = viewStartS;
@@ -543,16 +557,25 @@ private:
         return defaults[ch % 4];
     }
 
+    bool channelVisible (int ch) const
+    {
+        return ch >= (int) channelHidden.size() || ! channelHidden[(size_t) ch];
+    }
+
     void drawBufferTraces (juce::Graphics& g, juce::Rectangle<float> r) const
     {
         for (int ch = 0; ch < audio.getNumChannels(); ++ch)
-            drawChannel (g, r, audio.getReadPointer (ch), audio.getNumSamples(),
-                         -timeOffsetS, ch < (int) cache.size() ? &cache[(size_t) ch] : nullptr,
-                         channelColour (ch));
+            if (channelVisible (ch))
+                drawChannel (g, r, audio.getReadPointer (ch), audio.getNumSamples(),
+                             -timeOffsetS, ch < (int) cache.size() ? &cache[(size_t) ch] : nullptr,
+                             channelColour (ch));
     }
 
     void drawTapTrace (juce::Graphics& g, juce::Rectangle<float> r)
     {
+        if (! channelVisible (0))
+            return;
+
         const int want = juce::jmin (tap->getCapacity(),
                                      (int) std::ceil (viewLengthS * sampleRate) + 1);
         tapScratch.resize ((size_t) juce::jmax (1, want));
@@ -601,21 +624,26 @@ private:
         }
     }
 
+    // One clickable entry per named channel (mouseDown scans legendHits);
+    // a hidden channel's swatch and label are dimmed.
     void drawLegend (juce::Graphics& g, juce::Rectangle<float> r) const
     {
+        legendHits.clear();
         if (channelNames.isEmpty())
             return;
         g.setFont (11.0f);
         int x = (int) r.getX() + 6;
         for (int ch = 0; ch < channelNames.size(); ++ch)
         {
-            g.setColour (channelColour (ch));
-            g.fillRect (x, (int) r.getBottom() - 10, 10, 3);
-            g.setColour (colours.text);
+            const bool on = channelVisible (ch);
             const auto& label = channelNames[ch];
             const int w = (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), label) + 6;
+            g.setColour (on ? channelColour (ch) : channelColour (ch).withAlpha (0.3f));
+            g.fillRect (x, (int) r.getBottom() - 10, 10, 3);
+            g.setColour (on ? colours.text : colours.dimText.withAlpha (0.6f));
             g.drawText (label, x + 13, (int) r.getBottom() - 16, w, 14,
                         juce::Justification::centredLeft);
+            legendHits.push_back ({ { x - 3, (int) r.getBottom() - 16, w + 18, 14 }, ch });
             x += w + 26;
         }
     }
@@ -700,6 +728,10 @@ private:
     juce::StringArray channelNames;
     std::vector<Marker> markers;
     std::vector<Region> regions;
+
+    // Legend toggles (drawing only) + the hit rects paint() lays out.
+    std::vector<bool> channelHidden;
+    mutable std::vector<std::pair<juce::Rectangle<int>, int>> legendHits;
 
     bool dragging = false;
     float dragStartX = 0.0f;
