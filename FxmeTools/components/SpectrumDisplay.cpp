@@ -44,6 +44,16 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
     const auto p = e.getPosition();
     dragging = false;
 
+    // A click on a legend entry shows/hides that trace.
+    for (const auto& hit : legendHits)
+        if (hit.first.contains (p))
+        {
+            auto& tr = traces[(size_t) hit.second];
+            tr.userVisible = ! tr.userVisible;
+            repaint();
+            return;
+        }
+
     // Badges first; each click restarts the averaging.
     if (detectorBadgeBounds().contains (p))
     {
@@ -80,19 +90,32 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Otherwise begin a dB-axis pan if the press is inside the plot.
+    // Otherwise begin a pan (both axes) if the press is inside the plot.
     dragging = getPlotArea().contains (e.position);
     dragStartY = e.position.y;
     dragStartMin = minDb;
     dragStartMax = maxDb;
+    dragStartX = e.position.x;
+    dragStartFMin = viewFMin;
+    dragStartFMax = viewFMax;
 }
 
 void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e)
 {
     if (! dragging)
         return;
+
+    const auto plot = getPlotArea();
+
+    // Horizontal: pan the (log) frequency window by the dragged decades.
+    const float ratio = dragStartFMax / dragStartFMin;
+    const float shift = std::exp (std::log (ratio)
+                                  * (dragStartX - e.position.x) / juce::jmax (1.0f, plot.getWidth()));
+    setFreqWindow (dragStartFMin * shift, dragStartFMax * shift);
+
+    // Vertical: pan the dB window.
     const float span = dragStartMax - dragStartMin;
-    const float dbPerPx = span / juce::jmax (1.0f, getPlotArea().getHeight());
+    const float dbPerPx = span / juce::jmax (1.0f, plot.getHeight());
     setDbWindow (dragStartMin + (e.position.y - dragStartY) * dbPerPx, span);
 }
 
@@ -122,6 +145,7 @@ void SpectrumDisplay::mouseDoubleClick (const juce::MouseEvent& e)
     {
         minDb = defaultMinDb;
         maxDb = defaultMaxDb;
+        setFreqWindow (SpectrumAnalyzer::fMin, SpectrumAnalyzer::fMax);
         repaint();
     }
 }
@@ -132,12 +156,41 @@ void SpectrumDisplay::mouseWheelMove (const juce::MouseEvent& e, const juce::Mou
     if (! plot.contains (e.position))
         return;
 
+    const float factor = w.deltaY > 0.0f ? 0.85f : 1.0f / 0.85f;
+
+    // Ctrl (or cmd): zoom the frequency axis around the cursor, keeping the
+    // frequency under it pinned.
+    if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+    {
+        const float fAtX = xToFreq (e.position.x, plot);
+        const float ratio = viewFMax / viewFMin;
+        const float newRatio = std::pow (ratio, factor);
+        const float rel = std::log (fAtX / viewFMin) / std::log (ratio);
+        const float newLo = fAtX / std::pow (newRatio, rel);
+        setFreqWindow (newLo, newLo * newRatio);
+        return;
+    }
+
     const float span   = maxDb - minDb;
     const float dbAtY   = juce::jmap (e.position.y, plot.getBottom(), plot.getY(), minDb, maxDb);
-    const float factor  = w.deltaY > 0.0f ? 0.85f : 1.0f / 0.85f;
     const float newSpan = juce::jlimit (dbMinSpan, dbCeil - dbFloor, span * factor);
     const float frac    = span > 0.0f ? (dbAtY - minDb) / span : 0.5f;
     setDbWindow (dbAtY - frac * newSpan, newSpan);
+}
+
+std::vector<float> SpectrumDisplay::freqTicks() const
+{
+    std::vector<float> t;
+    const double firstDec = std::floor (std::log10 ((double) viewFMin));
+    const double lastDec  = std::log10 ((double) viewFMax);
+    for (double dec = firstDec; dec <= lastDec + 1.0; dec += 1.0)
+        for (double m : { 1.0, 2.0, 5.0 })
+        {
+            const double f = m * std::pow (10.0, dec);
+            if (f >= (double) viewFMin * 0.999 && f <= (double) viewFMax * 1.001)
+                t.push_back ((float) f);
+        }
+    return t;
 }
 
 void SpectrumDisplay::drawBadge (juce::Graphics& g, juce::Rectangle<int> r,
@@ -159,9 +212,7 @@ void SpectrumDisplay::drawCursorReadout (juce::Graphics& g, juce::Rectangle<floa
         return;
 
     // Invert the axis mappings to get frequency / level under the pointer.
-    const float lo = SpectrumAnalyzer::fMin, hi = SpectrumAnalyzer::fMax;
-    const float relX = juce::jlimit (0.0f, 1.0f, (cursorPos.x - plot.getX()) / plot.getWidth());
-    const float f  = lo * std::exp (relX * std::log (hi / lo));
+    const float f  = xToFreq (cursorPos.x, plot);
     const float db = juce::jmap (juce::jlimit (plot.getY(), plot.getBottom(), cursorPos.y),
                                  plot.getBottom(), plot.getY(), minDb, maxDb);
     const float shown = splCalibrated ? db + splOffset : db;
@@ -190,9 +241,9 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     const auto plot = getPlotArea();
 
-    // Frequency grid (decades) with labels under the plot.
+    // Frequency grid (1-2-5 ticks across the window) with labels under the plot.
     g.setFont (10.0f);
-    for (float f : { 20.f, 50.f, 100.f, 200.f, 500.f, 1000.f, 2000.f, 5000.f, 10000.f, 20000.f })
+    for (float f : freqTicks())
     {
         const float x = freqToX (f, plot);
         g.setColour (colours.grid);
@@ -232,38 +283,55 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                     juce::Justification::centredRight);
     }
 
-    // Traces + legend.
-    int legendX = (int) plot.getX() + 4;
-    for (auto& tr : traces)
+    // Traces, clipped to the plot: when zoomed in, out-of-window points must
+    // not paint over the axis labels or the legend.
     {
+        juce::Graphics::ScopedSaveState clipState (g);
+        g.reduceClipRegion (plot.toNearestInt());
+
+        for (auto& tr : traces)
+        {
+            if (! tr.enabled || ! tr.userVisible)
+                continue;
+
+            juce::Path path;
+            bool started = false;
+            for (int p = 0; p < SpectrumAnalyzer::numPoints; ++p)
+            {
+                const float freq = SpectrumAnalyzer::pointFreq (p);
+                const float off  = magnitudeOffsetDb != nullptr ? magnitudeOffsetDb (freq) : 0.0f;
+                const float x = freqToX (freq, plot);
+                const float y = dbToY (juce::jlimit (minDb, maxDb, tr.smoothedDb[(size_t) p] + off), plot);
+                if (! started) { path.startNewSubPath (x, y); started = true; }
+                else           path.lineTo (x, y);
+            }
+            g.setColour (tr.cfg.colour);
+            g.strokePath (path, juce::PathStrokeType (tr.cfg.thickness));
+        }
+    }
+
+    // Legend: one clickable entry per running trace (mouseDown scans
+    // legendHits); a hidden trace's swatch and label are dimmed.
+    legendHits.clear();
+    int legendX = (int) plot.getX() + 4;
+    g.setFont (11.0f);
+    for (int i = 0; i < (int) traces.size(); ++i)
+    {
+        auto& tr = traces[(size_t) i];
         if (! tr.enabled)
             continue;
 
-        juce::Path path;
-        bool started = false;
-        for (int p = 0; p < SpectrumAnalyzer::numPoints; ++p)
-        {
-            const float freq = SpectrumAnalyzer::pointFreq (p);
-            const float off  = magnitudeOffsetDb != nullptr ? magnitudeOffsetDb (freq) : 0.0f;
-            const float x = freqToX (freq, plot);
-            const float y = dbToY (juce::jlimit (minDb, maxDb, tr.smoothedDb[(size_t) p] + off), plot);
-            if (! started) { path.startNewSubPath (x, y); started = true; }
-            else           path.lineTo (x, y);
-        }
-        g.setColour (tr.cfg.colour);
-        g.strokePath (path, juce::PathStrokeType (tr.cfg.thickness));
-
         const auto label = tr.cfg.label != nullptr ? tr.cfg.label() : juce::String();
-        if (label.isNotEmpty())
-        {
-            g.setFont (11.0f);
-            const int w = 14 + (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), label);
-            g.setColour (tr.cfg.colour);
-            g.fillRect (legendX, (int) plot.getY() + 3, 8, 8);
-            g.setColour (colours.text);
-            g.drawText (label, legendX + 11, (int) plot.getY(), w, 14, juce::Justification::centredLeft);
-            legendX += w + 10;
-        }
+        if (label.isEmpty())
+            continue;
+
+        const int w = 14 + (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), label);
+        g.setColour (tr.userVisible ? tr.cfg.colour : tr.cfg.colour.withAlpha (0.3f));
+        g.fillRect (legendX, (int) plot.getY() + 3, 8, 8);
+        g.setColour (tr.userVisible ? colours.text : colours.dimText.withAlpha (0.6f));
+        g.drawText (label, legendX + 11, (int) plot.getY(), w, 14, juce::Justification::centredLeft);
+        legendHits.push_back ({ { legendX - 2, (int) plot.getY(), w + 13, 14 }, i });
+        legendX += w + 10;
     }
 
     // Clickable badges: window size + temporal averaging (bottom-left),

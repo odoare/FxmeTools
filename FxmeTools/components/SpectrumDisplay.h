@@ -12,6 +12,10 @@
     (avg/peak), FFT window size and temporal averaging are user-clickable
     badges. Palette is injected via setColours() (defaults to a dark theme).
 
+    Mouse: wheel zooms the dB axis around the cursor, ctrl+wheel zooms the
+    frequency axis around it, drag pans both, double-click resets both. The
+    legend is clickable: a click on a trace's entry hides/shows that trace.
+
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0
     SPDX-License-Identifier: LGPL-3.0-or-later
@@ -75,6 +79,20 @@ public:
         maxDb = defaultMaxDb = hi;
     }
 
+    /** Frequency window (log axis), clamped to the analyzer's full range. */
+    void setFreqWindow (float lo, float hi)
+    {
+        const float fullLo = SpectrumAnalyzer::fMin, fullHi = SpectrumAnalyzer::fMax;
+        hi = juce::jlimit (fullLo * 1.26f, fullHi, hi);
+        lo = juce::jlimit (fullLo, hi / 1.26f, lo);
+        viewFMin = lo;
+        viewFMax = hi;
+        repaint();
+    }
+
+    float getViewLowHz() const noexcept     { return viewFMin; }
+    float getViewHighHz() const noexcept    { return viewFMax; }
+
     using Mode = SpectrumAnalyzer::Mode;
     void setSpectrumMode (Mode m) { mode = m; repaint(); }
     Mode getSpectrumMode() const  { return mode; }
@@ -107,8 +125,9 @@ private:
     struct Trace
     {
         TraceConfig cfg;
-        bool enabled;
+        bool enabled;                   // tap is running
         std::array<float, (size_t) SpectrumAnalyzer::numPoints> smoothedDb;
+        bool userVisible = true;        // legend toggle (drawing only)
     };
 
     void timerCallback() override;
@@ -119,11 +138,19 @@ private:
                    .withTrimmedLeft (18.0f).withTrimmedBottom (14.0f);
     }
 
-    static float freqToX (float f, juce::Rectangle<float> r)
+    float freqToX (float f, juce::Rectangle<float> r) const
     {
-        const float lo = SpectrumAnalyzer::fMin, hi = SpectrumAnalyzer::fMax;
-        return r.getX() + r.getWidth() * std::log (f / lo) / std::log (hi / lo);
+        return r.getX() + r.getWidth() * std::log (f / viewFMin) / std::log (viewFMax / viewFMin);
     }
+
+    float xToFreq (float x, juce::Rectangle<float> r) const
+    {
+        const float rel = juce::jlimit (0.0f, 1.0f, (x - r.getX()) / juce::jmax (1.0f, r.getWidth()));
+        return viewFMin * std::exp (rel * std::log (viewFMax / viewFMin));
+    }
+
+    // 1-2-5 frequency ticks across the current window.
+    std::vector<float> freqTicks() const;
 
     float dbToY (float db, juce::Rectangle<float> r) const
     {
@@ -182,6 +209,7 @@ private:
 
     float minDb = -100.0f, maxDb = 10.0f;
     float defaultMinDb = -100.0f, defaultMaxDb = 10.0f;
+    float viewFMin = SpectrumAnalyzer::fMin, viewFMax = SpectrumAnalyzer::fMax;
     bool  splCalibrated = false;
     float splOffset = 0.0f;
     Mode  mode = Mode::average;
@@ -190,10 +218,15 @@ private:
     bool avgOn = true;                          // temporal averaging
     int  nAvg  = 4;                             // averaged over ~nAvg frames
 
-    // dB-axis zoom/pan (drag) state.
+    // Zoom/pan (drag) state, dB and frequency axes.
     static constexpr float dbFloor = -200.0f, dbCeil = 200.0f, dbMinSpan = 10.0f;
     bool dragging = false;
     float dragStartY = 0.0f, dragStartMin = -100.0f, dragStartMax = 10.0f;
+    float dragStartX = 0.0f;
+    float dragStartFMin = SpectrumAnalyzer::fMin, dragStartFMax = SpectrumAnalyzer::fMax;
+
+    // Legend hit rects (trace index), laid out by paint().
+    mutable std::vector<std::pair<juce::Rectangle<int>, int>> legendHits;
 
     // Cursor read-out (frequency / level at the pointer), shown top-right.
     juce::Point<float> cursorPos;
