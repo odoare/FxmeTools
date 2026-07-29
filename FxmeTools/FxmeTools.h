@@ -4,10 +4,14 @@ BEGIN_JUCE_MODULE_DECLARATION
   vendor:           odoare
   version:          0.0.3
   name:             FX-Mechanics shared C++ audio tools
-  description:      Shared GUI controls, look-and-feel and DSP for FX-Mechanics
-                    JUCE plugins. The WDL-backed FirFilter is provided as a
-                    standalone header (include <FxmeTools/dsp/FirFilter.h>) so
-                    consumers that do not need it are not forced to depend on WDL.
+  description:      Shared GUI controls, look-and-feel, DSP and image/video
+                    input for FX-Mechanics JUCE plugins. The WDL-backed
+                    FirFilter is provided as a standalone header (include
+                    <FxmeTools/dsp/FirFilter.h>) so consumers that do not need
+                    it are not forced to depend on WDL. The image/ classes
+                    compile everywhere; camera (juce_video) and video-file
+                    (FFmpeg) backends are enabled per consumer by
+                    fxmetools_attach_video().
   website:          http://www.github.com/odoare/FxmeTools
   license:          LGPL-3.0-or-later
   dependencies:     juce_audio_basics, juce_audio_processors, juce_audio_utils, juce_core, juce_data_structures, juce_dsp, juce_events, juce_graphics, juce_gui_basics
@@ -91,6 +95,20 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplashOverlay.h"
 #include "components/AccentToggle.h"
 #include "components/TextEntryFocusFixer.h"
+
+// Image / video input: still pictures, webcams (V4L2 on Linux,
+// juce::CameraDevice elsewhere) and video files (FFmpeg), behind one
+// FrameSource interface, plus colour adjustments and an analysis-friendly
+// luminance grid. See image/README.md; enable the optional backends with
+// fxmetools_attach_video() (cmake/FxmeTools.cmake).
+#include "image/FrameSource.h"
+#include "image/ImageAdjustments.h"
+#include "image/LuminanceGrid.h"
+#include "image/StillImageSource.h"
+#include "image/V4l2CameraSource.h"
+#include "image/JuceCameraSource.h"
+#include "image/VideoFileSource.h"
+#include "image/VideoEngine.h"
 
 // Finite-element vibro-acoustics: 2D mesh generation, thin-plate modal
 // analysis (Morley elements, mixed boundary conditions, tension term) and a
