@@ -13,6 +13,7 @@ parameters, and receives processed frames.
 
 | File | What it gives you |
 |---|---|
+| `ColorBlobTracker.h` | colour-keyed centroid tracking: weighted centre of gravity of pixels near a reference colour + confidence, one pass, no allocation |
 | `FrameSource.h` | `fxme::FrameSource` — the producer interface (implement it for custom inputs) |
 | `Homography.h` | 4-point plane homography (DLT, JUCE-free): camera-to-plane calibration from clicked grid corners, `toUnitSquare` / `fromQuad` / `inverted` / `isConvexQuad` |
 | `StillImageSource.h` | still picture from a file or from memory |
