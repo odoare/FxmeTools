@@ -104,6 +104,13 @@ public:
         apvts.state so it lands in the preset file. */
     std::function<void()> onBeforeSave;
 
+    /** Called just before a loaded preset replaces the state, while the old
+        state is still in place. A processor that keeps state a preset must
+        not disturb (hardware selections, calibration, anything describing
+        the installation rather than the settings) snapshots it here and puts
+        it back in onAfterLoad. */
+    std::function<void()> onBeforeLoad;
+
     /** Called right after a loaded preset's state has been applied
         (replaceState), before the change broadcast: rebuild whatever
         depends on the side state now inside apvts.state. */

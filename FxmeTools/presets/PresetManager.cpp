@@ -167,7 +167,12 @@ bool PresetManager::applyStateXml (const juce::XmlElement& xml, const Preset& pr
 
     {
         const juce::ScopedValueSetter<bool> svs (suppressDirty, true);
+
+        if (onBeforeLoad)
+            onBeforeLoad();     // old state still in place: snapshot what must survive
+
         apvts.replaceState (newState);
+
         if (onAfterLoad)
             onAfterLoad();
     }
