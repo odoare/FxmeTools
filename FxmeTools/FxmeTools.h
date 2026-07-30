@@ -101,6 +101,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 // FrameSource interface, plus colour adjustments and an analysis-friendly
 // luminance grid. See image/README.md; enable the optional backends with
 // fxmetools_attach_video() (cmake/FxmeTools.cmake).
+#include "image/CameraPose.h"
 #include "image/ColorBlobTracker.h"
 #include "image/FrameSource.h"
 #include "image/Homography.h"

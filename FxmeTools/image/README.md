@@ -13,6 +13,7 @@ parameters, and receives processed frames.
 
 | File | What it gives you |
 |---|---|
+| `CameraPose.h` | camera pose from a calibrated plane (homography decomposition) and multi-camera triangulation: where the camera is, and how high above the plane an object is |
 | `ColorBlobTracker.h` | colour-keyed blob tracking: brightness-independent (chroma) matching, connected-component labelling, size/shape filters, optional temporal gating and diagnostics |
 | `FrameSource.h` | `fxme::FrameSource` — the producer interface (implement it for custom inputs) |
 | `Homography.h` | 4-point plane homography (DLT, JUCE-free): camera-to-plane calibration from clicked grid corners, `toUnitSquare` / `fromQuad` / `inverted` / `isConvexQuad` |
@@ -152,6 +153,49 @@ Passing a `Diagnostics` returns every candidate blob and, on request, a
 mask image of the match weights, which is what a UI needs to show why a
 track went wrong. `track()` is an instance method because the scratch
 buffers are members and are reused: the steady state does not allocate.
+
+## Height from several cameras
+
+`fxme::CameraPose` answers the question `Homography` cannot: how far *above*
+the plane an object is. Given the calibration homography and a guess at the
+lens, it recovers where each camera stands; two such cameras seeing the same
+object let its 3D position be triangulated.
+
+```cpp
+const auto k = fxme::CameraIntrinsics::fromHorizontalFov (juce::degreesToRadians (60.0),
+                                                          imageWidth / (double) imageHeight);
+
+// planeToImage is Homography::toUnitSquare(corners)->inverted()
+const auto pose = fxme::CameraPose::fromPlaneHomography (planeToImage, 1.0, 1.0 / gridAspect, k);
+
+fxme::Ray rays[2] { poseA->rayThrough (uA, vA, kA), poseB->rayThrough (uB, vB, kB) };
+fxme::CameraPose used[2] { *poseA, *poseB };
+
+if (auto point = fxme::triangulate (rays, 2))
+{
+    point->z *= fxme::heightSign (used, 2);       // do not skip this
+    useHeight (point->z);
+}
+```
+
+**`heightSign` is not optional.** A homography cannot tell the plane's two
+sides apart: the recovered Z axis is `r1 x r2`, so which way it points comes
+from the order the plane's corners were given in, not from the scene. Give
+the same physical plane its corners the other way round and every camera
+lands at negative Z, with objects above the plane reporting negative
+heights. Cameras that can see the plane are all on one side of it, and
+`heightSign` reads that off them. In-plane X and Y are unaffected.
+
+World units follow the plane size passed in, so giving the plane a width of
+1 makes every length a fraction of the grid width.
+
+Accuracy is set by the assumed intrinsics. With exact ones the recovery is
+correct to numerical precision; a 10 degree error in the stated field of
+view costs roughly 10 percent of the measured height, and it behaves as a
+scale error, so trimming the field of view until a known height reads right
+is a workable calibration. Feeding measured intrinsics (from a chessboard)
+instead is the direct route to better numbers, which is why they are a
+parameter rather than baked in.
 
 ## Writing a custom source
 
