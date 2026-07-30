@@ -13,7 +13,7 @@ parameters, and receives processed frames.
 
 | File | What it gives you |
 |---|---|
-| `ColorBlobTracker.h` | colour-keyed centroid tracking: weighted centre of gravity of pixels near a reference colour + confidence, one pass, no allocation |
+| `ColorBlobTracker.h` | colour-keyed blob tracking: brightness-independent (chroma) matching, connected-component labelling, size/shape filters, optional temporal gating and diagnostics |
 | `FrameSource.h` | `fxme::FrameSource` — the producer interface (implement it for custom inputs) |
 | `Homography.h` | 4-point plane homography (DLT, JUCE-free): camera-to-plane calibration from clicked grid corners, `toUnitSquare` / `fromQuad` / `inverted` / `isConvexQuad` |
 | `StillImageSource.h` | still picture from a file or from memory |
@@ -109,6 +109,49 @@ if (grid.hasPrevious())
 suits terrain reading; `Mode::rec601` is perceptual luma. Buffers are
 reused, so the steady state allocates nothing; a resolution change drops the
 history for one frame (`hasPrevious()` reports it).
+
+## Colour tracking
+
+`fxme::ColorBlobTracker` follows an object marked with a distinctive
+colour: it finds the connected region that best matches a reference and
+reports its centroid, normalised to the frame.
+
+```cpp
+fxme::ColorBlobTracker tracker;                   // holds reusable buffers
+
+fxme::ColorBlobTracker::Params params;
+params.reference = pickedColour;                  // sampled from the image
+params.tolerance = 0.15f;
+params.minBlobPixels = 12;                        // per connected blob
+
+const auto blob = tracker.track (frame.working, params);
+if (blob.found)
+    useIt (blob.x, blob.y, blob.confidence);
+```
+
+Two defaults matter, both the result of a first version that failed in the
+field (a red object lost to a bright area of the scene):
+
+* matching is **brightness-independent** (`MatchMode::chroma`). An RGB
+  distance counts a brightness difference as much as a hue difference, so
+  the same object in shadow scores worse than an unrelated bright area.
+  Chroma mode compares normalised chromaticity and skips pixels that are
+  too dark or too grey to have a meaningful hue (`minValue`,
+  `minSaturation`). A reference colour that is itself unsaturated falls
+  back to RGB, so grey and white targets still work;
+* the result is **one connected blob**, not a global centroid. Summing all
+  matching pixels lets a large mediocre region outweigh the compact true
+  one. Blobs are labelled (two-pass union-find, 8-connectivity), filtered
+  by size and compactness (`minBlobPixels`, `maxBlobFraction`,
+  `minCompactness`), and scored by colour quality times a saturating size
+  term so that past "big enough", quality decides.
+
+Optional `previousX/Y` + `searchRadius` bias the score towards blobs near
+the last known position (a soft preference, so a fast object is not lost).
+Passing a `Diagnostics` returns every candidate blob and, on request, a
+mask image of the match weights, which is what a UI needs to show why a
+track went wrong. `track()` is an instance method because the scratch
+buffers are members and are reused: the steady state does not allocate.
 
 ## Writing a custom source
 
