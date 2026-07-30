@@ -14,6 +14,7 @@ parameters, and receives processed frames.
 | File | What it gives you |
 |---|---|
 | `FrameSource.h` | `fxme::FrameSource` — the producer interface (implement it for custom inputs) |
+| `Homography.h` | 4-point plane homography (DLT, JUCE-free): camera-to-plane calibration from clicked grid corners, `toUnitSquare` / `fromQuad` / `inverted` / `isConvexQuad` |
 | `StillImageSource.h` | still picture from a file or from memory |
 | `V4l2CameraSource.h/.cpp` | webcam on Linux (V4L2 ioctls, YUYV to ARGB, no extra library) |
 | `JuceCameraSource.h` | webcam on Windows/macOS (`juce::CameraDevice`) |

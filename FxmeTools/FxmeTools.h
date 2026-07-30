@@ -102,6 +102,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 // luminance grid. See image/README.md; enable the optional backends with
 // fxmetools_attach_video() (cmake/FxmeTools.cmake).
 #include "image/FrameSource.h"
+#include "image/Homography.h"
 #include "image/ImageAdjustments.h"
 #include "image/LuminanceGrid.h"
 #include "image/StillImageSource.h"
