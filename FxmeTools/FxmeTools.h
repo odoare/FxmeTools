@@ -126,6 +126,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 // EmbeddedAudio stores audio files (e.g. impulse responses) inside the state
 // tree as FLAC+Base64 so presets and sessions are self-contained.
 #include "presets/EmbeddedAudio.h"
+#include "presets/EmbeddedImage.h"
 #include "presets/PresetManager.h"
 #include "components/PresetComponent.h"
 #include "components/PresetBarComponent.h"

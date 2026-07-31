@@ -197,6 +197,31 @@ is a workable calibration. Feeding measured intrinsics (from a chessboard)
 instead is the direct route to better numbers, which is why they are a
 parameter rather than baked in.
 
+## Storing a picture in a preset
+
+A file path in a preset breaks as soon as the preset travels to another
+machine. `fxme::EmbeddedImage` (in `presets/`, the image counterpart of
+`EmbeddedAudio`) puts the pixels themselves into the state ValueTree, so
+presets and host sessions are self-contained:
+
+```cpp
+// saving — downscales to 1024 px and JPEG-encodes by default
+fxme::EmbeddedImage::embed (apvts.state, "terrain", engine.getRawImage(), "clouds.jpg");
+fxme::EmbeddedImage::embedFile (apvts.state, "terrain", file);          // straight from disk
+fxme::EmbeddedImage::embed (apvts.state, "logo", image, "logo.png",
+                            { .maxDimension = 512, .format = fxme::ImageEncoding::png });
+
+// loading
+if (auto img = fxme::EmbeddedImage::load (apvts.state, "terrain"); img.isValid())
+    engine.loadImage (img, fxme::EmbeddedImage::getEmbeddedName (apvts.state, "terrain"));
+```
+
+`getRawImage()` returns the frame *before* adjustments, which is what you
+want to store (brightness/contrast/mirror are parameters and travel in the
+preset already). Use `getEmbeddedSizeBytes()` to check the cost and
+`removeEmbedded()` for sources that must not be embedded — a camera or a
+video file keeps its device id or path instead.
+
 ## Writing a custom source
 
 Implement `fxme::FrameSource` (`start`, `stop`, `getName`, `isLive`, and

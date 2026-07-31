@@ -147,6 +147,11 @@ public:
     /** Last processed frame capped to the working size (see setWorkingMaxDimension). */
     juce::Image getWorkingImage() const           { return processed.working; }
 
+    /** The source frame before any adjustment — what to store in a preset or
+        save as a snapshot (fxme::EmbeddedImage). Invalid if nothing has been
+        captured yet. Safe from any thread. */
+    juce::Image getRawImage() const;
+
     /** Called on the message thread with each newly processed frame, just
         before the change broadcast. */
     std::function<void (const ProcessedFrame&)> onFrame;

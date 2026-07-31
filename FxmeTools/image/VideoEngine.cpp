@@ -195,6 +195,12 @@ double VideoEngine::getVideoDurationSeconds() const
     return 0.0;
 }
 
+juce::Image VideoEngine::getRawImage() const
+{
+    const juce::ScopedLock sl (rawLock);
+    return rawFrame;
+}
+
 juce::String VideoEngine::getSourceDescription() const
 {
     return source != nullptr ? source->getName() : juce::String ("No source");
