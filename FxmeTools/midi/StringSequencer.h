@@ -8,12 +8,26 @@
     step grid, are always sorted by start step, and are guaranteed
     non-overlapping: every mutation method enforces this invariant.
 
+    `numSteps` is a WINDOW, not a limit on the data. A block whose start step
+    falls outside it is *dormant*: it is not played, drawn or hit-tested, but
+    it keeps its full range and content, so shrinking the pattern and growing
+    it back is lossless. Consumers that walk blocks() must therefore ask
+    isInRange() before using one, and take a block's playing/drawing end from
+    playableEnd() (a block may straddle the window's edge).
+
+    Editing keeps the two worlds apart: interactive creation (addBlock) and
+    the move/resize methods never take an in-range block out of the window,
+    and dormant blocks are only reachable through the restore path
+    (addBlockWithId), which accepts any range so saved state round-trips
+    verbatim.
+
   ==============================================================================
 */
 
 #pragma once
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -54,20 +68,36 @@ class StringSequencer
 public:
     void setStepSize (SeqStepSize s) { stepSize_ = s; }
 
+    /** Resizes the window. Blocks are never touched: those that fall outside
+        go dormant and come back unchanged if the window grows again. */
     void setNumSteps (int n)
     {
         numSteps_ = std::max (1, std::min (64, n));
-        blocks_.erase (std::remove_if (blocks_.begin(), blocks_.end(),
-                           [this] (const SeqBlock& b) { return b.startStep >= numSteps_; }),
-                       blocks_.end());
-        for (auto& b : blocks_)
-            b.endStep = std::min (b.endStep, numSteps_);
     }
 
     SeqStepSize getStepSize()           const noexcept { return stepSize_; }
     int         getNumSteps()           const noexcept { return numSteps_; }
     double      getStepSizeBeats()      const noexcept { return fxme::stepSizeBeats (stepSize_); }
     double      getPatternLengthBeats() const noexcept { return numSteps_ * getStepSizeBeats(); }
+
+    /** False for a dormant block — one whose start step is past the window.
+        Play/draw/hit-test loops over blocks() must skip those. */
+    bool isInRange (const SeqBlock& b) const noexcept { return b.startStep < numSteps_; }
+
+    /** The block's end step (exclusive) as far as playback and drawing are
+        concerned: a block left straddling the window's edge by a shrink stops
+        at the edge, while keeping its real endStep for when the window grows. */
+    int playableEnd (const SeqBlock& b) const noexcept { return std::min (b.endStep, numSteps_); }
+
+    /** How many blocks are currently dormant — for a "there is more past the
+        end" indicator, so a shrink never looks like data loss. */
+    int dormantCount() const noexcept
+    {
+        int n = 0;
+        for (const auto& b : blocks_)
+            if (! isInRange (b)) ++n;
+        return n;
+    }
 
     /** Returns the new block id, or -1 if the range overlaps an existing block
         or the parameters are out of range. */
@@ -92,14 +122,18 @@ public:
         block ids must survive the round-trip (e.g. when ids seed per-block
         random draws). Returns false if the id is taken/negative or the range
         is invalid/overlapping. Bumps the internal id counter past `id` so
-        later addBlock() calls stay unique. */
+        later addBlock() calls stay unique.
+
+        Unlike addBlock, this accepts a range outside the current window and
+        stores it verbatim: state saved at 32 steps must reload intact into a
+        16-step window, dormant blocks and all. */
     bool addBlockWithId (int id, int startStep, int durationSteps)
     {
         if (id < 0 || blockById (id) != nullptr)
             return false;
-        if (startStep < 0 || startStep >= numSteps_ || durationSteps < 1)
+        if (startStep < 0 || durationSteps < 1)
             return false;
-        const int endStep = std::min (startStep + durationSteps, numSteps_);
+        const int endStep = startStep + durationSteps;
         for (const auto& b : blocks_)
             if (startStep < b.endStep && endStep > b.startStep)
                 return false;
@@ -144,7 +178,7 @@ public:
         auto it = findById (id);
         if (it == blocks_.end()) return false;
         const int minS = prevEnd (it);
-        const int maxS = it->endStep - 1;
+        const int maxS = std::min (it->endStep, nextStart (it)) - 1;
         it->startStep = std::max (minS, std::min (maxS, newStart));
         sortBlocks();
         return true;
@@ -183,13 +217,14 @@ public:
     const std::vector<SeqBlock>& blocks() const noexcept { return blocks_; }
 
     /** Returns a pointer to the block covering `step` (i.e. startStep <= step < endStep),
-        or nullptr if no block covers that step. */
+        or nullptr if no block covers that step. Dormant blocks never match. */
     const SeqBlock* blockAt (int step) const noexcept
     {
         for (const auto& b : blocks_)
         {
-            if (b.startStep > step) break;
-            if (step < b.endStep)  return &b;
+            if (b.startStep > step)         break;
+            if (! isInRange (b))            continue;
+            if (step < b.endStep)           return &b;
         }
         return nullptr;
     }
@@ -260,10 +295,16 @@ private:
         return std::prev (it)->endStep;
     }
 
+    /** The step an edit of `it` must not cross: the next block's start, and
+        the window edge as well for a block that is currently in range — an
+        in-range block never gets dragged out of sight. A dormant block is
+        already past the edge, so only its neighbour walls it. */
     int nextStart (Iter it) const noexcept
     {
         auto nx = std::next (it);
-        return (nx == blocks_.end()) ? numSteps_ : nx->startStep;
+        const int neighbour = (nx == blocks_.end()) ? std::numeric_limits<int>::max()
+                                                    : nx->startStep;
+        return isInRange (*it) ? std::min (neighbour, numSteps_) : neighbour;
     }
 };
 

@@ -13,6 +13,10 @@
     - Mouse wheel: horizontal scroll.
     - A moving playhead line and per-block custom painting via a BlockPainter.
 
+    Blocks that the StringSequencer reports as dormant (start step past the
+    current window, e.g. after a grid shrink) are not drawn and cannot be
+    grabbed; an amber arrow at the pattern's right edge shows they are there.
+
   ==============================================================================
 */
 
@@ -105,6 +109,8 @@ public:
         // Blocks
         for (const auto& b : seq_.blocks())
         {
+            if (! seq_.isInRange (b)) continue;   // dormant: past the window
+
             const auto r = blockRect (b);
             if (r.getRight() < 0 || r.getX() > getWidth()) continue;
 
@@ -122,6 +128,22 @@ public:
                 g.setColour (juce::Colours::white.withAlpha (0.7f));
                 g.drawRect (r, 2);
             }
+        }
+
+        // Dormant blocks live past the window: mark the pattern's end so a
+        // grid shrink reads as "there is more beyond here", not as data loss.
+        if (seq_.dormantCount() > 0)
+        {
+            const float h  = (float) getHeight();
+            const float th = juce::jlimit (5.0f, 11.0f, h * 0.45f);
+            const float x1 = (float) stepToX (ns) - 2.0f;
+            const float cy = h * 0.5f;
+            juce::Path tri;
+            tri.addTriangle (x1 - th * 0.6f, cy - th * 0.5f,
+                             x1 - th * 0.6f, cy + th * 0.5f,
+                             x1,             cy);
+            g.setColour (juce::Colour (0xffe8a33c));
+            g.fillPath (tri);
         }
 
         // Playhead
@@ -390,8 +412,10 @@ private:
 
     juce::Rectangle<int> blockRect (const SeqBlock& b) const noexcept
     {
+        // playableEnd, not endStep: a block left straddling the window edge by
+        // a grid shrink is drawn (and grabbed) up to the edge only.
         const int x0 = stepToX (b.startStep);
-        const int x1 = stepToX (b.endStep);
+        const int x1 = stepToX (seq_.playableEnd (b));
         return juce::Rectangle<int> (x0, 0, x1 - x0, getHeight()).reduced (1, 1);
     }
 
@@ -401,6 +425,8 @@ private:
     {
         for (const auto& b : seq_.blocks())
         {
+            if (! seq_.isInRange (b)) continue;
+
             const auto r = blockRect (b);
             if (! r.contains (p)) continue;
 
