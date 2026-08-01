@@ -8,7 +8,8 @@
       (clicking the selected block again deselects); dragging a block's body
       moves it and dragging its left/right edge resizes it (both with walls
       against the neighbours — no overlap is allowed); alt-click deletes a
-      block.
+      block. The resize zone scales with the step width and is capped at a
+      third of the block, so short blocks stay draggable.
     - Keyboard: Delete removes the selected block; right-click clears its content.
     - Mouse wheel: horizontal scroll.
     - A moving playhead line and per-block custom painting via a BlockPainter.
@@ -379,7 +380,8 @@ private:
     bool dragMoved_       = false;  // Moving: the block actually moved
     bool clickedSelected_ = false;  // Moving: the click hit the selected block
 
-    static constexpr int kEdgeGrab      = 7;  // px width for edge grab zone
+    static constexpr int kEdgeGrab      = 10; // px width for edge grab zone
+    static constexpr int kMaxEdgeGrab   = 16; // ...its ceiling on wide steps
     static constexpr int kMinPixPerStep = 20; // default minimum pixels per step
 
     int minPixPerStep_ = kMinPixPerStep;
@@ -419,6 +421,18 @@ private:
         return juce::Rectangle<int> (x0, 0, x1 - x0, getHeight()).reduced (1, 1);
     }
 
+    /** Width of the resize zone at each end of `r`. It grows with the step
+        width (wide steps make a fixed 10 px feel needlessly fine), but never
+        takes more than a third of a short block: the middle has to stay
+        draggable, or a one-step block could only ever be resized, never
+        moved — which is what the old fixed 7 px did at small step widths. */
+    int edgeGrab (juce::Rectangle<int> r) const noexcept
+    {
+        const int wanted = juce::jlimit (kEdgeGrab, kMaxEdgeGrab,
+                                         (int) std::round (pixelsPerStep() * 0.25));
+        return juce::jmax (2, juce::jmin (wanted, r.getWidth() / 3));
+    }
+
     struct HitResult { int blockId = -1; bool leftEdge = false; bool rightEdge = false; };
 
     HitResult hitTest (juce::Point<int> p) const
@@ -430,8 +444,9 @@ private:
             const auto r = blockRect (b);
             if (! r.contains (p)) continue;
 
-            const bool le = (p.x < r.getX() + kEdgeGrab);
-            const bool re = (p.x > r.getRight() - kEdgeGrab);
+            const int  grab = edgeGrab (r);
+            const bool le   = (p.x < r.getX() + grab);
+            const bool re   = (p.x > r.getRight() - grab);
             return { b.id, le, re };
         }
         return {};
