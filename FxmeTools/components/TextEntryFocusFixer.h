@@ -25,6 +25,12 @@
       specific DAW, it's the host's keyboard routing (REAPER: FX menu ->
       "Send all keyboard input to plugin").
 
+      The enforcement suspends itself while a modal popup is open (info
+      callouts, popup menus, dialogs): those are temporary desktop windows,
+      and on Windows JUCE dismisses a temporary modal as soon as a window
+      loses the OS focus, so grabbing it back would close the popup the
+      instant it appeared.
+
     - Return commits (the field's own onReturnKey runs first) and *leaves*
       the field — single-line editors only, multiline keeps Return as
       newline.
@@ -159,7 +165,7 @@ private:
     void timerCallback() override
     {
         auto* peer = root.getPeer();
-        if (peer == nullptr)
+        if (peer == nullptr || blockedByModal())
             return;
 
         const auto now = juce::Time::getMillisecondCounter();
@@ -184,9 +190,29 @@ private:
 
     void grabPeerFocus()
     {
+        if (blockedByModal())
+            return;
+
         if (auto* peer = root.getPeer())
             if (! peer->isFocused())
                 peer->grabFocus();
+    }
+
+    /** True while a modal component outside the root owns the interaction —
+        an info callout, a popup menu, a dialog.
+
+        The enforcement below must never run then. Those popups are separate
+        *temporary* desktop windows, and JUCE on Windows dismisses a temporary
+        modal as soon as a window loses the OS focus (see the WM_KILLFOCUS
+        case in juce_Windowing_windows.cpp, which posts
+        inputAttemptWhenModal). Grabbing the focus back therefore closes the
+        popup within one timer tick of it opening — it looks like the hint
+        window "blinks and disappears". Linux does not show this because the
+        grab there usually fails, which is precisely why the enforcement
+        exists; so the bug only appears where the fixer actually works. */
+    bool blockedByModal() const
+    {
+        return root.isCurrentlyBlockedByAnotherModalComponent();
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TextEntryFocusFixer)
