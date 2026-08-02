@@ -13,10 +13,13 @@
     - Copying: cmd/ctrl-drag a block duplicates it (content included) where
       it is dropped, and cmd/ctrl-shift-drag copies only its content onto the
       block it is dropped on. Both leave the source alone and commit on
-      mouse-up, so an invalid drop simply does nothing.
+      mouse-up, so an invalid drop simply does nothing. A drag that leaves
+      the rubber is handed to the owner (onCopyDragMoved / onCopyDropped) —
+      see CopyDrag: only the parent can see a sibling rubber.
     - Keyboard: Delete removes the selected block; cmd/ctrl-D duplicates it
       into the steps immediately after it and selects the copy, so repeating
-      the key lays down a run. Shift-right-click clears a block's content.
+      the key lays down a run. Alt-right-click clears a block's content —
+      alt being the "destroy" modifier throughout (alt-click deletes it).
     - Mouse wheel: horizontal scroll.
     - A moving playhead line and per-block custom painting via a BlockPainter.
 
@@ -99,6 +102,62 @@ public:
         existing users keep their meaning of "cleared". */
     std::function<void (int blockId)> onBlockContentChanged;
 
+    // ---- copy drags that leave this rubber ---------------------------------
+
+    /** A copy drag (cmd-drag, cmd-shift-drag) reported to the owner.
+
+        A drag keeps the mouse captured by the component it started in, so a
+        rubber can never see a drop on a sibling — only the parent that lays
+        them out can. These two callbacks hand it the drag: everything about
+        *where* a cross-component drop may land, and the ghost drawn over the
+        target, belongs to the owner. Leaving them null keeps the rubber
+        entirely self-contained. */
+    struct CopyDrag
+    {
+        bool contentOnly   = false;  // cmd-shift: the override string, not the block
+        bool insideSource  = true;   // cursor still over the rubber it started in
+        int  sourceBlockId = -1;
+        int  lengthSteps   = 1;      // block copy: the source's length
+        int  grabOffset    = 0;      // grabbed step relative to the block's start, so
+                                     // the owner can resolve the landing step against
+                                     // the TARGET's geometry (scroll may differ)
+        juce::Point<int> screenPos;  // to find the component under the cursor
+    };
+
+    /** Every drag move during a copy drag: the owner updates (or clears) its
+        own drop ghost. Also called while the cursor is still inside, with
+        insideSource true, so the owner knows to drop its ghost. */
+    std::function<void (const CopyDrag&)> onCopyDragMoved;
+
+    /** Mouse-up of a copy drag that ended OUTSIDE this rubber. The owner
+        decides whether it is legal and commits it; the rubber does nothing. */
+    std::function<void (const CopyDrag&)> onCopyDropped;
+
+    // ---- geometry, for an owner drawing over this rubber -------------------
+
+    /** The step under `x` (this component's coordinates). */
+    int stepAtX (int x) const noexcept { return xToStep (x); }
+
+    /** The block under `p` (this component's coordinates), or -1. */
+    int blockIdAt (juce::Point<int> p) const { return hitTest (p).blockId; }
+
+    /** The rectangle a step range occupies, in this component's coordinates. */
+    juce::Rectangle<int> rectForSteps (int fromStep, int toStep) const noexcept
+    {
+        const int x0 = stepToX (fromStep);
+        const int x1 = stepToX (toStep);
+        return { x0, 0, std::max (0, x1 - x0), getHeight() };
+    }
+
+    /** The rectangle a block occupies; empty if unknown or dormant. */
+    juce::Rectangle<int> rectForBlock (int blockId) const noexcept
+    {
+        if (const auto* b = seq_.blockById (blockId))
+            if (seq_.isInRange (*b))
+                return blockRect (*b);
+        return {};
+    }
+
     // ---- paint + interaction -----------------------------------------------
 
     void paint (juce::Graphics& g) override
@@ -169,10 +228,11 @@ public:
 
         if (e.mods.isRightButtonDown())
         {
-            // Shift-right-click: clear the clicked block's content. Shift is
-            // required because a plain right-click is far too easy to land by
-            // accident for something that throws text away.
-            if (e.mods.isShiftDown())
+            // Alt-right-click: clear the clicked block's content. A plain
+            // right-click was far too easy to land by accident for something
+            // that throws text away, and alt is already the modifier that
+            // means "destroy this" here (alt-click deletes the block).
+            if (e.mods.isAltDown())
             {
                 const auto hit = hitTest (e.getPosition());
                 if (hit.blockId >= 0)
@@ -215,6 +275,7 @@ public:
             dragMode_    = e.mods.isShiftDown() ? Drag::CopyingContent : Drag::Duplicating;
             dragBlockId_ = hit.blockId;
             dropTarget_  = -1;
+            copyInside_  = true;
             if (const auto* b = seq_.blockById (hit.blockId))
             {
                 dragGrabOffset_ = xToStep (e.x) - b->startStep;
@@ -310,18 +371,33 @@ public:
                 }
             }
         }
-        else if (dragMode_ == Drag::Duplicating)
+        else if (dragMode_ == Drag::Duplicating || dragMode_ == Drag::CopyingContent)
         {
-            const int newStart = step - dragGrabOffset_;
-            if (newStart != ghostStart_) { ghostStart_ = newStart; repaint(); }
-        }
-        else if (dragMode_ == Drag::CopyingContent)
-        {
-            // Only another block is a valid drop; dropping on empty space (or
-            // back on the source) does nothing.
-            const auto hit = hitTest (e.getPosition());
-            const int  t   = (hit.blockId != dragBlockId_) ? hit.blockId : -1;
-            if (t != dropTarget_) { dropTarget_ = t; repaint(); }
+            const bool inside = getLocalBounds().contains (e.getPosition());
+            if (inside != copyInside_) { copyInside_ = inside; repaint(); }
+
+            if (! inside)
+            {
+                // The owner takes over: drop this rubber's own ghost so the
+                // two never show at once.
+                if (dropTarget_ != -1) { dropTarget_ = -1; repaint(); }
+            }
+            else if (dragMode_ == Drag::Duplicating)
+            {
+                const int newStart = step - dragGrabOffset_;
+                if (newStart != ghostStart_) { ghostStart_ = newStart; repaint(); }
+            }
+            else
+            {
+                // Only another block is a valid drop; dropping on empty space
+                // (or back on the source) does nothing.
+                const auto hit = hitTest (e.getPosition());
+                const int  t   = (hit.blockId != dragBlockId_) ? hit.blockId : -1;
+                if (t != dropTarget_) { dropTarget_ = t; repaint(); }
+            }
+
+            if (onCopyDragMoved)
+                onCopyDragMoved (makeCopyDrag (e));
         }
     }
 
@@ -347,6 +423,13 @@ public:
                 if (onBlockSelected) onBlockSelected (id);
             }
         }
+        else if (! copyInside_
+                 && (dragMode_ == Drag::Duplicating || dragMode_ == Drag::CopyingContent))
+        {
+            // Dropped on a sibling: only the owner can judge and commit it.
+            if (onCopyDropped)
+                onCopyDropped (makeCopyDrag (e));
+        }
         else if (dragMode_ == Drag::Duplicating)
         {
             placeCopy (dragBlockId_, ghostStart_, ghostLen_);
@@ -370,6 +453,7 @@ public:
         dragMode_    = Drag::None;
         dragBlockId_ = -1;
         dropTarget_  = -1;
+        copyInside_  = true;
         repaint();
     }
 
@@ -432,6 +516,11 @@ public:
             const int s0 = std::min (dragOriginStep_, createStep_);
             const int s1 = std::max (dragOriginStep_, createStep_) + 1;
             paintGhost (g, s0, s1, true);
+        }
+        else if (! copyInside_)
+        {
+            // The cursor left: the owner is drawing the ghost over whatever
+            // it is on now, and two ghosts at once would be worse than none.
         }
         else if (dragMode_ == Drag::Duplicating)
         {
@@ -513,6 +602,19 @@ private:
     int  ghostStart_      = 0;      // Duplicating: where the copy would land
     int  ghostLen_        = 1;
     int  dropTarget_      = -1;     // CopyingContent: block under the cursor
+    bool copyInside_      = true;   // copy drag: cursor still over this rubber
+
+    CopyDrag makeCopyDrag (const juce::MouseEvent& e) const
+    {
+        CopyDrag d;
+        d.contentOnly   = (dragMode_ == Drag::CopyingContent);
+        d.insideSource  = copyInside_;
+        d.sourceBlockId = dragBlockId_;
+        d.lengthSteps   = ghostLen_;
+        d.grabOffset    = dragGrabOffset_;
+        d.screenPos     = e.getScreenPosition();
+        return d;
+    }
 
     static constexpr int kEdgeGrab      = 10; // px width for edge grab zone
     static constexpr int kMaxEdgeGrab   = 16; // ...its ceiling on wide steps
