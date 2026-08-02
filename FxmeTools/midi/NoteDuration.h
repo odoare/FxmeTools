@@ -2,7 +2,7 @@
   ------------------------------------------------------------------------------
     NoteDuration.h
 
-    Rhythmic note durations (1/4 .. 1/32, straight / triplet / dotted) and a
+    Rhythmic note durations (1/4 .. 1/64, straight / triplet / dotted) and a
     weighted-random duration table: instead of picking one duration, the user
     tunes a probability weight per duration and per modifier, and drawBeats()
     resolves an actual duration from a uniform draw. Pairs with
@@ -21,10 +21,13 @@
 namespace fxme
 {
 
-enum class NoteBase { Quarter = 0, Eighth, Sixteenth, ThirtySecond };
+/** Note values, ordered by *descending* duration. Appending a faster value
+    keeps that order, and keeps every index an existing host/preset may have
+    stored, so this enum extends at the tail and nowhere else. */
+enum class NoteBase { Quarter = 0, Eighth, Sixteenth, ThirtySecond, SixtyFourth };
 enum class NoteMod  { Straight = 0, Triplet, Dotted };
 
-inline constexpr int kNumNoteBases = 4;
+inline constexpr int kNumNoteBases = 5;
 inline constexpr int kNumNoteMods  = 3;
 
 /** Duration in quarter-note beats: quarter = 1, dotted x1.5, triplet x2/3. */
@@ -37,6 +40,7 @@ inline double noteDurationBeats (NoteBase base, NoteMod mod)
         case NoteBase::Eighth:       beats = 0.5;   break;
         case NoteBase::Sixteenth:    beats = 0.25;  break;
         case NoteBase::ThirtySecond: beats = 0.125; break;
+        case NoteBase::SixtyFourth:  beats = 0.0625; break;
     }
     switch (mod)
     {
@@ -54,7 +58,7 @@ inline double noteDurationBeats (NoteBase base, NoteMod mod)
     the chance of drawing 1/4 is 1 / (1 + 0.5 + 0.1). */
 struct WeightedDurationTable
 {
-    float baseWeights[kNumNoteBases] = { 1.0f, 0.0f, 0.0f, 0.0f };
+    float baseWeights[kNumNoteBases] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     float modWeights[kNumNoteMods]   = { 1.0f, 0.0f, 0.0f };
 
     /** Resolve a duration from a uniform draw u in [0, 1). Falls back to a
@@ -82,7 +86,8 @@ struct WeightedDurationTable
                                           (NoteMod)  (i % kNumNoteMods));
             target -= combined[i];
         }
-        return noteDurationBeats (NoteBase::ThirtySecond, NoteMod::Dotted);   // u ~ 1.0 edge
+        // u ~ 1.0 edge: the last cell of the grid, whatever the last base is.
+        return noteDurationBeats ((NoteBase) (kNumNoteBases - 1), NoteMod::Dotted);
     }
 
 private:
