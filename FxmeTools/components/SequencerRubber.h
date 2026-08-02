@@ -13,9 +13,13 @@
     - Copying: cmd/ctrl-drag a block duplicates it (content included) where
       it is dropped, and cmd/ctrl-shift-drag copies only its content onto the
       block it is dropped on. Both leave the source alone and commit on
-      mouse-up, so an invalid drop simply does nothing. A drag that leaves
-      the rubber is handed to the owner (onCopyDragMoved / onCopyDropped) —
-      see CopyDrag: only the parent can see a sibling rubber.
+      mouse-up, so an invalid drop simply does nothing.
+    - Any of those three — plus a plain body drag, which becomes a *move* —
+      is handed to the owner once the cursor leaves this rubber
+      (onCopyDragMoved / onCopyDropped, see CopyDrag): a drag never leaves
+      the component it started in, so only the parent can see a sibling.
+      While outside, a move stops mutating the source, so a refused drop
+      leaves the block exactly where it was.
     - Keyboard: Delete removes the selected block; cmd/ctrl-D duplicates it
       into the steps immediately after it and selects the copy, so repeating
       the key lays down a run. Alt-right-click clears a block's content —
@@ -114,23 +118,32 @@ public:
         entirely self-contained. */
     struct CopyDrag
     {
-        bool contentOnly   = false;  // cmd-shift: the override string, not the block
+        enum class Kind
+        {
+            Move,       // plain body drag that left the rubber
+            Duplicate,  // cmd-drag: the block and its content
+            Content     // cmd-shift-drag: the override string only
+        };
+
+        Kind kind          = Kind::Move;
         bool insideSource  = true;   // cursor still over the rubber it started in
         int  sourceBlockId = -1;
-        int  lengthSteps   = 1;      // block copy: the source's length
+        int  lengthSteps   = 1;      // Move/Duplicate: the source's length
         int  grabOffset    = 0;      // grabbed step relative to the block's start, so
                                      // the owner can resolve the landing step against
                                      // the TARGET's geometry (scroll may differ)
         juce::Point<int> screenPos;  // to find the component under the cursor
     };
 
-    /** Every drag move during a copy drag: the owner updates (or clears) its
-        own drop ghost. Also called while the cursor is still inside, with
+    /** Every drag move during a copy/move drag: the owner updates (or clears)
+        its own drop ghost. Also called while the cursor is still inside, with
         insideSource true, so the owner knows to drop its ghost. */
     std::function<void (const CopyDrag&)> onCopyDragMoved;
 
-    /** Mouse-up of a copy drag that ended OUTSIDE this rubber. The owner
-        decides whether it is legal and commits it; the rubber does nothing. */
+    /** Mouse-up of such a drag that ended OUTSIDE this rubber. The owner
+        decides whether it is legal and commits it; the rubber does nothing —
+        in particular a Move leaves the source block alone, so a refused drop
+        loses nothing. */
     std::function<void (const CopyDrag&)> onCopyDropped;
 
     // ---- geometry, for an owner drawing over this rubber -------------------
@@ -310,8 +323,12 @@ public:
                 dragMode_       = Drag::Moving;
                 dragBlockId_    = hit.blockId;
                 dragMoved_      = false;
+                copyInside_     = true;
                 if (const auto* b = seq_.blockById (hit.blockId))
+                {
                     dragGrabOffset_ = xToStep (e.x) - b->startStep;
+                    ghostLen_       = b->endStep - b->startStep;
+                }
             }
         }
         else
@@ -358,20 +375,8 @@ public:
             seq_.moveBlockEnd (dragBlockId_, step);
             repaint();
         }
-        else if (dragMode_ == Drag::Moving)
-        {
-            if (const auto* b = seq_.blockById (dragBlockId_))
-            {
-                const int newStart = step - dragGrabOffset_;
-                if (newStart != b->startStep)
-                {
-                    seq_.moveBlock (dragBlockId_, newStart);
-                    dragMoved_ = true;
-                    repaint();
-                }
-            }
-        }
-        else if (dragMode_ == Drag::Duplicating || dragMode_ == Drag::CopyingContent)
+        else if (dragMode_ == Drag::Moving
+                 || dragMode_ == Drag::Duplicating || dragMode_ == Drag::CopyingContent)
         {
             const bool inside = getLocalBounds().contains (e.getPosition());
             if (inside != copyInside_) { copyInside_ = inside; repaint(); }
@@ -379,8 +384,23 @@ public:
             if (! inside)
             {
                 // The owner takes over: drop this rubber's own ghost so the
-                // two never show at once.
+                // two never show at once. A Move stops mutating the source
+                // here too — it is left exactly where it was until the owner
+                // commits, so a refused drop costs nothing.
                 if (dropTarget_ != -1) { dropTarget_ = -1; repaint(); }
+            }
+            else if (dragMode_ == Drag::Moving)
+            {
+                if (const auto* b = seq_.blockById (dragBlockId_))
+                {
+                    const int newStart = step - dragGrabOffset_;
+                    if (newStart != b->startStep)
+                    {
+                        seq_.moveBlock (dragBlockId_, newStart);
+                        dragMoved_ = true;
+                        repaint();
+                    }
+                }
             }
             else if (dragMode_ == Drag::Duplicating)
             {
@@ -404,7 +424,9 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         // A body click that never became a move toggles the selection off.
-        if (dragMode_ == Drag::Moving && ! dragMoved_ && clickedSelected_)
+        // Not when it left the lane: that is a cross-lane move, and the drop
+        // decides the selection.
+        if (dragMode_ == Drag::Moving && copyInside_ && ! dragMoved_ && clickedSelected_)
         {
             selectedBlockId_ = -1;
             if (onBlockSelected) onBlockSelected (-1);
@@ -424,7 +446,8 @@ public:
             }
         }
         else if (! copyInside_
-                 && (dragMode_ == Drag::Duplicating || dragMode_ == Drag::CopyingContent))
+                 && (dragMode_ == Drag::Moving || dragMode_ == Drag::Duplicating
+                     || dragMode_ == Drag::CopyingContent))
         {
             // Dropped on a sibling: only the owner can judge and commit it.
             if (onCopyDropped)
@@ -607,7 +630,9 @@ private:
     CopyDrag makeCopyDrag (const juce::MouseEvent& e) const
     {
         CopyDrag d;
-        d.contentOnly   = (dragMode_ == Drag::CopyingContent);
+        d.kind          = dragMode_ == Drag::CopyingContent ? CopyDrag::Kind::Content
+                        : dragMode_ == Drag::Duplicating    ? CopyDrag::Kind::Duplicate
+                                                            : CopyDrag::Kind::Move;
         d.insideSource  = copyInside_;
         d.sourceBlockId = dragBlockId_;
         d.lengthSteps   = ghostLen_;
