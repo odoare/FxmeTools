@@ -99,6 +99,24 @@ public:
         return n;
     }
 
+    /** True when a block of `durationSteps` starting at `startStep` would fit
+        whole inside the window without touching another block. `excludeId`
+        ignores one block, e.g. the one being dragged.
+
+        Stricter than addBlock, which clamps a range that runs off the end:
+        callers that offer to place a block (drag-duplicate, Cmd-D) use this
+        so a copy either lands intact or not at all, never silently short. */
+    bool canPlaceBlock (int startStep, int durationSteps, int excludeId = -1) const noexcept
+    {
+        if (startStep < 0 || durationSteps < 1 || startStep + durationSteps > numSteps_)
+            return false;
+        const int endStep = startStep + durationSteps;
+        for (const auto& b : blocks_)
+            if (b.id != excludeId && startStep < b.endStep && endStep > b.startStep)
+                return false;
+        return true;
+    }
+
     /** Returns the new block id, or -1 if the range overlaps an existing block
         or the parameters are out of range. */
     int addBlock (int startStep, int durationSteps)

@@ -10,7 +10,13 @@
       against the neighbours — no overlap is allowed); alt-click deletes a
       block. The resize zone scales with the step width and is capped at a
       third of the block, so short blocks stay draggable.
-    - Keyboard: Delete removes the selected block; right-click clears its content.
+    - Copying: cmd/ctrl-drag a block duplicates it (content included) where
+      it is dropped, and cmd/ctrl-shift-drag copies only its content onto the
+      block it is dropped on. Both leave the source alone and commit on
+      mouse-up, so an invalid drop simply does nothing.
+    - Keyboard: Delete removes the selected block; cmd/ctrl-D duplicates it
+      into the steps immediately after it and selects the copy, so repeating
+      the key lays down a run. Shift-right-click clears a block's content.
     - Mouse wheel: horizontal scroll.
     - A moving playhead line and per-block custom painting via a BlockPainter.
 
@@ -88,6 +94,10 @@ public:
     std::function<void (int blockId)> onBlockSelected;   // -1 = deselected
     std::function<void (int blockId)> onBlockDeleted;
     std::function<void (int blockId)> onBlockContentCleared;
+    /** A block's content was set from another block (duplicate, text copy):
+        the owner should re-parse it. Separate from onBlockContentCleared so
+        existing users keep their meaning of "cleared". */
+    std::function<void (int blockId)> onBlockContentChanged;
 
     // ---- paint + interaction -----------------------------------------------
 
@@ -159,13 +169,18 @@ public:
 
         if (e.mods.isRightButtonDown())
         {
-            // Right-click: clear content of the clicked block
-            const auto hit = hitTest (e.getPosition());
-            if (hit.blockId >= 0)
+            // Shift-right-click: clear the clicked block's content. Shift is
+            // required because a plain right-click is far too easy to land by
+            // accident for something that throws text away.
+            if (e.mods.isShiftDown())
             {
-                seq_.clearContent (hit.blockId);
-                if (onBlockContentCleared) onBlockContentCleared (hit.blockId);
-                repaint();
+                const auto hit = hitTest (e.getPosition());
+                if (hit.blockId >= 0)
+                {
+                    seq_.clearContent (hit.blockId);
+                    if (onBlockContentCleared) onBlockContentCleared (hit.blockId);
+                    repaint();
+                }
             }
             return;
         }
@@ -189,6 +204,24 @@ public:
             }
             dragMode_    = Drag::None;
             dragBlockId_ = -1;
+            return;
+        }
+
+        // Cmd/Ctrl-drag on a block duplicates it; add Shift to copy only its
+        // content onto another block. Both leave the source untouched and
+        // commit on mouse-up, so nothing changes until the drop is valid.
+        if (hit.blockId >= 0 && e.mods.isCommandDown())
+        {
+            dragMode_    = e.mods.isShiftDown() ? Drag::CopyingContent : Drag::Duplicating;
+            dragBlockId_ = hit.blockId;
+            dropTarget_  = -1;
+            if (const auto* b = seq_.blockById (hit.blockId))
+            {
+                dragGrabOffset_ = xToStep (e.x) - b->startStep;
+                ghostStart_     = b->startStep;
+                ghostLen_       = b->endStep - b->startStep;
+            }
+            repaint();
             return;
         }
 
@@ -277,6 +310,19 @@ public:
                 }
             }
         }
+        else if (dragMode_ == Drag::Duplicating)
+        {
+            const int newStart = step - dragGrabOffset_;
+            if (newStart != ghostStart_) { ghostStart_ = newStart; repaint(); }
+        }
+        else if (dragMode_ == Drag::CopyingContent)
+        {
+            // Only another block is a valid drop; dropping on empty space (or
+            // back on the source) does nothing.
+            const auto hit = hitTest (e.getPosition());
+            const int  t   = (hit.blockId != dragBlockId_) ? hit.blockId : -1;
+            if (t != dropTarget_) { dropTarget_ = t; repaint(); }
+        }
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -301,8 +347,29 @@ public:
                 if (onBlockSelected) onBlockSelected (id);
             }
         }
+        else if (dragMode_ == Drag::Duplicating)
+        {
+            placeCopy (dragBlockId_, ghostStart_, ghostLen_);
+        }
+        else if (dragMode_ == Drag::CopyingContent)
+        {
+            if (dropTarget_ >= 0)
+            {
+                // Read the source out before touching the sequencer: any
+                // mutation may reorder its vector and dangle the pointer.
+                std::string content;
+                if (const auto* src = seq_.blockById (dragBlockId_))
+                    content = src->content;
+
+                const int target = dropTarget_;
+                if (seq_.setContent (target, content) && onBlockContentChanged)
+                    onBlockContentChanged (target);
+            }
+        }
+
         dragMode_    = Drag::None;
         dragBlockId_ = -1;
+        dropTarget_  = -1;
         repaint();
     }
 
@@ -328,6 +395,18 @@ public:
 
     bool keyPressed (const juce::KeyPress& k) override
     {
+        // Cmd/Ctrl-D: drop a copy of the selected block immediately after it
+        // and select that, so repeating the key lays down a run of blocks.
+        // Strictly adjacent — placing the copy anywhere else would put it
+        // where the user is not looking.
+        if (k == juce::KeyPress ('d', juce::ModifierKeys::commandModifier, 0))
+        {
+            if (selectedBlockId_ >= 0)
+                if (const auto* b = seq_.blockById (selectedBlockId_))
+                    placeCopy (selectedBlockId_, b->endStep, b->endStep - b->startStep);
+            return true;   // consumed even when there was no room: no beep
+        }
+
         if (k == juce::KeyPress::deleteKey || k == juce::KeyPress::backspaceKey)
         {
             if (selectedBlockId_ >= 0)
@@ -344,25 +423,76 @@ public:
         return false;
     }
 
-    // ---- creation ghost overlay (drawn on top of normal paint) -------------
+    // ---- drag overlays (drawn on top of normal paint) ----------------------
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        if (dragMode_ != Drag::Creating) return;
-
-        const int s0 = std::min (dragOriginStep_, createStep_);
-        const int s1 = std::max (dragOriginStep_, createStep_) + 1;
-        const int x0 = stepToX (s0);
-        const int x1 = stepToX (s1);
-        if (x1 <= x0) return;
-
-        g.setColour (juce::Colours::white.withAlpha (0.18f));
-        g.fillRect (x0, 0, x1 - x0, getHeight());
-        g.setColour (juce::Colours::white.withAlpha (0.55f));
-        g.drawRect (x0, 0, x1 - x0, getHeight(), 1);
+        if (dragMode_ == Drag::Creating)
+        {
+            const int s0 = std::min (dragOriginStep_, createStep_);
+            const int s1 = std::max (dragOriginStep_, createStep_) + 1;
+            paintGhost (g, s0, s1, true);
+        }
+        else if (dragMode_ == Drag::Duplicating)
+        {
+            // Red while the copy would not fit: the drop is refused, and
+            // saying so during the drag beats a click that does nothing. The
+            // source is NOT excluded — it stays put, so its own steps are
+            // occupied, and a cmd-click that never moves places nothing.
+            paintGhost (g, ghostStart_, ghostStart_ + ghostLen_,
+                        seq_.canPlaceBlock (ghostStart_, ghostLen_));
+        }
+        else if (dragMode_ == Drag::CopyingContent)
+        {
+            if (const auto* t = seq_.blockById (dropTarget_))
+            {
+                const auto r = blockRect (*t);
+                g.setColour (juce::Colours::white.withAlpha (0.25f));
+                g.fillRect (r);
+                g.setColour (juce::Colours::white);
+                g.drawRect (r, 2);
+            }
+        }
     }
 
 private:
+    void paintGhost (juce::Graphics& g, int fromStep, int toStep, bool valid)
+    {
+        const int x0 = stepToX (fromStep);
+        const int x1 = stepToX (toStep);
+        if (x1 <= x0) return;
+
+        const auto c = valid ? juce::Colours::white : juce::Colour (0xffe8483c);
+        g.setColour (c.withAlpha (0.18f));
+        g.fillRect (x0, 0, x1 - x0, getHeight());
+        g.setColour (c.withAlpha (0.55f));
+        g.drawRect (x0, 0, x1 - x0, getHeight(), 1);
+    }
+
+    /** Adds a copy of `sourceId` at [startStep, startStep+len) and selects it,
+        or does nothing at all if that range is not free. The source's content
+        is read out first: adding a block may reorder the sequencer's vector
+        and dangle any pointer into it. */
+    void placeCopy (int sourceId, int startStep, int len)
+    {
+        const auto* src = seq_.blockById (sourceId);
+        if (src == nullptr || ! seq_.canPlaceBlock (startStep, len))
+            return;
+
+        const std::string content = src->content;
+        const int id = seq_.addBlock (startStep, len);
+        if (id < 0)
+            return;
+
+        seq_.setContent (id, content);
+        selectBlock (id);
+        // Content first: the owner re-parses on this callback, and selecting
+        // the copy before that would show it as an unparsed (red) block.
+        if (onBlockContentChanged) onBlockContentChanged (id);
+        if (onBlockSelected)       onBlockSelected (id);
+        repaint();
+    }
+
     StringSequencer& seq_;
     BlockPainter     painter_;
 
@@ -371,14 +501,18 @@ private:
     int    activeBlockId_   = -1;
     int    selectedBlockId_ = -1;
 
-    enum class Drag { None, Creating, ResizingStart, ResizingEnd, Moving };
+    enum class Drag { None, Creating, ResizingStart, ResizingEnd, Moving,
+                      Duplicating, CopyingContent };
     Drag dragMode_        = Drag::None;
     int  dragBlockId_     = -1;
     int  dragOriginStep_  = 0;
     int  createStep_      = 0;
-    int  dragGrabOffset_  = 0;      // Moving: grabbed step relative to block start
+    int  dragGrabOffset_  = 0;      // Moving/Duplicating: grabbed step relative to block start
     bool dragMoved_       = false;  // Moving: the block actually moved
     bool clickedSelected_ = false;  // Moving: the click hit the selected block
+    int  ghostStart_      = 0;      // Duplicating: where the copy would land
+    int  ghostLen_        = 1;
+    int  dropTarget_      = -1;     // CopyingContent: block under the cursor
 
     static constexpr int kEdgeGrab      = 10; // px width for edge grab zone
     static constexpr int kMaxEdgeGrab   = 16; // ...its ceiling on wide steps
