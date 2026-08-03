@@ -77,6 +77,18 @@ void SpectrumRegionEditor::setSelectedRegion (int index)
     repaint();
 }
 
+juce::Rectangle<int> SpectrumRegionEditor::getRegionArea (int index) const
+{
+    if (! juce::isPositiveAndBelow (index, (int) regions.size()))
+        return {};
+
+    const auto& r = regions[(size_t) index];
+    if (! r.active)
+        return {};
+
+    return regionBounds (r, getPlotArea()).toNearestInt();
+}
+
 //==============================================================================
 juce::Rectangle<float> SpectrumRegionEditor::regionBounds (const Region& r,
                                                            juce::Rectangle<float> plot) const

@@ -91,6 +91,11 @@ public:
     int  getSelectedRegion() const noexcept      { return selected; }
     void setSelectedRegion (int index);
 
+    /** Where a region is currently drawn, in this component's coordinates.
+        Empty for an inactive or unknown slot. Use it to anchor a popup on the
+        band it belongs to. */
+    juce::Rectangle<int> getRegionArea (int index) const;
+
     //==========================================================================
     // Callbacks, all delivered on the message thread.
 

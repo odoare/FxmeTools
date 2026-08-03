@@ -80,6 +80,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/BitCrusher.h"
 #include "dsp/Downsampler.h"
 #include "dsp/DelayLine.h"
+#include "dsp/StereoCrossDelay.h"
+#include "dsp/DelayTimeResolver.h"
 #include "dsp/DeterministicRandom.h"
 #include "dsp/ArEnvelope.h"
 
