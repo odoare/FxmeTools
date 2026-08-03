@@ -5,6 +5,7 @@
 // `namespace fxme { ... }`, so they are #included here at global scope.
 #include "dsp/SpectrumAnalyzer.cpp"
 #include "components/SpectrumDisplay.cpp"
+#include "components/SpectrumRegionEditor.cpp"
 #include "dsp/CracksGenerator.cpp"
 #include "threading/BackgroundTaskRunner.cpp"
 #include "presets/EmbeddedAudio.cpp"

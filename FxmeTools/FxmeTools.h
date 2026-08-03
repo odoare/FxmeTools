@@ -85,6 +85,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
+#include "components/SpectrumRegionEditor.h"
 #include "components/WaveformDisplay.h"
 #include "components/ComponentSnapshot.h"
 #include "components/SplMeterComponent.h"

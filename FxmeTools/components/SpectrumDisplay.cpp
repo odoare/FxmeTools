@@ -39,6 +39,18 @@ void SpectrumDisplay::timerCallback()
         repaint();
 }
 
+void SpectrumDisplay::setFftOrder (int order)
+{
+    const int clamped = juce::jlimit (spectrumMinFftOrder, spectrumMaxFftOrder, order);
+    if (clamped == fftOrder)
+        return;
+
+    fftOrder = clamped;
+    analyzer.setFftSize (1 << fftOrder);
+    restartAveraging();
+    repaint();
+}
+
 void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
 {
     const auto p = e.getPosition();
@@ -64,11 +76,10 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
     }
     if (fftBadgeBounds().contains (p))
     {
-        // Cycle the window size through the supported orders.
-        fftOrder = fftOrder >= spectrumMaxFftOrder ? spectrumMinFftOrder : fftOrder + 1;
-        analyzer.setFftSize (1 << fftOrder);
-        restartAveraging();
-        repaint();
+        // Cycle the window size through the supported orders, unless the host
+        // has pinned it.
+        if (! fftLocked)
+            setFftOrder (fftOrder >= spectrumMaxFftOrder ? spectrumMinFftOrder : fftOrder + 1);
         return;
     }
     if (avgBadgeBounds().contains (p))
@@ -289,6 +300,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState clipState (g);
         g.reduceClipRegion (plot.toNearestInt());
 
+        paintBehindTraces (g, plot);
+
         for (auto& tr : traces)
         {
             if (! tr.enabled || ! tr.userVisible)
@@ -308,6 +321,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             g.setColour (tr.cfg.colour);
             g.strokePath (path, juce::PathStrokeType (tr.cfg.thickness));
         }
+
+        paintOverTraces (g, plot);
     }
 
     // Legend: one clickable entry per running trace (mouseDown scans
@@ -336,7 +351,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     // Clickable badges: window size + temporal averaging (bottom-left),
     // per-point detector avg/peak (bottom-right).
-    drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), true);
+    drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), ! fftLocked);
     drawBadge (g, avgBadgeBounds(), "avg", avgOn);
     drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn);
     drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", true);

@@ -97,6 +97,19 @@ public:
     void setSpectrumMode (Mode m) { mode = m; repaint(); }
     Mode getSpectrumMode() const  { return mode; }
 
+    /** Analysis window size, as an FFT order (clamped to the supported range).
+        Worth pinning when something else in the plugin measures the same
+        signal and has to agree with what is drawn: a spectral gate threshold,
+        say, only sits where it looks like it sits when the view and the DSP
+        run the same window. */
+    void setFftOrder (int order);
+    int  getFftOrder() const noexcept       { return fftOrder; }
+
+    /** Stops the window-size badge responding to clicks (it draws dimmed), so
+        a pinned size cannot be changed from the GUI. */
+    void setFftSizeLocked (bool shouldBeLocked) { fftLocked = shouldBeLocked; repaint(); }
+    bool isFftSizeLocked() const noexcept       { return fftLocked; }
+
     /** When calibrated, the vertical axis is labelled in dB SPL = dBFS + offset
         (the plotted curves do not move, only the numbers). */
     void setSplCalibration (bool calibrated, float offsetDb)
@@ -121,16 +134,18 @@ public:
     void mouseDoubleClick (const juce::MouseEvent& e) override;
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override;
 
-private:
-    struct Trace
-    {
-        TraceConfig cfg;
-        bool enabled;                   // tap is running
-        std::array<float, (size_t) SpectrumAnalyzer::numPoints> smoothedDb;
-        bool userVisible = true;        // legend toggle (drawing only)
-    };
+protected:
+    //==========================================================================
+    // Everything a subclass needs to draw and hit-test in the plot's own
+    // coordinates. SpectrumRegionEditor is built on these.
 
-    void timerCallback() override;
+    /** Drawn after the grid and before the traces, clipped to the plot: for
+        anything that belongs underneath the curves (band fills, markers). */
+    virtual void paintBehindTraces (juce::Graphics&, juce::Rectangle<float> /*plotArea*/) {}
+
+    /** Drawn after the traces and before the legend and badges, clipped to the
+        plot: for handles and anything that must stay legible over a curve. */
+    virtual void paintOverTraces (juce::Graphics&, juce::Rectangle<float> /*plotArea*/) {}
 
     juce::Rectangle<float> getPlotArea() const
     {
@@ -149,13 +164,48 @@ private:
         return viewFMin * std::exp (rel * std::log (viewFMax / viewFMin));
     }
 
-    // 1-2-5 frequency ticks across the current window.
-    std::vector<float> freqTicks() const;
-
     float dbToY (float db, juce::Rectangle<float> r) const
     {
         return juce::jmap (db, minDb, maxDb, r.getBottom(), r.getY());
     }
+
+    float yToDb (float y, juce::Rectangle<float> r) const
+    {
+        return juce::jmap (juce::jlimit (r.getY(), r.getBottom(), y),
+                           r.getBottom(), r.getY(), minDb, maxDb);
+    }
+
+    /** True when the point is over one of the clickable badges, which a
+        subclass must leave to the base class. */
+    bool overBadge (juce::Point<int> p) const
+    {
+        return detectorBadgeBounds().contains (p) || fftBadgeBounds().contains (p)
+            || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p);
+    }
+
+    /** True when the point is over a legend entry (same reasoning). Only valid
+        once the component has painted at least once. */
+    bool overLegend (juce::Point<int> p) const
+    {
+        for (const auto& hit : legendHits)
+            if (hit.first.contains (p))
+                return true;
+        return false;
+    }
+
+private:
+    struct Trace
+    {
+        TraceConfig cfg;
+        bool enabled;                   // tap is running
+        std::array<float, (size_t) SpectrumAnalyzer::numPoints> smoothedDb;
+        bool userVisible = true;        // legend toggle (drawing only)
+    };
+
+    void timerCallback() override;
+
+    // 1-2-5 frequency ticks across the current window.
+    std::vector<float> freqTicks() const;
 
     // Clickable badges. The detector (avg/peak) stays bottom-right; the window
     // size and temporal-averaging controls sit bottom-left.
@@ -180,12 +230,6 @@ private:
 
     void drawBadge (juce::Graphics& g, juce::Rectangle<int> r,
                     const juce::String& text, bool active) const;
-
-    bool overBadge (juce::Point<int> p) const
-    {
-        return detectorBadgeBounds().contains (p) || fftBadgeBounds().contains (p)
-            || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p);
-    }
 
     void restartAveraging()
     {
@@ -215,6 +259,7 @@ private:
     Mode  mode = Mode::average;
 
     int  fftOrder = spectrumFftOrder;           // window size = 1 << fftOrder
+    bool fftLocked = false;                     // badge ignores clicks
     bool avgOn = true;                          // temporal averaging
     int  nAvg  = 4;                             // averaged over ~nAvg frames
 
