@@ -61,12 +61,34 @@ struct AccentToggle : juce::TextButton
     void setCornerSize (float newCornerSize)   { cornerSize = newCornerSize; repaint(); }
     void setMaxFontHeight (float newMaxHeight) { maxFontHeight = newMaxHeight; repaint(); }
 
+    /** Momentary highlight blended over the body, independent of the toggle
+        state: 0 leaves the button alone, 1 paints it fully in the flash
+        colour. Drive it from a GUI timer to blink the button on an external
+        event (a step trigger, a note-on) without disturbing what it latches.
+        Repaints only when the value actually moves, so it is cheap to call
+        every frame. */
+    void setFlash (float amount)
+    {
+        amount = juce::jlimit (0.0f, 1.0f, amount);
+        if (std::abs (amount - flash) < 0.004f)
+            return;
+        flash = amount;
+        repaint();
+    }
+
+    float getFlash() const noexcept { return flash; }
+
+    /** Colour the flash blends towards (default: white). */
+    void setFlashColour (juce::Colour c) { flashColour = c; repaint(); }
+
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
         const bool on = getToggleState();
         auto bg = findColour (on ? buttonOnColourId : buttonColourId);
         if (! isEnabled())
             bg = bg.withAlpha (0.5f);
+        if (flash > 0.0f)
+            bg = bg.interpolatedWith (flashColour, flash);
 
         g.setColour (highlighted && isEnabled() ? bg.brighter (0.2f) : bg);
         g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), cornerSize);
@@ -81,6 +103,8 @@ struct AccentToggle : juce::TextButton
 private:
     float cornerSize = 4.0f;
     float maxFontHeight = 13.0f;
+    float flash = 0.0f;
+    juce::Colour flashColour { juce::Colours::white };
 };
 
 } // namespace fxme

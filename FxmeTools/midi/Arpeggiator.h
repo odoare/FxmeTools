@@ -462,6 +462,7 @@ private:
             midiBuffer.addEvent(juce::MidiMessage::noteOn(midiChannel, noteToPlay, velocityToUse), samplePosition);
             lastPlayedMidiNote = noteToPlay;
             lastPlayedMidiChannel = midiChannel;
+            noteOnCounter.bump();
             if (shouldUpdateLastDegree)
                 lastPlayedDegreeIndex = currentDegreeIndex;
         }
@@ -679,6 +680,16 @@ public:
     int getLastPlayedNote() const
     {
         return lastPlayedMidiNote;
+    }
+
+    /** Monotonic count of note-ons emitted since construction. Poll it from a
+        GUI timer and compare with the previous reading to detect that this
+        arpeggiator fired: a change means at least one note started since the
+        last poll. Wrapping after 2^32 notes is harmless, since only
+        inequality is meaningful. Safe to call from any thread. */
+    uint32_t getNoteOnCount() const noexcept
+    {
+        return noteOnCounter.get();
     }
     /** Calculates the number of musical steps in the pattern string. */
     int numSteps() const
@@ -1051,6 +1062,30 @@ protected:
     int lastPlayedMidiChannel = 1;
     int lastPlayedDegreeIndex = 0;
     int currentStepIndex = 0;
+
+    /** Monotonic count of note-ons emitted, bumped on the audio thread and
+        polled by the GUI (see getNoteOnCount). Copyable/movable on purpose:
+        a bare std::atomic member would make Arpeggiator non-movable, and
+        hosts keep instances in std::vector. */
+    struct NoteOnCounter
+    {
+        NoteOnCounter() = default;
+        NoteOnCounter (const NoteOnCounter& other)
+            : value (other.value.load (std::memory_order_relaxed)) {}
+        NoteOnCounter& operator= (const NoteOnCounter& other)
+        {
+            value.store (other.value.load (std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+            return *this;
+        }
+
+        void bump() noexcept   { value.fetch_add (1, std::memory_order_relaxed); }
+        uint32_t get() const noexcept { return value.load (std::memory_order_relaxed); }
+
+        std::atomic<uint32_t> value { 0 };
+    };
+
+    NoteOnCounter noteOnCounter;
 
 private:
     // Advance pos past the matching ')'. Call with pos already past the opening '('.
