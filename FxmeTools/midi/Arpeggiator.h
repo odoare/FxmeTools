@@ -62,6 +62,130 @@ namespace fxme
 class Arpeggiator
 {
 public:
+    //==========================================================================
+    // Pattern alphabet
+    //
+    // Values in the pattern language are a single character, so the range a
+    // value can cover is the size of the alphabet. Since syntax version 2 that
+    // alphabet is hexadecimal, '0'-'9' then 'A'-'F', which gives degrees up to
+    // 15 (chords and scales with more than nine notes) and 15 velocity levels
+    // instead of 8.
+    //
+    // Uppercase only, deliberately: 'b' is the flat command, so lowercase hex
+    // would be ambiguous wherever a value sits in command position, and a
+    // single case is easier to read than a rule about which position you are
+    // in.
+
+    /** Value of a pattern value character: '0'-'9' -> 0-9, 'A'-'F' -> 10-15.
+        Returns -1 for anything else. */
+    static int hexValue (char c) noexcept
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+        return -1;
+    }
+
+    /** Inverse of hexValue: 0-15 -> '0'-'9', 'A'-'F'. For pattern generators. */
+    static char valueChar (int v) noexcept
+    {
+        v = juce::jlimit (0, 15, v);
+        return (char) (v < 10 ? ('0' + v) : ('A' + v - 10));
+    }
+
+    /** True if `c` opens a musical step, as opposed to a prefix ('o', 'v',
+        '#'...) or a block marker. Shared by the parser and the three step
+        traversals so that they cannot drift apart. */
+    static bool isStepCommand (char c) noexcept
+    {
+        return hexValue (c) >= 0 || c == '+' || c == '-' || c == '?'
+            || c == '=' || c == '.' || c == '_';
+    }
+
+    /** Number of velocity levels, i.e. the top of the value alphabet. */
+    static constexpr int maxVelocityLevel = 15;
+
+    /** MIDI velocity for a level in 1..maxVelocityLevel. */
+    static int velocityForLevel (int level) noexcept
+    {
+        return juce::jlimit (1, 127, juce::roundToInt (
+            (float) level * 127.0f / (float) maxVelocityLevel));
+    }
+
+    /** Nearest level to a MIDI velocity: the inverse of velocityForLevel, used
+        by the relative commands ('v+', 'V-') to step from whatever velocity is
+        currently in effect. Floors at 1 so a run of 'V-' cannot silence the
+        pattern outright. */
+    static int levelForVelocity (int velocity) noexcept
+    {
+        return juce::jlimit (1, maxVelocityLevel, juce::roundToInt (
+            (float) velocity * (float) maxVelocityLevel / 127.0f));
+    }
+
+    /**
+        Rewrites a syntax-version-1 pattern into version 2.
+
+        Only velocity changed meaning: v1 read the argument of 'v'/'V' as a
+        decimal 1-9 on a `level * 16` scale (so 8 and 9 both clamped to 127),
+        while v2 reads it as a hex 1-F spread over the full range. Every other
+        command, degrees included, means in v2 exactly what it meant in v1, so
+        this touches nothing else — importantly not the arguments of 'o', 'O'
+        and 'p', which are still decimal.
+
+        Each old level is mapped to whichever new level lands nearest the
+        velocity it used to produce.
+    */
+    static juce::String migratePatternV1toV2 (const juce::String& oldPattern)
+    {
+        // Old level -> nearest new level, indexed 0-9, via the velocity each
+        // produced: round(min(127, n * 16) * 15 / 127). Level 0 means "no
+        // velocity change" in both versions, and old 8 and 9 both clamped to
+        // 127, so both land on F.
+        static const char* const velocityMap = "024689BDFF";
+
+        juce::String result;
+        result.preallocateBytes ((size_t) oldPattern.getNumBytesAsUTF8());
+
+        int i = 0;
+        while (i < oldPattern.length())
+        {
+            const char c = oldPattern[i];
+
+            if (c == 'v' || c == 'V')
+            {
+                result += c;
+                if (i + 1 < oldPattern.length())
+                {
+                    const char arg = oldPattern[i + 1];
+                    const int  old = (arg >= '0' && arg <= '9') ? arg - '0' : -1;
+                    // '?', '+', '-' and anything else pass through untouched.
+                    result += (old >= 0) ? velocityMap[old] : arg;
+                    i += 2;
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+            else if (c == 'o' || c == 'O' || c == 'p')
+            {
+                // Prefix and its argument, both unchanged: copy them together
+                // so an argument that happens to be a digit is never mistaken
+                // for a velocity value.
+                result += c;
+                if (i + 1 < oldPattern.length())
+                    result += oldPattern[i + 1];
+                i += 2;
+            }
+            else
+            {
+                result += c;
+                ++i;
+            }
+        }
+
+        return result;
+    }
+
     /**
         Default constructor.
         Initializes with a default C Major chord, a simple pattern, and a base octave.
@@ -187,14 +311,26 @@ private:
                     char velocityValueChar = pattern[pos];
                     pos = (pos + 1) % pattern.length(); // Consume velocity value
                     
-                    int velocityLevel = 0;
-                    if (juce::CharacterFunctions::isDigit(velocityValueChar))
-                        velocityLevel = velocityValueChar - '0';
+                    // Same shape as the octave block above: '+'/'-' step one
+                    // level from whatever is in effect for this step, '?' picks
+                    // one at random, and a value sets the level outright.
+                    // Levels are hex since syntax v2: 1-F over the full range.
+                    int currentLevel = levelForVelocity((localVelocity != -1) ? localVelocity
+                                                                              : globalVelocity);
+                    int velocityLevel;
+
+                    if (velocityValueChar == '+')
+                        velocityLevel = juce::jmin(maxVelocityLevel, currentLevel + 1);
+                    else if (velocityValueChar == '-')
+                        velocityLevel = juce::jmax(1, currentLevel - 1);
                     else if (velocityValueChar == '?')
-                        velocityLevel = juce::Random::getSystemRandom().nextInt(9) + 1;
+                        velocityLevel = juce::Random::getSystemRandom().nextInt(maxVelocityLevel) + 1;
+                    else
+                        velocityLevel = hexValue(velocityValueChar);   // 0 or -1 = leave alone
+
                     if (velocityLevel > 0)
                     {
-                        int velocity = juce::jmin(127, velocityLevel * 16);
+                        int velocity = velocityForLevel(velocityLevel);
                         if (command == 'v') localVelocity = velocity;
                         else globalVelocity = velocity;
                     }
@@ -341,11 +477,13 @@ private:
                 isSustain = true;
                 noteCommandFound = true;
             }
-            else if (juce::CharacterFunctions::isDigit(command))
+            else if (hexValue(command) >= 0)
             {
-                // Convert 1-indexed pattern digit to 0-indexed internal degree.
-                // '1' -> 0, '2' -> 1, etc. '0' is not a valid note.
-                int degreeValue = command - '0';
+                // Convert 1-indexed pattern value to 0-indexed internal degree.
+                // '1' -> 0, '2' -> 1 ... 'F' -> 14. '0' is not a valid note: it
+                // closes the step without naming a degree, so the step fires on
+                // whichever degree is current (the idiom behind "vF0").
+                int degreeValue = hexValue(command);
                 if (degreeValue > 0)
                     currentDegreeIndex = degreeValue - 1;
 
@@ -629,9 +767,10 @@ public:
             if (rng.nextFloat() < 0.1f)
                 s.prefixes += (rng.nextBool() ? "#" : "b");
 
-            // Local Velocity
+            // Local Velocity: an accent, so the top half of the range. Levels
+            // are hex since syntax v2, so v9-vF is what v5-v8 used to be.
             if (rng.nextFloat() < 0.1f)
-                s.prefixes += "v" + juce::String(rng.nextInt(4) + 5); // v5-v8
+                s.prefixes += juce::String("v") + valueChar(rng.nextInt(7) + 9); // v9-vF
         }
 
         // Add Global Modifiers (Balanced)
@@ -729,9 +868,7 @@ public:
                 }
                 else if (i < pattern.length()) i++;
             }
-            else if (juce::CharacterFunctions::isDigit(command) || command == '+' ||
-                     command == '-' || command == '?' ||
-                     command == '=' || command == '.' || command == '_')
+            else if (isStepCommand(command))
             {
                 steps++;
                 i++;
@@ -785,9 +922,7 @@ public:
                 }
                 else if (i < pattern.length()) i++;
             }
-            else if (juce::CharacterFunctions::isDigit(command) || command == '+' ||
-                     command == '-' || command == '?' ||
-                     command == '=' || command == '.' || command == '_')
+            else if (isStepCommand(command))
             {
                 currentStepCount++;
                 i++;
@@ -834,10 +969,13 @@ public:
                 }
                 else if (i < pattern.length()) i++;
             }
-            else if (juce::CharacterFunctions::isDigit(command) || command == '+' ||
-                     command == '-' || command == '?' || command == '"' ||
-                     command == '=' || command == '.' || command == '_')
+            else if (isStepCommand(command) || command == '"')
             {
+                // NB: '"' is counted as a step here but not by numSteps() or
+                // getPatternIndexForStep(). Pre-existing inconsistency, kept as
+                // it was rather than changed under a syntax migration; it makes
+                // the playing-step highlight drift in patterns using
+                // root-relative blocks.
                 stepCount++;
                 i++;
             }

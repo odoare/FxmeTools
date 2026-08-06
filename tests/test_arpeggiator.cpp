@@ -253,10 +253,12 @@ TEST_CASE("'b' lowers pitch by one semitone")
 // ---------------------------------------------------------------------------
 // 8. Velocity modifiers
 // ---------------------------------------------------------------------------
-TEST_CASE("'v8' sets local note velocity to 127")
+// Velocity levels are hexadecimal since syntax v2: 1-F spread over the full
+// MIDI range, so 'F' is the maximum rather than '8'.
+TEST_CASE("'vF' sets local note velocity to 127")
 {
     Arpeggiator arp;
-    setup(arp, "v8 1 1");
+    setup(arp, "vF 1 1");
 
     auto e0 = tick(arp, true);
     auto e1 = tick(arp);
@@ -267,18 +269,196 @@ TEST_CASE("'v8' sets local note velocity to 127")
     CHECK(e1.velocity == DEFAULT_VEL);  // local modifier expired
 }
 
-TEST_CASE("'V4' sets global velocity to 64 for subsequent notes")
+TEST_CASE("'V8' sets global velocity to mid range for subsequent notes")
 {
     Arpeggiator arp;
-    setup(arp, "V4 1 1 1");
+    setup(arp, "V8 1 1 1");
 
-    auto e0 = tick(arp, true);  // 'V4' consumed as prefix
+    const int expected = Arpeggiator::velocityForLevel(8);   // 8 * 127 / 15
+    CHECK(expected == 68);
+
+    auto e0 = tick(arp, true);  // 'V8' consumed as prefix
     auto e1 = tick(arp);
     auto e2 = tick(arp);
 
-    CHECK(e0.velocity == 64);
-    CHECK(e1.velocity == 64);
-    CHECK(e2.velocity == 64);
+    CHECK(e0.velocity == expected);
+    CHECK(e1.velocity == expected);
+    CHECK(e2.velocity == expected);
+}
+
+TEST_CASE("velocity levels span the full range monotonically")
+{
+    CHECK(Arpeggiator::velocityForLevel(1)  == 8);
+    CHECK(Arpeggiator::velocityForLevel(15) == 127);
+
+    for (int level = 2; level <= Arpeggiator::maxVelocityLevel; ++level)
+        CHECK(Arpeggiator::velocityForLevel(level) > Arpeggiator::velocityForLevel(level - 1));
+}
+
+TEST_CASE("levelForVelocity inverts velocityForLevel")
+{
+    for (int level = 1; level <= Arpeggiator::maxVelocityLevel; ++level)
+        CHECK(Arpeggiator::levelForVelocity(Arpeggiator::velocityForLevel(level)) == level);
+}
+
+TEST_CASE("'V+' and 'V-' step the global velocity by one level")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "V8 1 V+ 1 V+ 1 V- 1");
+
+    auto e0 = tick(arp, true);   // 'V8' consumed as prefix
+    auto e1 = tick(arp);         // 'V+' -> level 9
+    auto e2 = tick(arp);         // 'V+' -> level 10
+    auto e3 = tick(arp);         // 'V-' -> level 9
+
+    CHECK(e0.velocity == A::velocityForLevel(8));
+    CHECK(e1.velocity == A::velocityForLevel(9));
+    CHECK(e2.velocity == A::velocityForLevel(10));
+    CHECK(e3.velocity == A::velocityForLevel(9));
+}
+
+TEST_CASE("'v+' and 'v-' affect only the next note")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "V8 1 v+ 1 1");
+
+    auto e0 = tick(arp, true);   // global level 8
+    auto e1 = tick(arp);         // local step up
+    auto e2 = tick(arp);         // back to the global level
+
+    CHECK(e0.velocity == A::velocityForLevel(8));
+    CHECK(e1.velocity == A::velocityForLevel(9));
+    CHECK(e2.velocity == A::velocityForLevel(8));
+}
+
+TEST_CASE("global velocity saturates instead of wrapping or silencing")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "VF 1 V+ 1");
+
+    auto e0 = tick(arp, true);
+    auto e1 = tick(arp);
+
+    CHECK(e0.velocity == 127);
+    CHECK(e1.velocity == 127);   // already at the top
+
+    Arpeggiator quiet;
+    setup(quiet, "V1 1 V- 1");
+
+    auto q0 = tick(quiet, true);
+    auto q1 = tick(quiet);
+
+    CHECK(q0.velocity == A::velocityForLevel(1));
+    CHECK(q1.velocity == A::velocityForLevel(1));   // floors at 1, never 0
+    CHECK(q1.velocity > 0);
+}
+
+// ---------------------------------------------------------------------------
+// 8b. Hexadecimal value alphabet (syntax v2)
+// ---------------------------------------------------------------------------
+TEST_CASE("hexValue / valueChar round-trip over the whole alphabet")
+{
+    for (int v = 0; v <= 15; ++v)
+        CHECK(Arpeggiator::hexValue(Arpeggiator::valueChar(v)) == v);
+
+    CHECK(Arpeggiator::hexValue('0') == 0);
+    CHECK(Arpeggiator::hexValue('9') == 9);
+    CHECK(Arpeggiator::hexValue('A') == 10);
+    CHECK(Arpeggiator::hexValue('F') == 15);
+
+    // Not values: 'b' is the flat command, and lowercase hex is not part of
+    // the alphabet precisely so that it cannot collide with it.
+    CHECK(Arpeggiator::hexValue('b') == -1);
+    CHECK(Arpeggiator::hexValue('a') == -1);
+    CHECK(Arpeggiator::hexValue('f') == -1);
+    CHECK(Arpeggiator::hexValue('G') == -1);
+    CHECK(Arpeggiator::hexValue('.') == -1);
+}
+
+TEST_CASE("hex degrees count as steps, lowercase 'b' stays the flat prefix")
+{
+    Arpeggiator arp;
+
+    setup(arp, "1 A F");
+    CHECK(arp.numSteps() == 3);
+
+    // 'b' prefixes the note that follows, so this is two steps, not three.
+    setup(arp, "1 b2");
+    CHECK(arp.numSteps() == 2);
+
+    // Uppercase 'B' is degree 11 and therefore a step of its own.
+    setup(arp, "1 B 2");
+    CHECK(arp.numSteps() == 3);
+}
+
+TEST_CASE("'b' still flattens while 'B' selects a degree")
+{
+    Arpeggiator arp;
+    setup(arp, "b1 1");
+
+    auto e0 = tick(arp, true);
+    auto e1 = tick(arp);
+
+    CHECK(e0.pitch == C4 - 1);   // flattened
+    CHECK(e1.pitch == C4);       // local modifier expired
+}
+
+// ---------------------------------------------------------------------------
+// 8c. Migration from syntax v1
+// ---------------------------------------------------------------------------
+TEST_CASE("v1 to v2 migration preserves the velocity each step produced")
+{
+    using A = Arpeggiator;
+
+    // Old scale was min(127, level * 16); the new level is whichever lands
+    // nearest that velocity.
+    CHECK(A::migratePatternV1toV2("v8 1") == "vF 1");   // was 127, max
+    CHECK(A::migratePatternV1toV2("v9 1") == "vF 1");   // also clamped to 127
+    CHECK(A::migratePatternV1toV2("V4 1") == "V8 1");   // was 64
+    CHECK(A::migratePatternV1toV2("v6 1") == "vB 1");   // was 96
+    CHECK(A::migratePatternV1toV2("v7 1") == "vD 1");   // was 112
+
+    for (int oldLevel = 1; oldLevel <= 9; ++oldLevel)
+    {
+        const juce::String migrated = A::migratePatternV1toV2("v" + juce::String(oldLevel) + " 1");
+        const int newLevel = A::hexValue(migrated[1]);
+        const int oldVel   = juce::jmin(127, oldLevel * 16);
+
+        CHECK(std::abs(A::velocityForLevel(newLevel) - oldVel) <= 5);
+    }
+}
+
+TEST_CASE("v1 to v2 migration touches only velocity arguments")
+{
+    using A = Arpeggiator;
+
+    // Octave and probability arguments stay decimal and must be left alone,
+    // including when they are digits that would be valid velocity levels.
+    CHECK(A::migratePatternV1toV2("o3 p5 1 v2 3") == "o3 p5 1 v4 3");
+    CHECK(A::migratePatternV1toV2("O5 1 2 3")     == "O5 1 2 3");
+    CHECK(A::migratePatternV1toV2("p5 1:2")       == "p5 1:2");
+
+    // Degrees are unchanged: they meant the same in v1.
+    CHECK(A::migratePatternV1toV2("1 2 3 4 5 6 7 8 9") == "1 2 3 4 5 6 7 8 9");
+
+    // Non-numeric velocity arguments pass through.
+    CHECK(A::migratePatternV1toV2("v? 1") == "v? 1");
+    CHECK(A::migratePatternV1toV2("V+ 1") == "V+ 1");
+
+    // Already-migrated patterns must survive a second pass unchanged, since
+    // the migration is keyed off a stored version and should be idempotent
+    // for anything already in the new alphabet.
+    CHECK(A::migratePatternV1toV2("vF 1") == "vF 1");
+    CHECK(A::migratePatternV1toV2("VB 1") == "VB 1");
+
+    // A trailing prefix with no argument must not read past the end.
+    CHECK(A::migratePatternV1toV2("1 v")  == "1 v");
 }
 
 // ---------------------------------------------------------------------------
