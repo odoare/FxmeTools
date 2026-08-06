@@ -61,10 +61,15 @@ struct AccentToggle : juce::TextButton
     void setCornerSize (float newCornerSize)   { cornerSize = newCornerSize; repaint(); }
     void setMaxFontHeight (float newMaxHeight) { maxFontHeight = newMaxHeight; repaint(); }
 
-    /** Momentary highlight blended over the body, independent of the toggle
-        state: 0 leaves the button alone, 1 paints it fully in the flash
+    /** Momentary outline drawn around the button, independent of the toggle
+        state: 0 leaves the button alone, 1 draws a solid line in the flash
         colour. Drive it from a GUI timer to blink the button on an external
         event (a step trigger, a note-on) without disturbing what it latches.
+
+        An outline rather than a tint of the body on purpose: at the rates a
+        sequencer fires, a body that lights up reads as flicker and buries the
+        button's own accent, while a line around it stays legible and calm.
+
         Repaints only when the value actually moves, so it is cheap to call
         every frame. */
     void setFlash (float amount)
@@ -78,8 +83,10 @@ struct AccentToggle : juce::TextButton
 
     float getFlash() const noexcept { return flash; }
 
-    /** Colour the flash blends towards (default: white). */
+    /** Colour of the flash outline (default: white). */
     void setFlashColour (juce::Colour c) { flashColour = c; repaint(); }
+
+    void setFlashThickness (float t) { flashThickness = t; repaint(); }
 
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
@@ -87,8 +94,6 @@ struct AccentToggle : juce::TextButton
         auto bg = findColour (on ? buttonOnColourId : buttonColourId);
         if (! isEnabled())
             bg = bg.withAlpha (0.5f);
-        if (flash > 0.0f)
-            bg = bg.interpolatedWith (flashColour, flash);
 
         g.setColour (highlighted && isEnabled() ? bg.brighter (0.2f) : bg);
         g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), cornerSize);
@@ -98,12 +103,21 @@ struct AccentToggle : juce::TextButton
         g.setFont (juce::Font (juce::FontOptions (
             juce::jmin (maxFontHeight, (float) getHeight() * 0.62f), juce::Font::bold)));
         g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred);
+
+        // Flash outline last, so it sits over both body and text.
+        if (flash > 0.0f)
+        {
+            g.setColour (flashColour.withAlpha (flash));
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f),
+                                    cornerSize, flashThickness);
+        }
     }
 
 private:
     float cornerSize = 4.0f;
     float maxFontHeight = 13.0f;
     float flash = 0.0f;
+    float flashThickness = 1.6f;
     juce::Colour flashColour { juce::Colours::white };
 };
 
