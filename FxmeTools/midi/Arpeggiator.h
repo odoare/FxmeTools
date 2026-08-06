@@ -32,23 +32,33 @@ namespace fxme
     a sequence of MIDI notes. The getNext() method processes the pattern
     and returns MIDI messages for note-on and note-off events.
 
-    The pattern string consists of characters that define the arpeggio's behavior at each step: 
-    - '1' to '7': Plays a specific degree of the chord/scale (1=fundamental, 2=2nd, ..., 6=sixth).
+    Degrees and velocity levels are written as a single uppercase hexadecimal
+    character ('0'-'9' then 'A'-'F') since syntax version 2. Octave (0-7) and
+    probability (0-9) stay decimal. See migratePatternV1toV2() for what changed.
+
+    The pattern string consists of characters that define the arpeggio's behavior at each step:
+    - '1' to 'F': Plays a specific degree of the chord/scale (1=fundamental, 2=2nd, ..., up to 15).
       - The `playNoteOff` property determines behavior for absent degrees ("Off", "Next", "Previous").
+    - '0': Closes a step without naming a degree, so it fires on the current one. Example: "vF0"
     - '_': Sustains the previously played note.
     - '.': A rest; no note is played.
     - '+': Plays the next degree in the chord (e.g., from 1 to 2).
     - '-': Plays the previous degree in the chord (e.g., from 2 to 1).
     - '?': Plays a random, valid note from the current chord.
-    - '"' or '=': Repeats the last played degree.
+    - '=': Repeats the last played degree.
     - 'pN': Plays the next note with probability N×10% (N is 1–9). On a failed roll the step becomes a rest. Example: "p5 1" plays the root 50% of the time.
     - '#' (Sharp): Pitches the next note up by one semitone. This is a local effect. Example: "#0"
     - 'b' (Flat): Pitches the next note down by one semitone. This is a local effect. Example: "b0"
+    - '( … )': Scopes global modifiers, restoring octave and velocity at the closing bracket.
+    - '" … "': Root-relative block (scale mode): notes anchor to the scale root
+      rather than to the pressed note's degree. Not a musical step itself.
 
     Velocity Modifiers (prefixed to a note command):
-    - 'vN': Sets velocity for the next note only. N is a digit from 1-8 (16-127). Example: "v80"
-    - 'VN': Sets velocity globally until the next 'V' command. N is a digit from 1-8. Example: "V40"
-      - v1/V1=16, v2/V2=32, v3/V3=48, v4/V4=64, v5/V5=80, v6/V6=96, v7/V7=112, v8/V8=127.
+    - 'vN': Sets velocity for the next note only. N is 1-F, spread over 1-127. Example: "vF0"
+    - 'VN': Sets velocity globally until the next 'V' command. Example: "V80"
+    - 'v+' / 'v-': One level louder / quieter, for the next note only.
+    - 'V+' / 'V-': One level louder / quieter, from here on. Both saturate rather than wrap.
+    - 'v?' / 'V?': A random level.
 
     Octave Modifiers (prefixed to a note command):
     - 'oN': Sets octave for the next note only. N is a digit from 0-7. Example: "o30"
@@ -830,58 +840,82 @@ public:
     {
         return noteOnCounter.get();
     }
+private:
+    /**
+        Advances `i` past exactly one token of the pattern and reports whether
+        that token was a musical step.
+
+        The three public step queries below are the same walk asked three
+        different questions, so they share this one definition. They used to
+        carry a copy each, and the copies had drifted: one of them counted '"'
+        as a step while the others treated it as a block marker, which made the
+        playing-step highlight slide out of position in any pattern using
+        root-relative blocks.
+    */
+    bool advanceOneToken(int& i) const
+    {
+        const char command = pattern[i];
+
+        if (command == 'o' || command == 'O' || command == 'v' ||
+            command == 'V' || command == 'p')
+        {
+            i += 2;             // prefix and its argument
+        }
+        else if (command == '#' || command == 'b')
+        {
+            i++;                // sharp / flat prefix
+        }
+        else if (command == '(' || command == ')' || command == '"')
+        {
+            i++;                // block markers, not musical steps
+        }
+        else if (command == ':')
+        {
+            i++;                // probability fallback: skip it whole
+            if (i < pattern.length() && pattern[i] == '(')
+            {
+                int depth = 1; i++;
+                while (i < pattern.length() && depth > 0)
+                {
+                    if (pattern[i] == '(') ++depth;
+                    else if (pattern[i] == ')') --depth;
+                    i++;
+                }
+            }
+            else if (i < pattern.length())
+            {
+                i++;
+            }
+        }
+        else if (isStepCommand(command))
+        {
+            i++;
+            return true;
+        }
+        else
+        {
+            i++;                // spaces and anything unrecognised
+        }
+
+        return false;
+    }
+
+public:
     /** Calculates the number of musical steps in the pattern string. */
     int numSteps() const
     {
-        if (pattern.isEmpty())
-            return 0;
-
         int steps = 0;
         int i = 0;
         while (i < pattern.length())
-        {
-            const char command = pattern[i];
-            if (command == 'o' || command == 'O' || command == 'v' || command == 'V' || command == 'p')
-            {
-                i += 2; // Skip prefix and its argument
-            }
-            else if (command == '#' || command == 'b')
-            {
-                i++; // Skip sharp/flat prefix
-            }
-            else if (command == '(' || command == ')' || command == '"')
-            {
-                i++; // Block markers, not musical steps
-            }
-            else if (command == ':')
-            {
-                i++; // Skip ':' and its fallback (group or single char)
-                if (i < pattern.length() && pattern[i] == '(')
-                {
-                    int depth = 1; i++;
-                    while (i < pattern.length() && depth > 0)
-                    {
-                        if (pattern[i] == '(') ++depth;
-                        else if (pattern[i] == ')') --depth;
-                        i++;
-                    }
-                }
-                else if (i < pattern.length()) i++;
-            }
-            else if (isStepCommand(command))
-            {
-                steps++;
-                i++;
-            }
-            else
-            {
-                i++; // Ignore spaces and other unknown characters
-            }
-        }
+            if (advanceOneToken(i))
+                ++steps;
         return steps;
     }
 
-    /** Given a step index (0, 1, 2...), find the corresponding character index in the pattern string. */
+    /** Given a step index (0, 1, 2...), find the corresponding character index
+        in the pattern string. The index returned is the start of the whole
+        step, prefixes and block markers included, so that highlighting a step
+        highlights its modifiers too. */
     int getPatternIndexForStep(int stepIndex) const
     {
         if (pattern.isEmpty())
@@ -894,48 +928,14 @@ public:
             if (currentStepCount == stepIndex)
                 return i; // Found the start of the desired step
 
-            const char command = pattern[i];
-            if (command == 'o' || command == 'O' || command == 'v' || command == 'V' || command == 'p')
-            {
-                i += 2; // Skip prefix and its argument
-            }
-            else if (command == '#' || command == 'b')
-            {
-                i++; // Skip sharp/flat prefix
-            }
-            else if (command == '(' || command == ')' || command == '"')
-            {
-                i++; // Block markers, not musical steps
-            }
-            else if (command == ':')
-            {
-                i++;
-                if (i < pattern.length() && pattern[i] == '(')
-                {
-                    int depth = 1; i++;
-                    while (i < pattern.length() && depth > 0)
-                    {
-                        if (pattern[i] == '(') ++depth;
-                        else if (pattern[i] == ')') --depth;
-                        i++;
-                    }
-                }
-                else if (i < pattern.length()) i++;
-            }
-            else if (isStepCommand(command))
-            {
-                currentStepCount++;
-                i++;
-            }
-            else
-            {
-                i++; // Ignore spaces and other unknown characters
-            }
+            if (advanceOneToken(i))
+                ++currentStepCount;
         }
         return 0; // Fallback if stepIndex is out of bounds
     }
 
-    /** Given a character index in the pattern string, find the corresponding musical step index. */
+    /** Given a character index in the pattern string, find the corresponding
+        musical step index. Exact inverse of getPatternIndexForStep(). */
     int getStepForPatternIndex(int patternIndex) const
     {
         if (pattern.isEmpty() || patternIndex < 0)
@@ -944,48 +944,12 @@ public:
         int stepCount = 0;
         int i = 0;
         while (i < pattern.length() && i < patternIndex)
-        {
-            const char command = pattern[i];
-            if (command == 'o' || command == 'O' || command == 'v' || command == 'V' || command == 'p')
-            {
-                i += 2; // Skip prefix and its argument
-            }
-            else if (command == '#' || command == 'b')
-            {
-                i++; // Skip prefix
-            }
-            else if (command == ':')
-            {
-                i++;
-                if (i < pattern.length() && pattern[i] == '(')
-                {
-                    int depth = 1; i++;
-                    while (i < pattern.length() && depth > 0)
-                    {
-                        if (pattern[i] == '(') ++depth;
-                        else if (pattern[i] == ')') --depth;
-                        i++;
-                    }
-                }
-                else if (i < pattern.length()) i++;
-            }
-            else if (isStepCommand(command) || command == '"')
-            {
-                // NB: '"' is counted as a step here but not by numSteps() or
-                // getPatternIndexForStep(). Pre-existing inconsistency, kept as
-                // it was rather than changed under a syntax migration; it makes
-                // the playing-step highlight drift in patterns using
-                // root-relative blocks.
-                stepCount++;
-                i++;
-            }
-            else
-            {
-                i++; // Ignore other characters
-            }
-        }
+            if (advanceOneToken(i))
+                ++stepCount;
+
         return stepCount;
     }
+
 
     /** Returns the total duration of one full pattern loop in PPQ. */
     double ppqDuration() const

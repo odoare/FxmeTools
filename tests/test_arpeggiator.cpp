@@ -381,6 +381,48 @@ TEST_CASE("hexValue / valueChar round-trip over the whole alphabet")
     CHECK(Arpeggiator::hexValue('.') == -1);
 }
 
+// ---------------------------------------------------------------------------
+// 8a. Step counting: the three traversals must agree
+// ---------------------------------------------------------------------------
+TEST_CASE("getPatternIndexForStep and getStepForPatternIndex are inverses")
+{
+    Arpeggiator arp;
+
+    const juce::StringArray patterns {
+        "1 2 3",
+        "vF 1 o3 2 p5 3",
+        "1 2 (O+ 1 2 3) 1 2",
+        "1 \"2 3\" 4",                 // root-relative block
+        "\"1 2\" \"3 4\"",
+        "p5 (1 2 3):(4 5) 1",
+        "1 b2 #3 A F"
+    };
+
+    for (const auto& p : patterns)
+    {
+        setup(arp, p);
+        const int steps = arp.numSteps();
+        REQUIRE(steps > 0);
+
+        for (int s = 0; s < steps; ++s)
+            CHECK(arp.getStepForPatternIndex(arp.getPatternIndexForStep(s)) == s);
+    }
+}
+
+TEST_CASE("root-relative markers are not musical steps")
+{
+    Arpeggiator arp;
+
+    setup(arp, "1 \"2 3\" 4");
+    CHECK(arp.numSteps() == 4);
+
+    // The '"' before step 3 must not be counted, or every index past it slides.
+    CHECK(arp.getStepForPatternIndex(arp.getPatternIndexForStep(3)) == 3);
+
+    setup(arp, "\"1 2 3\"");
+    CHECK(arp.numSteps() == 3);
+}
+
 TEST_CASE("hex degrees count as steps, lowercase 'b' stays the flat prefix")
 {
     Arpeggiator arp;
@@ -633,4 +675,54 @@ TEST_CASE("[REGRESSION] 'p5 1:?' uses '?' on fail but '1' on success")
         if (note != REST)
             CHECK(validNotes.count(note) == 1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 12. Variable-length probability branches (characterisation)
+// ---------------------------------------------------------------------------
+//
+// These pin down current behaviour rather than desired behaviour. When a
+// probability fallback is a different length from its success branch, the
+// number of steps a loop actually plays depends on the roll, and the roll
+// happens lazily, at the moment playback reaches the 'p'. Two things follow,
+// and both are why per-sequence position display is not possible yet:
+//
+//   * numSteps() measures the success branch only, always. It is a property of
+//     the string, and with a variable-length pattern there is no single right
+//     answer for it to give.
+//   * getCurrentStepIndex() is derived from the character position by a walk
+//     that skips the whole fallback, so every step inside a fallback group
+//     reports the same index.
+//
+// Fixing this means resolving the rolls for a loop up front, at loop start, so
+// the loop has a known length and a meaningful step index. Update these tests
+// when that lands.
+
+TEST_CASE("a probability fallback can change how many steps a loop plays")
+{
+    Arpeggiator arp;
+    setup(arp, "p0 1:(1 2 3)");   // p0 never succeeds, so always the fallback
+
+    // The string measures as one step (the success branch)...
+    CHECK(arp.numSteps() == 1);
+
+    // ...while the loop actually plays the fallback's three.
+    auto notes = collectPitches(arp, 9);
+    CHECK(notes == std::vector<int>{ C4, E4, G4, C4, E4, G4, C4, E4, G4 });
+}
+
+TEST_CASE("the reported step index does not advance inside a fallback group")
+{
+    Arpeggiator arp;
+    setup(arp, "p0 1:(1 2 3)");
+
+    std::vector<int> reported;
+    for (int i = 0; i < 6; ++i)
+    {
+        tick(arp, i == 0);
+        reported.push_back(arp.getCurrentStepIndex());
+    }
+
+    // Frozen: the walk behind it steps over the fallback as a single token.
+    CHECK(reported == std::vector<int>{ 1, 1, 1, 1, 1, 1 });
 }
