@@ -54,6 +54,11 @@ namespace fxme
       rather than to the pressed note's degree. Not a musical step itself.
 
     Velocity Modifiers (prefixed to a note command):
+    - Where the pattern sets no velocity, notes take the velocity of the note the
+      player is holding (see setPlayedVelocityFromMidi). A 'V' overrides that
+      until another 'V' changes it or the enclosing '( )' block closes, at which
+      point control returns to whatever applied outside the block, playing
+      velocity included.
     - 'vN': Sets velocity for the next note only. N is 1-F, spread over 1-127. Example: "vF0"
     - 'VN': Sets velocity globally until the next 'V' command. Example: "V80"
     - 'v+' / 'v-': One level louder / quieter, for the next note only.
@@ -326,7 +331,7 @@ private:
                     // one at random, and a value sets the level outright.
                     // Levels are hex since syntax v2: 1-F over the full range.
                     int currentLevel = levelForVelocity((localVelocity != -1) ? localVelocity
-                                                                              : globalVelocity);
+                                                                              : effectiveVelocity());
                     int velocityLevel;
 
                     if (velocityValueChar == '+')
@@ -342,7 +347,7 @@ private:
                     {
                         int velocity = velocityForLevel(velocityLevel);
                         if (command == 'v') localVelocity = velocity;
-                        else globalVelocity = velocity;
+                        else patternVelocity = velocity;
                     }
                 }
                 else if (command == 'p')
@@ -370,7 +375,7 @@ private:
                         pos = (groupCheckPos + 1) % pattern.length(); // skip spaces + '('
                         if (rollSucceeded)
                         {
-                            scopeStack.push_back ({ octave, globalVelocity });
+                            scopeStack.push_back ({ octave, patternVelocity });
                             probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
                         }
                         else
@@ -382,7 +387,7 @@ private:
                                 if (!pattern.isEmpty() && pattern[pos] == '(')
                                 {
                                     pos = (pos + 1) % pattern.length(); // consume '('
-                                    scopeStack.push_back ({ octave, globalVelocity });
+                                    scopeStack.push_back ({ octave, patternVelocity });
                                     probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
                                 }
                                 // else single-char fallback: leave pos there for note command loop
@@ -418,7 +423,7 @@ private:
                         {
                             // Fail: skip success note, enter fallback group directly (no rest)
                             pos = (lp + 2) % pattern.length(); // first char inside '('
-                            scopeStack.push_back ({ octave, globalVelocity });
+                            scopeStack.push_back ({ octave, patternVelocity });
                             probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
                             // prefix loop continues; outer for loop finds first group note
                         }
@@ -445,15 +450,15 @@ private:
                 else if (command == '(')
                 {
                     pos = (pos + 1) % pattern.length();
-                    scopeStack.push_back ({ octave, globalVelocity });
+                    scopeStack.push_back ({ octave, patternVelocity });
                 }
                 else if (command == ')')
                 {
                     pos = (pos + 1) % pattern.length();
                     if (!scopeStack.empty())
                     {
-                        octave         = scopeStack.back().octave;
-                        globalVelocity = scopeStack.back().velocity;
+                        octave          = scopeStack.back().octave;
+                        patternVelocity = scopeStack.back().velocity;
                         scopeStack.pop_back();
                     }
                     // If this closes a prob group's taken branch, skip the other branch
@@ -605,8 +610,9 @@ private:
         {
             noteToPlay += semitoneOffset; // Apply sharp/flat
 
-            // Use local velocity if set, otherwise use global velocity.
-            juce::uint8 velocityToUse = (localVelocity != -1) ? (juce::uint8)localVelocity : (juce::uint8)globalVelocity;
+            // Local 'v' wins for this one note; otherwise whatever is in effect.
+            juce::uint8 velocityToUse = (localVelocity != -1) ? (juce::uint8)localVelocity
+                                                              : (juce::uint8)effectiveVelocity();
             midiBuffer.addEvent(juce::MidiMessage::noteOn(midiChannel, noteToPlay, velocityToUse), samplePosition);
             lastPlayedMidiNote = noteToPlay;
             lastPlayedMidiChannel = midiChannel;
@@ -688,18 +694,28 @@ public:
     }
 
     /**
-        Sets the global arpeggiator velocity based on an incoming MIDI note's velocity.
-        It converts the 0-127 MIDI velocity into an internal 1-8 level.
+        Records the velocity of an incoming note-on as the played velocity: what
+        the pattern uses wherever it does not set a velocity of its own.
+
+        The value is rounded to the nearest level of the pattern alphabet, so a
+        following 'V+' or 'v-' steps from a level the language can name rather
+        than from an arbitrary point between two.
+
+        This never touches the pattern's own 'V' setting; see effectiveVelocity().
+
         @param midiVelocity The velocity of the incoming MIDI note (1-127).
     */
-    void setGlobalVelocityFromMidi(int midiVelocity)
+    void setPlayedVelocityFromMidi(int midiVelocity)
     {
         if (midiVelocity > 0)
-        {
-            int velocityLevel = static_cast<int>(std::ceil(static_cast<float>(midiVelocity) / 16.0f));
-            velocityLevel = juce::jlimit(1, 8, velocityLevel); // Ensure it's within 1-8 range
-            globalVelocity = juce::jmin(127, velocityLevel * 16);
-        }
+            playedVelocity = velocityForLevel (levelForVelocity (midiVelocity));
+    }
+
+    /** The velocity a note fires at when the step carries no local 'v': the
+        pattern's 'V' if one is in effect here, else the played velocity. */
+    int effectiveVelocity() const noexcept
+    {
+        return (patternVelocity >= 0) ? patternVelocity : playedVelocity;
     }
 
     /**
@@ -1000,7 +1016,10 @@ public:
         }
 
         octave = baseOctave;
-        globalVelocity = 96; // Reset global velocity to default
+        // Drop any 'V' the pattern had set, so playback restarts following the
+        // played velocity. playedVelocity itself survives: it belongs to the
+        // note the player is holding, not to our position in the pattern.
+        patternVelocity = -1;
         pos = 0;
         lastPlayedDegreeIndex = 0;
         samplesUntilNextNote = 0;
@@ -1048,6 +1067,8 @@ public:
 protected:
     // -----------------------------------------------------------------------
     // Scope stack for ( ) local-modifier blocks
+    // `velocity` here holds patternVelocity, so it may be -1: closing a block
+    // that set a global 'V' hands control back to the played velocity.
     struct ScopeState { int octave; int velocity; };
     std::vector<ScopeState> scopeStack;
 
@@ -1157,7 +1178,14 @@ protected:
     int octave = baseOctave;
     juce::String playNoteOff = "Next"; // "Off", "Next", "Previous"
     int chordMethod = 0; // 0: Notes played, 1: Chord played as is, 2: Single note
-    int globalVelocity = 96; // Default velocity
+
+    // Velocity comes from two independent sources. `playedVelocity` tracks the
+    // incoming note-on and is what a pattern that says nothing about velocity
+    // will use. `patternVelocity` is the 'V' override: -1 means "the pattern
+    // has not set one", so the two never overwrite each other and a ')' can
+    // restore the override to "unset" and fall back to the player again.
+    int playedVelocity = 96;    // until a note has been played
+    int patternVelocity = -1;   // -1 = unset, follow playedVelocity
 
     int pos = 0;
     int lastPlayedMidiNote = -1;

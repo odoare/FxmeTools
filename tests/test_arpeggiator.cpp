@@ -360,6 +360,92 @@ TEST_CASE("global velocity saturates instead of wrapping or silencing")
 }
 
 // ---------------------------------------------------------------------------
+// 8d. Played velocity vs. pattern velocity
+// ---------------------------------------------------------------------------
+// A pattern that says nothing about velocity follows the note the player is
+// holding. A 'V' overrides that for as long as it is in scope, and neither
+// source overwrites the other.
+TEST_CASE("a pattern with no velocity command follows the played velocity")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "1 1");
+    arp.setPlayedVelocityFromMidi(40);
+
+    CHECK(tick(arp, true).velocity == A::velocityForLevel(A::levelForVelocity(40)));
+    CHECK(tick(arp).velocity       == A::velocityForLevel(A::levelForVelocity(40)));
+}
+
+TEST_CASE("played velocity lands on the 15-level alphabet, not 8 coarse steps")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "1");
+    arp.setPlayedVelocityFromMidi(100);
+
+    // round(100 * 15/127) = 12, and velocityForLevel(12) = 102.
+    CHECK(arp.effectiveVelocity() == A::velocityForLevel(12));
+    CHECK(arp.effectiveVelocity() == 102);
+    // The pre-fix mapping was ceil(100/16) = 7 levels of 16, i.e. 112.
+    CHECK(arp.effectiveVelocity() != 112);
+
+    // Every level of the alphabet is reachable from some incoming velocity,
+    // which was not true of the 8-step mapping.
+    for (int level = 1; level <= A::maxVelocityLevel; ++level)
+    {
+        Arpeggiator a;
+        setup(a, "1");
+        a.setPlayedVelocityFromMidi(A::velocityForLevel(level));
+        CHECK(a.effectiveVelocity() == A::velocityForLevel(level));
+    }
+}
+
+TEST_CASE("a played note does not overwrite a 'V' the pattern set")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "V4 1 1");
+    arp.setPlayedVelocityFromMidi(127);
+
+    CHECK(tick(arp, true).velocity == A::velocityForLevel(4));
+
+    // Playing another note mid-pattern must not undo the 'V'.
+    arp.setPlayedVelocityFromMidi(20);
+    CHECK(tick(arp).velocity == A::velocityForLevel(4));
+}
+
+TEST_CASE("closing a block hands velocity back to the played note")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "(V4 1) 1");
+    arp.setPlayedVelocityFromMidi(127);
+
+    // Inside the block the 'V' rules; outside it there is no 'V' in effect,
+    // so the played velocity applies again rather than the block's leftover.
+    CHECK(tick(arp, true).velocity == A::velocityForLevel(4));
+    CHECK(tick(arp).velocity       == 127);
+}
+
+TEST_CASE("reset drops the pattern's 'V' but keeps the played velocity")
+{
+    using A = Arpeggiator;
+
+    Arpeggiator arp;
+    setup(arp, "V4 1 1");
+    arp.setPlayedVelocityFromMidi(127);
+
+    CHECK(tick(arp, true).velocity == A::velocityForLevel(4));
+
+    arp.reset();
+    CHECK(arp.effectiveVelocity() == 127);
+}
+
+// ---------------------------------------------------------------------------
 // 8b. Hexadecimal value alphabet (syntax v2)
 // ---------------------------------------------------------------------------
 TEST_CASE("hexValue / valueChar round-trip over the whole alphabet")
