@@ -648,6 +648,7 @@ public:
     void setPattern(const juce::String& newPattern)
     {
         pattern = newPattern;
+        patternLengthIsFixed = patternHasFixedLength (pattern);
         pos = 0;
         octave = baseOctave;
         scopeStack.clear();
@@ -868,6 +869,26 @@ private:
         playing-step highlight slide out of position in any pattern using
         root-relative blocks.
     */
+    /** The host's position expressed in steps, with floating-point jitter
+        snapped away. A host reporting a position a millionth of a step before
+        a boundary must not be read as "a whole step still to go". */
+    double songPositionInSteps (double ppqPosition) const noexcept
+    {
+        const double raw     = ppqPosition * getNoteDivisor();
+        const double nearest = std::round (raw);
+        return (std::abs (raw - nearest) < 1.0e-6) ? nearest : raw;
+    }
+
+    /** Wraps an absolute song step onto the pattern. */
+    static int patternStepForSongStep (double songStep, int patternSteps) noexcept
+    {
+        if (patternSteps <= 0)
+            return 0;
+
+        int s = (int) std::fmod (songStep, (double) patternSteps);
+        return (s < 0) ? s + patternSteps : s;
+    }
+
     bool advanceOneToken(int& i) const
     {
         const char command = pattern[i];
@@ -967,6 +988,41 @@ public:
     }
 
 
+    /**
+        True if every pass through the pattern lasts the same number of steps.
+
+        Probability groups break that: `p5 (1 2):(3 4 5)` runs two steps or
+        three depending on the roll, and a bare `p5 (1 2)` runs two steps or
+        one, so there is no fixed length to anchor a song position against.
+        numSteps() reports the success branch, which is only one of the
+        possible lengths. Single-step probability (`p5 1`, `p5 1:2`) is always
+        one step and does not count.
+
+        Patterns that fail this keep the step grid but not the bar alignment,
+        until the rolls are made at the start of each pass rather than at the
+        step (the pre-roll design in doc/architecture.md).
+    */
+    static bool patternHasFixedLength (const juce::String& p)
+    {
+        for (int i = 0; i < p.length(); ++i)
+        {
+            // A group fallback, whichever branch it belongs to.
+            if (p[i] == ':' && i + 1 < p.length() && p[i + 1] == '(')
+                return false;
+
+            // A probability opening a group rather than tagging one step.
+            if (p[i] == 'p')
+            {
+                int j = i + 2;   // skip 'p' and its digit
+                while (j < p.length() && p[j] == ' ')
+                    ++j;
+                if (j < p.length() && p[j] == '(')
+                    return false;
+            }
+        }
+        return true;
+    }
+
     /** Returns the total duration of one full pattern loop in PPQ. */
     double ppqDuration() const
     {
@@ -987,22 +1043,44 @@ public:
     {
         if (samplesPerNote <= 0.0 || positionInfo.ppqPosition < 0.0 || pattern.isEmpty())
             return;
-    
-        const double patternDurationPPQ = ppqDuration();
-        if (patternDurationPPQ <= 0.0)
+
+        const int steps = numSteps();
+        if (steps <= 0)
             return;
-    
-        const double stepDurationPPQ = 1.0 / getNoteDivisor();
-        const double songPosInSteps = positionInfo.ppqPosition / stepDurationPPQ;
-        const double patternDurationInSteps = patternDurationPPQ / stepDurationPPQ;
-    
-    
-        // Calculate how many samples until the next step boundary in the host timeline
-        const double nextStepInSong = std::ceil(songPosInSteps);
+
+        const double songPosInSteps  = songPositionInSteps (positionInfo.ppqPosition);
+        const double nextStepInSong  = std::ceil (songPosInSteps);
+
+        // Grid: how far the next step boundary is from the start of this block.
         const double stepsUntilNext = nextStepInSong - songPosInSteps;
-        const double ppqUntilNext = stepsUntilNext * stepDurationPPQ;
-        const double secondsPerPPQ = 60.0 / (tempoBPM * 1.0); // 1.0 is quarter note
-        samplesUntilNextNote = ppqUntilNext * secondsPerPPQ * sampleRate;
+        const double secondsPerPPQ  = 60.0 / tempoBPM;   // 1.0 PPQ = one quarter
+        samplesUntilNextNote = stepsUntilNext / getNoteDivisor() * secondsPerPPQ * sampleRate;
+
+        // Phase: which step of the pattern belongs at that boundary. Aligning
+        // the grid alone is not enough — it keeps steps on the beat but lets
+        // the pattern sit at any rotation against the bar, so where a pattern
+        // started depended on how many steps had been consumed since the
+        // plugin loaded. Anchoring the phase to the song makes step n of the
+        // pattern fall on song step n modulo the pattern length, always.
+        if (!patternLengthIsFixed)
+            return;   // see the comment on patternHasFixedLength()
+
+        const int targetStep = patternStepForSongStep (nextStepInSong, steps);
+
+        // Only on genuine drift. In the steady state pos is already at the
+        // right step, and reassigning it would re-enter the step's leading
+        // '(' or '"' and push a second scope entry every block.
+        if (getStepForPatternIndex (pos) != targetStep)
+        {
+            pos = getPatternIndexForStep (targetStep);
+            // Jumping abandons whatever blocks were open, so the modifier
+            // state they were holding has to go with them.
+            scopeStack.clear();
+            probGroupStack.clear();
+            inRootRelativeBlock = false;
+            octave = baseOctave;
+            patternVelocity = -1;
+        }
     }
 
     /** Resets the arpeggiator's position to the beginning of the pattern. */
@@ -1028,16 +1106,15 @@ public:
         inRootRelativeBlock = false;
 
         // If host position is provided (i.e., transport just started), sync to it.
-        if (positionInfo.hasValue())
+        // Unlike syncToPlayHead this lands on the step the position sits inside
+        // rather than the next boundary, because it fires immediately.
+        if (positionInfo.hasValue() && positionInfo->ppqPosition >= 0.0)
         {
-            const double patternDurationPPQ = ppqDuration();
-            if (patternDurationPPQ > 0.0)
+            const int steps = numSteps();
+            if (steps > 0 && patternLengthIsFixed)
             {
-                const double stepDurationPPQ = 1.0 / getNoteDivisor();
-                const double songPosInSteps = positionInfo->ppqPosition / stepDurationPPQ;
-                const double patternDurationInSteps = patternDurationPPQ / stepDurationPPQ;
-                const int nextStepIndex = static_cast<int>(std::floor(songPosInSteps)) % static_cast<int>(patternDurationInSteps);
-                pos = getPatternIndexForStep(nextStepIndex);
+                const double songPosInSteps = songPositionInSteps (positionInfo->ppqPosition);
+                pos = getPatternIndexForStep (patternStepForSongStep (std::floor (songPosInSteps), steps));
                 samplesUntilNextNote = 0; // Trigger immediate evaluation for the current position
             }
         }
@@ -1186,6 +1263,10 @@ protected:
     // restore the override to "unset" and fall back to the player again.
     int playedVelocity = 96;    // until a note has been played
     int patternVelocity = -1;   // -1 = unset, follow playedVelocity
+
+    // Cached with the pattern: syncToPlayHead consults it every block, and it
+    // only changes when the pattern does. See patternHasFixedLength().
+    bool patternLengthIsFixed = true;
 
     int pos = 0;
     int lastPlayedMidiNote = -1;

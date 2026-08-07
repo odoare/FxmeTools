@@ -446,6 +446,134 @@ TEST_CASE("reset drops the pattern's 'V' but keeps the played velocity")
 }
 
 // ---------------------------------------------------------------------------
+// 8e. Transport sync: the pattern is anchored to the song, not to its history
+// ---------------------------------------------------------------------------
+namespace
+{
+    // A host position in PPQ. The test setup runs 1/16 steps, so one step is
+    // 0.25 PPQ and an eight-step pattern spans 2.0 PPQ (a half note).
+    juce::AudioPlayHead::CurrentPositionInfo hostAt(double ppq)
+    {
+        juce::AudioPlayHead::CurrentPositionInfo p;
+        p.bpm         = 150.0;
+        p.ppqPosition = ppq;
+        p.isPlaying   = true;
+        return p;
+    }
+
+    // The pitch of the first note the arpeggiator emits once synced to `ppq`.
+    int firstNoteAt(Arpeggiator& arp, double ppq)
+    {
+        arp.syncToPlayHead(hostAt(ppq));
+        return tick(arp).pitch;
+    }
+}
+
+TEST_CASE("[REGRESSION] the pattern lands on the step the song position asks for")
+{
+    // 8 steps of 1/16. Song step 4 (ppq 1.0, beat 2) must play pattern step 4.
+    // Before the fix the engine kept the 1/16 grid but always resumed at
+    // whatever step it had reached, so this played C4 (its own step 0).
+    Arpeggiator arp;
+    setup(arp, "1 2 3 4 1 2 3 4", "CM7");
+
+    CHECK(firstNoteAt(arp, 1.0) == C4);   // song step 4 → pattern step 4 → '1'
+
+    Arpeggiator other;
+    setup(other, "1 2 3 4 1 2 3 4", "CM7");
+    CHECK(firstNoteAt(other, 0.25) == E4);  // song step 1 → '2'
+
+    Arpeggiator third;
+    setup(third, "1 2 3 4 1 2 3 4", "CM7");
+    CHECK(firstNoteAt(third, 1.5) == G4);   // song step 6 → '3'
+}
+
+TEST_CASE("[REGRESSION] pattern phase does not depend on how much was played before")
+{
+    // The bug reported from Bitwig: a pattern resumed where the previous chord
+    // left it, so the same bar position produced a different step depending on
+    // history. Run one engine for an odd number of steps first; both must
+    // still agree once the host position is known.
+    Arpeggiator fresh, used;
+    setup(fresh, "1 2 3 4 1 2 3 4", "CM7");
+    setup(used,  "1 2 3 4 1 2 3 4", "CM7");
+
+    for (int i = 0; i < 3; ++i)     // leave `used` three steps out of phase
+        tick(used, i == 0);
+
+    CHECK(firstNoteAt(fresh, 2.0) == firstNoteAt(used, 2.0));
+    CHECK(firstNoteAt(fresh, 2.0) == C4);   // ppq 2.0 = song step 8 = one full pattern
+}
+
+TEST_CASE("[REGRESSION] a fixed-length pattern repeats at the same bar phase")
+{
+    // Two full patterns apart must give the same step, and the pattern must
+    // come back to its first step every 2.0 PPQ.
+    Arpeggiator arp;
+    setup(arp, "1 2 3 4 1 2 3 4", "CM7");
+
+    for (double bar = 0.0; bar < 8.0; bar += 2.0)
+        CHECK(firstNoteAt(arp, bar) == C4);
+
+    for (double bar = 0.0; bar < 8.0; bar += 2.0)
+        CHECK(firstNoteAt(arp, bar + 0.75) == B4);   // song step 3 → '4'
+}
+
+TEST_CASE("host position jitter does not push the pattern a step late")
+{
+    // Hosts do not report exact binary fractions. A position a hair below a
+    // step boundary must resolve to that boundary, not to the step after it.
+    Arpeggiator arp;
+    setup(arp, "1 2 3 4 1 2 3 4", "CM7");
+
+    arp.syncToPlayHead(hostAt(1.0 - 1e-12));
+    // Snapped onto the boundary: fire now, not a whole step from now.
+    CHECK(arp.getSamplesUntilNextNote() == doctest::Approx(0.0));
+    CHECK(tick(arp).pitch == C4);                 // song step 4, not step 5
+
+    // A position genuinely between two steps still waits out the remainder.
+    Arpeggiator mid;
+    setup(mid, "1 2 3 4 1 2 3 4", "CM7");
+    mid.syncToPlayHead(hostAt(1.125));            // half a step past song step 4
+    CHECK(mid.getSamplesUntilNextNote() == doctest::Approx(50.0));
+}
+
+TEST_CASE("patternHasFixedLength recognises the variable-length forms")
+{
+    using A = Arpeggiator;
+
+    // Fixed: no probability at all, or probability tagging a single step.
+    CHECK(A::patternHasFixedLength("1 2 3 4"));
+    CHECK(A::patternHasFixedLength("1 (O+ 2 3) 4"));
+    CHECK(A::patternHasFixedLength("p5 1"));
+    CHECK(A::patternHasFixedLength("p5 1:2"));
+    CHECK(A::patternHasFixedLength("\"1 2\" 3"));
+
+    // Variable: a group whose branches can differ in length, or a group that
+    // collapses to a single rest when the roll fails.
+    CHECK_FALSE(A::patternHasFixedLength("p5 (1 2):(3 4 5)"));
+    CHECK_FALSE(A::patternHasFixedLength("p5(12):(34)"));
+    CHECK_FALSE(A::patternHasFixedLength("p5 (1 2)"));
+    CHECK_FALSE(A::patternHasFixedLength("1 p5 2:(3 4)"));
+}
+
+TEST_CASE("variable-length patterns keep the step grid but are left unanchored")
+{
+    // Documented limitation, not a target: numSteps() reports the success
+    // branch only, so there is no single length to anchor against. The sync
+    // must still place the grid, and must not corrupt the group traversal.
+    Arpeggiator arp;
+    setup(arp, "p0 (1 2):(3 4)", "CM7");
+
+    arp.syncToPlayHead(hostAt(1.0));
+    CHECK(arp.getSamplesUntilNextNote() == doctest::Approx(0.0));
+
+    // p0 always fails, so the fallback group plays through intact.
+    CHECK(tick(arp).pitch == G4);
+    CHECK(tick(arp).pitch == B4);
+}
+
+// ---------------------------------------------------------------------------
 // 8b. Hexadecimal value alphabet (syntax v2)
 // ---------------------------------------------------------------------------
 TEST_CASE("hexValue / valueChar round-trip over the whole alphabet")
