@@ -60,6 +60,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 
 // DSP (header-only, no external deps)
 #include "dsp/Ambisonics.h"
+#include "dsp/AmbixToStereo.h"
 #include "dsp/RoomAcoustics.h"
 #include "dsp/Biquad.h"
 #include "dsp/SpectrumTap.h"
