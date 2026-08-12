@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Unit tests for the FxmeTools midi/Arpeggiator engine.
+# Unit tests for FxmeTools: the midi/Arpeggiator engine and the
+# modulation-effect DSP kernels (ModDelayLine / AllpassChain / ModLfo).
 # This directory is meant to be added from a consumer project's CMakeLists
 # (after add_subdirectory(JUCE)), e.g.:
 #     add_subdirectory(Source/libs/FxmeTools/tests)
@@ -23,6 +24,7 @@ target_sources(FxmeToolsTests
     PRIVATE
         main.cpp
         test_arpeggiator.cpp
+        test_modulation.cpp
 )
 
 # The FxmeTools module folder lives one directory up from here, so
