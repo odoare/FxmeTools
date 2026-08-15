@@ -26,6 +26,12 @@
     bipolar one. "centralValue" is given in the slider's own units, so it
     anchors correctly even on an asymmetric range such as -60…+6 dB.
 
+    Read-outs use the slider's own getTextFromValue(), so decimal places and
+    the text-value suffix carry through to knobs and faders alike, and their
+    colours come from Slider::textBoxTextColourId / textBoxOutlineColourId /
+    backgroundColourId rather than a hardcoded white and black. The defaults
+    set in the constructor reproduce the old fixed colours exactly.
+
   ==============================================================================
 */
 
@@ -60,6 +66,21 @@ public:
       setColour (juce::PopupMenu::headerTextColourId,          juce::Colours::white.withAlpha (0.6f));
       setColour (juce::PopupMenu::highlightedTextColourId,     juce::Colours::white);
       setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colours::grey.withAlpha (0.35f));
+
+      // The slider read-outs, tracks and outlines used to be hardcoded white
+      // and black. These reproduce that exactly while making them themeable:
+      // a widget's own setColour() now actually reaches them, and the per-part
+      // alphas below are applied as a multiplier so a caller's own alpha
+      // survives.
+      setColour (juce::Slider::textBoxTextColourId,    juce::Colours::white);
+      setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::white);
+      setColour (juce::Slider::backgroundColourId,     juce::Colours::black);
+
+      setColour (juce::Label::textColourId, juce::Colours::white.withAlpha (0.85f));
+
+      setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xff141414));
+      setColour (juce::TooltipWindow::textColourId,       juce::Colours::white.withAlpha (0.9f));
+      setColour (juce::TooltipWindow::outlineColourId,    juce::Colours::transparentBlack);
   }
 
   /** Accent for the parts that have no widget to read a colour from.
@@ -211,7 +232,8 @@ public:
 
     // Draw the slider's value as text in the center
     auto text = slider.getTextFromValue(slider.getValue());
-    g.setColour(juce::Colours::white.withAlpha(textAlpha(0.7f, enabled)));
+    g.setColour(slider.findColour(juce::Slider::textBoxTextColourId)
+                      .withMultipliedAlpha(textAlpha(0.7f, enabled)));
     // Make font size proportional to the knob's diameter
     g.setFont(juce::jmin(15.0f, diameter * 0.3f));
     g.drawText(text, dialArea.toNearestInt(), juce::Justification::centred, true);
@@ -221,7 +243,8 @@ public:
         // Sit the label just below the knob; font scales with the knob so the
         // text grows with the available size.
         juce::Rectangle<float> nameArea ((float) x, centreY + radius, (float) width, labelHeight);
-        g.setColour (juce::Colours::white.withAlpha (textAlpha (0.85f, enabled)));
+        g.setColour (slider.findColour (juce::Slider::textBoxTextColourId)
+                           .withMultipliedAlpha (textAlpha (0.85f, enabled)));
         // Cap the label font so it stays readable on large knobs instead of
         // growing without bound with the diameter.
         constexpr float maxLabelFontSize = 16.0f;
@@ -360,7 +383,7 @@ public:
         auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat();
 
         // Background
-        g.setColour (juce::Colours::black);
+        g.setColour (slider.findColour (juce::Slider::backgroundColourId));
         g.fillRoundedRectangle (bounds, 4.0f);
 
         // Get the proportion directly from the slider's value (0.0 to 1.0)
@@ -399,7 +422,8 @@ public:
         juce::String valStr = juce::String (std::abs (val), 1);
         juce::String unitStr = slider.getTextValueSuffix();
 
-        g.setColour(juce::Colours::white.withAlpha(textAlpha(0.7f, enabled)));
+        g.setColour(slider.findColour(juce::Slider::textBoxTextColourId)
+                          .withMultipliedAlpha(textAlpha(0.7f, enabled)));
         float fontSize = juce::jmin(14.0f, height * 0.1f);
         g.setFont(fontSize);
         float lineHeight = fontSize;
@@ -409,7 +433,8 @@ public:
         g.drawText(valStr, bounds.getX(), (int)(startY + lineHeight), (int)bounds.getWidth(), (int)lineHeight, juce::Justification::centred, false);
         g.drawText(unitStr, bounds.getX(), (int)(startY + lineHeight * 2), (int)bounds.getWidth(), (int)lineHeight, juce::Justification::centred, false);
 
-        g.setColour(juce::Colours::white.withAlpha(textAlpha(0.7f, enabled)));
+        g.setColour(slider.findColour(juce::Slider::textBoxOutlineColourId)
+                          .withMultipliedAlpha(textAlpha(0.7f, enabled)));
         g.drawRoundedRectangle(bounds, 4.f, 1.f);
 
     }
@@ -418,7 +443,7 @@ public:
         auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat();
 
         // Background
-        g.setColour (juce::Colours::black);
+        g.setColour (slider.findColour (juce::Slider::backgroundColourId));
         g.fillRoundedRectangle (bounds, 4.0f);
 
         // Get the proportion directly from the slider's value (0.0 to 1.0)
@@ -451,14 +476,19 @@ public:
             g.fillRect (lineBounds);
         }
 
-        // Draw the slider's value as text in the center
-        auto text = juce::String (slider.getValue(), 2);
-        g.setColour(juce::Colours::white.withAlpha(textAlpha(0.7f, enabled)));
+        // Draw the slider's value as text in the center. Uses the slider's own
+        // formatting (decimal places, text-value suffix, or a getTextFromValue
+        // lambda) exactly as the rotary does — hardcoding two decimals here
+        // meant a fader read "0.50" where its knob read "50 %".
+        auto text = slider.getTextFromValue (slider.getValue());
+        g.setColour(slider.findColour(juce::Slider::textBoxTextColourId)
+                          .withMultipliedAlpha(textAlpha(0.7f, enabled)));
         g.setFont(juce::jmin(18.0f, height * 0.55f));
         g.drawText(text, bounds.toNearestInt(), juce::Justification::centred, true);
 
         // Draw outline
-        g.setColour(juce::Colours::white.withAlpha(textAlpha(0.7f, enabled)));
+        g.setColour(slider.findColour(juce::Slider::textBoxOutlineColourId)
+                          .withMultipliedAlpha(textAlpha(0.7f, enabled)));
         g.drawRoundedRectangle(bounds, 4.f, 1.f);
     }
     else
@@ -466,6 +496,72 @@ public:
         // Fallback to the default implementation for other slider styles
         LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos, minSliderPos, maxSliderPos, style, slider);
     }
+  }
+
+  //============================================================================
+  // Labels. Faithful to the JUCE default apart from the disabled fade, which
+  // matches the rest of this look-and-feel (textAlpha) instead of a flat half
+  // alpha — so a caption greyed out alongside its control fades with it.
+
+  void drawLabel (juce::Graphics& g, juce::Label& label) override
+  {
+      g.fillAll (label.findColour (juce::Label::backgroundColourId));
+
+      const bool enabled = label.isEnabled();
+
+      if (! label.isBeingEdited())
+      {
+          const auto font = getLabelFont (label);
+
+          g.setColour (label.findColour (juce::Label::textColourId)
+                            .withMultipliedAlpha (textAlpha (1.0f, enabled)));
+          g.setFont (font);
+
+          const auto textArea = getLabelBorderSize (label).subtractedFrom (label.getLocalBounds());
+
+          g.drawFittedText (label.getText(), textArea, label.getJustificationType(),
+                            juce::jmax (1, (int) ((float) textArea.getHeight() / font.getHeight())),
+                            label.getMinimumHorizontalScale());
+
+          g.setColour (label.findColour (juce::Label::outlineColourId)
+                            .withMultipliedAlpha (textAlpha (1.0f, enabled)));
+      }
+      else if (enabled)
+      {
+          g.setColour (label.findColour (juce::Label::outlineColourId));
+      }
+
+      g.drawRect (label.getLocalBounds());
+  }
+
+  //============================================================================
+  // Tooltips. Same dark panel and accent hairline as the drop-down menus, so
+  // the two floating surfaces match.
+  //
+  // Note that a tooltip only ever appears if something in the application owns
+  // a juce::TooltipWindow, and it is drawn by *that window's* look-and-feel —
+  // which for a desktop window is the default one unless it is pointed at this
+  // object explicitly (tooltipWindow.setLookAndFeel (&laf)).
+
+  void drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height) override
+  {
+      const auto bounds = juce::Rectangle<float> ((float) width, (float) height);
+
+      g.setColour (findColour (juce::TooltipWindow::backgroundColourId));
+      g.fillRoundedRectangle (bounds, 5.0f);
+
+      g.setColour (accent.withAlpha (0.55f));
+      g.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f, 1.0f);
+
+      // The bounds were sized by getTooltipBounds() against the default
+      // tooltip font, so the text is laid out to fit rather than re-wrapped.
+      g.setColour (findColour (juce::TooltipWindow::textColourId));
+      g.setFont (juce::Font (juce::FontOptions (13.0f)));
+      g.drawFittedText (text,
+                        juce::Rectangle<int> (width, height).reduced (7, 3),
+                        juce::Justification::centredLeft,
+                        juce::jmax (1, height / 13),
+                        0.9f);
   }
 
   //============================================================================

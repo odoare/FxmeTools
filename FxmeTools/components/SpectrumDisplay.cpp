@@ -234,7 +234,7 @@ void SpectrumDisplay::drawCursorReadout (juce::Graphics& g, juce::Rectangle<floa
         + "   " + juce::String (shown, 1) + (splCalibrated ? " dB SPL" : " dBFS");
 
     g.setFont (10.0f);
-    const int tw = (int) juce::GlyphArrangement::getStringWidth (juce::Font (10.0f), txt) + 12;
+    const int tw = (int) juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (10.0f)), txt) + 12;
     juce::Rectangle<int> box ((int) plot.getRight() - tw - 2, (int) plot.getY() + 2, tw, 14);
     g.setColour (colours.plotBackground.withAlpha (0.75f));
     g.fillRoundedRectangle (box.toFloat(), 3.0f);
@@ -289,7 +289,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     if (splCalibrated)
     {
         g.setColour (colours.dimText);
-        g.setFont (juce::Font (10.0f, juce::Font::bold));
+        g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
         g.drawText ("dB SPL", (int) plot.getRight() - 62, (int) plot.getY() + 2, 60, 12,
                     juce::Justification::centredRight);
     }
@@ -340,7 +340,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         if (label.isEmpty())
             continue;
 
-        const int w = 14 + (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), label);
+        const int w = 14 + (int) juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (11.0f)), label);
         g.setColour (tr.userVisible ? tr.cfg.colour : tr.cfg.colour.withAlpha (0.3f));
         g.fillRect (legendX, (int) plot.getY() + 3, 8, 8);
         g.setColour (tr.userVisible ? colours.text : colours.dimText.withAlpha (0.6f));

@@ -121,7 +121,7 @@ public:
 
         // Column captions.
         g.setColour (colours.label);
-        g.setFont (juce::Font (10.0f, juce::Font::bold));
+        g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
         g.drawText ("dBFS", (int) b.getX(), (int) barTop - 14, (int) leftW + 2, 12,
                     juce::Justification::centredLeft);
         g.drawText (calibrated ? "dB SPL" : "dB SPL (-)",
@@ -130,7 +130,7 @@ public:
 
         // Numeric readout under the bar.
         g.setColour (colours.readout);
-        g.setFont (juce::Font (12.0f, juce::Font::bold));
+        g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
         juce::String read = juce::String (rawDb <= -119.0f ? -120.0f : rawDb, 1) + " dBFS";
         if (calibrated && rawDb > -119.0f)
             read += "   " + juce::String (juce::roundToInt (rawDb + splOffset)) + " dB SPL";

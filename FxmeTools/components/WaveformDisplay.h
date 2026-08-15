@@ -637,7 +637,7 @@ private:
         {
             const bool on = channelVisible (ch);
             const auto& label = channelNames[ch];
-            const int w = (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), label) + 6;
+            const int w = (int) juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (11.0f)), label) + 6;
             g.setColour (on ? channelColour (ch) : channelColour (ch).withAlpha (0.3f));
             g.fillRect (x, (int) r.getBottom() - 10, 10, 3);
             g.setColour (on ? colours.text : colours.dimText.withAlpha (0.6f));
@@ -657,7 +657,7 @@ private:
         const juce::String txt = timeLabel (t, viewLengthS / 1000.0) + "   " + juce::String (a, 3);
 
         g.setFont (11.0f);
-        const int tw = (int) juce::GlyphArrangement::getStringWidth (juce::Font (11.0f), txt) + 12;
+        const int tw = (int) juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (11.0f)), txt) + 12;
         juce::Rectangle<int> box ((int) r.getRight() - tw, (int) r.getY() + 2, tw, 15);
         g.setColour (colours.plotBackground.withAlpha (0.8f));
         g.fillRoundedRectangle (box.toFloat(), 3.0f);

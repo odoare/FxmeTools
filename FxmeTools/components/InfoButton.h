@@ -57,7 +57,7 @@ public:
                           : colours.accent.darker (0.6f));
         g.fillEllipse (circle);
         g.setColour (colours.text);
-        g.setFont (juce::Font (d * 0.64f, juce::Font::bold | juce::Font::italic));
+        g.setFont (juce::Font (juce::FontOptions (d * 0.64f, juce::Font::bold | juce::Font::italic)));
         g.drawText ("i", circle, juce::Justification::centred);
     }
 
@@ -76,7 +76,7 @@ private:
         Content (const juce::String& t, const juce::String& body, Colours colours)
         {
             title.setText (t, juce::dontSendNotification);
-            title.setFont (juce::Font (16.0f, juce::Font::bold));
+            title.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
             title.setColour (juce::Label::textColourId, colours.text);
             addAndMakeVisible (title);
 
@@ -89,7 +89,7 @@ private:
             text.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
             text.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
             text.setColour (juce::TextEditor::textColourId, colours.text);
-            text.setFont (juce::Font (13.0f));
+            text.setFont (juce::Font (juce::FontOptions (13.0f)));
             text.setText (body, juce::dontSendNotification);
             addAndMakeVisible (text);
 
