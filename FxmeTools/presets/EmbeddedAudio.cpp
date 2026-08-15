@@ -43,11 +43,21 @@ bool EmbeddedAudio::embedFile (juce::ValueTree state,
 
     juce::MemoryBlock flacBytes;
     {
-        // The writer owns and deletes the stream; the bytes live on in flacBytes.
+        // On success the writer takes ownership of the stream and the bytes
+        // live on in flacBytes; on failure the stream stays with `stream` here
+        // and is released at the end of this scope. It must be declared as a
+        // unique_ptr<OutputStream> rather than to the concrete type, because
+        // createWriterFor() binds it by reference to move ownership out.
+        std::unique_ptr<juce::OutputStream> stream
+            = std::make_unique<juce::MemoryOutputStream> (flacBytes, false);
+
         juce::FlacAudioFormat flac;
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            flac.createWriterFor (new juce::MemoryOutputStream (flacBytes, false),
-                                  reader->sampleRate, reader->numChannels, bits, {}, 5));
+        auto writer = flac.createWriterFor (stream,
+                                            juce::AudioFormatWriterOptions{}
+                                                .withSampleRate        (reader->sampleRate)
+                                                .withNumChannels       ((int) reader->numChannels)
+                                                .withBitsPerSample     (bits)
+                                                .withQualityOptionIndex (5));
 
         if (writer == nullptr || ! writer->writeFromAudioReader (*reader, 0, reader->lengthInSamples))
             return false;
