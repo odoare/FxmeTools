@@ -90,6 +90,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/DeterministicRandom.h"
 #include "dsp/ArEnvelope.h"
 
+// DSP with out-of-line definitions (compiled from FxmeTools.cpp)
+#include "dsp/MicCalibration.h"
+#include "dsp/IemDecoder.h"
+
 // Components (real-time analyzer display, SPL meter bar, level bar, help button)
 #include "components/SpectrumDisplay.h"
 #include "components/SpectrumRegionEditor.h"

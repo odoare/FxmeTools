@@ -17,3 +17,5 @@
 #include "image/V4l2CameraSource.cpp"
 #include "image/VideoFileSource.cpp"
 #include "image/VideoEngine.cpp"
+#include "dsp/MicCalibration.cpp"
+#include "dsp/IemDecoder.cpp"
