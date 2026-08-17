@@ -106,6 +106,21 @@ public:
         ph = wrap (ph + frequencyHz() / (float) sr);
     }
 
+    /** Advances the master phase by a whole block at once.
+
+        For a consumer that reads the LFO per sample this is just the loop
+        above written once; the reason it exists is the consumer that reads it
+        only *once* per block — a per-block modulation target that is then
+        ramped across the block, say — for which stepping the phase one sample
+        at a time is a loop whose result is thrown away every iteration but the
+        last. Equivalent to calling advance() numSamples times, up to the
+        float rounding that the repeated additions would accumulate. */
+    void advance (int numSamples) noexcept
+    {
+        if (numSamples > 0)
+            ph = wrap (ph + frequencyHz() * (float) numSamples / (float) sr);
+    }
+
     /** Bipolar value in [-1, 1] at `phaseOffset` (in cycles) ahead of the
         master phase. Offset 0 is the master phase itself. */
     float valueAt (float phaseOffset) const noexcept
