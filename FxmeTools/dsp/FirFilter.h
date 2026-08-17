@@ -5,7 +5,21 @@
     Mono FIR convolver backed by the WDL convolution engine (zero latency),
     e.g. for per-output loudspeaker correction. The impulse response is loaded
     from a wav file on the message thread (with resampling to the session rate)
-    and swapped under a short lock.
+    and swapped under a lock.
+
+    Threading
+    ---------
+    The loaders (prepare / loadFile / loadFromReader / setImpulse /
+    clearImpulse) run on the message thread and hold `lock` across the whole
+    swap, which includes reading the file, resampling and rebuilding the WDL
+    engine. That is far too long for the audio thread to ever wait on, so
+    process() takes the lock with a **try**-lock and simply leaves the block
+    untouched (dry, exactly as when no impulse is loaded) if a load is in
+    flight. Loading an IR therefore costs a few un-convolved blocks rather than
+    a blocked audio callback and an xrun. hasImpulse() is lock-free (an atomic)
+    so a caller can poll it per block without touching `lock` at all.
+
+    getImpulseLength() still takes the lock and is message-thread only.
 
     NOTE: depends on WDL (FxmeTools' nested submodule). This header is therefore
     NOT part of the FxmeTools module umbrella — include it explicitly:
@@ -97,11 +111,9 @@ public:
         loadSilentImpulse();
     }
 
-    bool hasImpulse() const
-    {
-        juce::ScopedLock sl (lock);
-        return sourceIR.getNumSamples() > 0;
-    }
+    /** Whether an impulse is loaded. Lock-free (atomic), so the audio thread can
+        call this every block without contending with a load in progress. */
+    bool hasImpulse() const noexcept    { return impulseLoaded.load(); }
 
     int getImpulseLength() const
     {
@@ -115,13 +127,22 @@ public:
         compensation. Lock-free (atomic). */
     int getLatencySamples() const noexcept  { return impulseLatency.load(); }
 
-    /** In-place convolution of one channel. Audio thread. */
+    /** In-place convolution of one channel. Audio thread: never blocks.
+        Leaves `data` untouched (dry) when no impulse is loaded, or when a load
+        is in flight and the try-lock fails. */
     void process (float* data, int n)
     {
-        juce::ScopedLock sl (lock);
+        if (! impulseLoaded.load())
+            return;     // bypass when no IR loaded — lock-free fast path
+
+        // Try, never wait: the message thread holds this lock across a file
+        // read + resample + engine rebuild. Blocking here would be an xrun.
+        const juce::ScopedTryLock tl (lock);
+        if (! tl.isLocked())
+            return;     // a load is swapping the impulse; stay dry this block
 
         if (sourceIR.getNumSamples() == 0)
-            return;     // bypass when no IR loaded
+            return;     // cleared between the atomic check and the lock
 
         if ((int) wdlInput.size() < n)
             return;     // should not happen (prepare sizes it)
@@ -186,10 +207,17 @@ private:
         impulseLatency.store (peakIdx);
 
         engine.SetImpulse (&impulseBuffer);
+
+        // Published last: process() reads this without the lock, so it must not
+        // see "loaded" before the engine actually holds the impulse.
+        impulseLoaded.store (true);
     }
 
     void loadSilentImpulse()
     {
+        // Cleared first: process() must stop taking the convolution path before
+        // the engine's impulse goes away, not after.
+        impulseLoaded.store (false);
         impulseBuffer.SetNumChannels (1);
         impulseBuffer.SetLength (1);
         impulseBuffer.samplerate = currentSampleRate;
@@ -207,6 +235,10 @@ private:
     double sourceRate = 0.0;
     double currentSampleRate = 44100.0;
     std::atomic<int> impulseLatency { 0 };   // peak position, session samples
+    // Mirrors "sourceIR.getNumSamples() > 0" so hasImpulse() and process()'s
+    // fast path need no lock. Written only under `lock`, by the two functions
+    // that install an impulse into the engine.
+    std::atomic<bool> impulseLoaded { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FirFilter)
 };
