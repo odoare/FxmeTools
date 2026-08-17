@@ -24,6 +24,12 @@
       orderOfChannel (acn)         Degree l of an ACN channel index.
       diffuseFieldOrderGain (l)    1/sqrt(2l+1): per-degree weight giving an
                                    isotropic (energy-balanced) diffuse field.
+      maxREGain (order, l)         P_l(r_E): per-degree max-rE decoder weight.
+      samplingDecodeMatrix (order, dirs)
+                                   L x channelsForOrder(order) sampling
+                                   (projection) decode matrix with max-rE
+                                   weighting, level-normalised. The decode
+                                   counterpart of encodeSN3D.
       Vec3, normalise()            Minimal 3-vector.
       capDirection (k, n, angle)   k-th of n quasi-uniform directions in the
                                    spherical cap of given half-angle around +x
@@ -75,6 +81,7 @@
 
 #include <cmath>
 #include <array>
+#include <vector>
 
 namespace fxme::ambi
 {
@@ -98,6 +105,34 @@ inline int orderOfChannel (int acn) noexcept
 inline float diffuseFieldOrderGain (int order) noexcept
 {
     return 1.0f / std::sqrt ((float) (2 * order + 1));
+}
+
+// Per-degree max-rE weight for a decoder of the given ambisonic order:
+//
+//     a_l = P_l (r_E),   r_E = the largest root of P_{order+1}
+//
+// with P_l the Legendre polynomial, so a_0 is 1 and the higher degrees taper.
+// (Note it is P_l evaluated at r_E, not r_E^l: for order 2, r_E = 0.774597 but
+// a_2 = P_2(r_E) = 0.4, not 0.6.) Tapering this way maximises the magnitude of
+// the energy vector in the source direction, which is what keeps the image
+// stable for a listener away from the sweet spot; a "basic" decoder is the same
+// thing with every weight left at 1. Degrees above `order` return 0.
+inline float maxREGain (int order, int degree) noexcept
+{
+    static constexpr float o1[] = { 1.0f, 0.577350f };
+    static constexpr float o2[] = { 1.0f, 0.774597f, 0.400000f };
+    static constexpr float o3[] = { 1.0f, 0.861136f, 0.612334f, 0.304657f };
+
+    if (degree < 0)
+        return 0.0f;
+
+    switch (order)
+    {
+        case 1:  return degree < 2 ? o1[degree] : 0.0f;
+        case 2:  return degree < 3 ? o2[degree] : 0.0f;
+        case 3:  return degree < 4 ? o3[degree] : 0.0f;
+        default: return 1.0f;
+    }
 }
 
 //==============================================================================
@@ -178,6 +213,67 @@ inline void encodeSN3D (Vec3 d, float* gains, int order = maxOrder) noexcept
     gains[13] = 0.6123724f * x * (5.0f * zz - 1.0f);    // ACN13 L  (sqrt 3/8)
     gains[14] = 1.9364917f * z * (xx - yy);             // ACN14 N  (sqrt 15 / 2)
     gains[15] = 0.7905694f * x * (xx - 3.0f * yy);      // ACN15 P  (sqrt 5/8)
+}
+
+//==============================================================================
+// Sampling (projection) decoder with max-rE weighting: the decode counterpart of
+// encodeSN3D, mapping an ACN/SN3D B-format stream onto an arbitrary set of
+// loudspeaker directions.
+//
+//     D[s][j] = (1 / L) * a_l(j) * Y_j (dir_s)
+//
+// with Y_j the real SN3D harmonic of ACN index j, a_l the maxREGain() weight for
+// that harmonic's degree, and L the speaker count. In other words each speaker
+// is fed a virtual microphone pointed at it. The whole matrix is then scaled so
+// that a plane wave arriving from a speaker's own direction decodes to about
+// unity at that speaker, which keeps the overall level independent of L.
+//
+// `speakerDirs` must hold UNIT vectors (build them with directionFromAngles or
+// normalise). Returns an L x channelsForOrder(order) matrix; coefficients are
+// signed, so a renderer that wants a gain plus a polarity takes the magnitude
+// and the sign separately. `order` is clamped to [0, maxOrder].
+//
+// Sampling decoders assume a reasonably uniform speaker layout: they are simple,
+// always well behaved, and give up some accuracy on an irregular rig, where an
+// AllRAD decoder (imported from a file, say) will do better.
+inline std::vector<std::vector<float>> samplingDecodeMatrix (int order,
+                                                             const std::vector<Vec3>& speakerDirs)
+{
+    const int ord = order < 0 ? 0 : (order > maxOrder ? maxOrder : order);
+    const int H   = channelsForOrder (ord);
+    const int L   = (int) speakerDirs.size();
+
+    std::vector<std::vector<float>> D ((size_t) L, std::vector<float> ((size_t) H, 0.0f));
+    if (L == 0)
+        return D;
+
+    float gains[maxChannels] = {};
+    float peak = 0.0f;
+
+    for (int s = 0; s < L; ++s)
+    {
+        encodeSN3D (speakerDirs[(size_t) s], gains, ord);
+
+        // The on-axis gain of this speaker for a plane wave from its own
+        // direction, i.e. the row dotted with the encoding of that direction.
+        float onAxis = 0.0f;
+
+        for (int j = 0; j < H; ++j)
+        {
+            const float d = maxREGain (ord, orderOfChannel (j)) * gains[j] / (float) L;
+            D[(size_t) s][(size_t) j] = d;
+            onAxis += d * gains[j];
+        }
+
+        peak = std::fmax (peak, onAxis);
+    }
+
+    if (peak > 1.0e-12f)
+        for (auto& row : D)
+            for (auto& d : row)
+                d /= peak;
+
+    return D;
 }
 
 //==============================================================================
