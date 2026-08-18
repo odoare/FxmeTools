@@ -198,8 +198,8 @@ private:
                 peer->grabFocus();
     }
 
-    /** True while a modal component outside the root owns the interaction —
-        an info callout, a popup menu, a dialog.
+    /** True while a modal component *on its own desktop window* owns the
+        interaction — an info callout, a popup menu, a dialog.
 
         The enforcement below must never run then. Those popups are separate
         *temporary* desktop windows, and JUCE on Windows dismisses a temporary
@@ -209,9 +209,29 @@ private:
         popup within one timer tick of it opening — it looks like the hint
         window "blinks and disappears". Linux does not show this because the
         grab there usually fails, which is precisely why the enforcement
-        exists; so the bug only appears where the fixer actually works. */
+        exists; so the bug only appears where the fixer actually works.
+
+        A modal *inside* the root is the opposite case and must not suspend
+        anything. A juce::CallOutBox launched with a parent component is added
+        as a child of it rather than to the desktop (see the constructor in
+        juce_CallOutBox.cpp), so it has no window of its own and shares the
+        root's peer: focusing that peer cannot make any window lose focus, and
+        so cannot dismiss it. Its TextEditors are descendants of the root and
+        need the enforcement exactly as much as any other — before this check
+        existed they were the one place in a plugin editor where typing stayed
+        broken on Linux, because the fixer switched itself off for as long as
+        the popup was open. */
     bool blockedByModal() const
     {
+        auto* modal = juce::Component::getCurrentlyModalComponent();
+
+        if (modal == nullptr)
+            return false;
+
+        // Ours, sharing our peer: keep enforcing.
+        if (modal == &root || root.isParentOf (modal))
+            return false;
+
         return root.isCurrentlyBlockedByAnotherModalComponent();
     }
 
