@@ -74,6 +74,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/SignalGenerator.h"
 #include "dsp/Lfo.h"
 #include "dsp/ModLfo.h"
+#include "dsp/UnisonSpread.h"
 #include "dsp/CracksGenerator.h"
 #include "dsp/PitchShifter.h"
 #include "dsp/GrainLooper.h"
