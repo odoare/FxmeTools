@@ -761,7 +761,18 @@ public:
         @param hits Number of notes.
         @param steps Total length of the sequence.
     */
-    juce::String makeEuclidianPattern(int hits, int steps, int rotation)
+    /** Both pattern generators are static: they are pure functions of their
+        arguments (makeRandomPattern also of the global RNG) and read no member
+        state, so they need no instance.
+
+        This is not cosmetic. Callers used to reach them through an
+        Arpeggiator reference, and at least one held that reference in a lambda
+        that outlived the call, which made it a dangling-reference hazard for
+        no benefit. Being static removes the reason to hold a reference at all.
+
+        Calling a static member through an instance stays legal, so existing
+        `arp.makeRandomPattern()` call sites keep compiling unchanged. */
+    static juce::String makeEuclidianPattern(int hits, int steps, int rotation)
     {
         auto bools = MidiTools::euclidianRythm(hits, steps, rotation);
         juce::String s;
@@ -777,7 +788,8 @@ public:
         - Balanced global relative modifiers (O+, V+, O-, V-) to prevent drift.
         - Note values between 1 and 9.
     */
-    juce::String makeRandomPattern()
+    /** Static for the same reason as makeEuclidianPattern above. */
+    static juce::String makeRandomPattern()
     {
         juce::Random& rng = juce::Random::getSystemRandom();
         int length = rng.nextInt(13) + 4; // Random length between 4 and 16
