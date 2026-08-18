@@ -231,18 +231,50 @@ public:
     {
         sampleRate = rate;
         updateSamplesPerNote();
+
+        // Grow the two output buffers here, once, so that the audio thread
+        // never has to. MidiBuffer::clear() is Array::clearQuick(), which drops
+        // the element count without releasing the block, so from here on the
+        // clear-and-refill cycle below allocates nothing at all.
+        //
+        // 2 kB is well beyond what one block of the fastest subdivision can
+        // produce (two events per step, a dozen or so bytes each); if some
+        // pathological block ever exceeds it, the buffer grows once and then
+        // stays grown.
+        outMidi.ensureSize (2048);
+        stepMidi.ensureSize (64);
     }
+
+    //=========================================================================
+    // processBlock(), reset() and turnOff() all return a reference to one
+    // buffer owned by this engine, rather than a fresh juce::MidiBuffer by
+    // value. Returning by value meant a heap allocation on the audio thread
+    // every time a step fired, which is what this avoids.
+    //
+    // The lifetime rule that comes with it: the returned reference is only
+    // valid until the next call to any of the three. Consume it straight away,
+    // which is what the natural call shape already does:
+    //
+    //     midiMessages.addEvents (arp.processBlock (n, ch), 0, -1, 0);
+    //
+    // Copying it into a juce::MidiBuffer of your own still works and still
+    // costs an allocation, so `auto buf = arp.processBlock (n);` behaves
+    // exactly as it did before. One engine per voice, as the callers already
+    // do, means the three never overlap.
+    //=========================================================================
 
     /**
         Generates MIDI events for the current block of audio samples.
         @param numSamples The number of samples in the current audio block.
-        @return A juce::MidiBuffer containing any events generated during this block.
-    */    
-    juce::MidiBuffer processBlock(int numSamples, int midiChannel = 1)
+        @return A reference to this engine's output buffer, holding any events
+                generated during this block. Valid until the next call to
+                processBlock(), reset() or turnOff().
+    */
+    const juce::MidiBuffer& processBlock(int numSamples, int midiChannel = 1)
     {
-        juce::MidiBuffer generatedMidi;
+        outMidi.clear();
         if (sampleRate <= 0.0 || samplesPerNote <= 0.0 || pattern.isEmpty())
-            return generatedMidi;
+            return outMidi;
         if (midiChannel < 1 || midiChannel > 16) midiChannel = 1;
 
         int time = 0;
@@ -250,30 +282,35 @@ public:
         {
             if (samplesUntilNextNote <= 0.0)
             {
-                generatedMidi.addEvents(getNext(midiChannel), 0, -1, time);
+                // getNext() fills stepMidi, a different buffer, so this is not
+                // a self-aliasing addEvents.
+                outMidi.addEvents(getNext(midiChannel), 0, -1, time);
                 // Use 'while' to handle cases where the block size is larger than the note duration.
                 while (samplesUntilNextNote <= 0.0)
                     samplesUntilNextNote += samplesPerNote;
             }
- 
+
             // Ensure we always advance time, even if samplesUntilNextNote is 0.
             const int samplesToAdvance = (int)std::ceil(samplesUntilNextNote);
             const int samplesThisStep = juce::jmin(numSamples - time, juce::jmax(1, samplesToAdvance));
- 
+
             time += samplesThisStep;
             samplesUntilNextNote -= samplesThisStep;
         }
-        return generatedMidi;
+        return outMidi;
     }
 
 private:
     /**
         Processes the next step in the arpeggio pattern and returns MIDI messages.
-        @return A juce::MidiBuffer containing note-on and/or note-off messages.
+        @return A reference to stepMidi, holding this step's note-off and/or
+                note-on. Valid until the next call. Private, and only
+                processBlock() calls it.
     */
-    juce::MidiBuffer getNext(int midiChannel)
+    const juce::MidiBuffer& getNext(int midiChannel)
     {
-        juce::MidiBuffer midiBuffer;
+        juce::MidiBuffer& midiBuffer = stepMidi;
+        midiBuffer.clear();
         int samplePosition = 0; // All events happen at the start of the block
 
         if (pattern.isEmpty())
@@ -1083,10 +1120,14 @@ public:
         }
     }
 
-    /** Resets the arpeggiator's position to the beginning of the pattern. */
-    juce::MidiBuffer reset(int midiChannel = 1, const juce::Optional<juce::AudioPlayHead::CurrentPositionInfo> positionInfo = {})
+    /** Resets the arpeggiator's position to the beginning of the pattern.
+        @return A reference to this engine's output buffer, holding a note-off
+                for the note left ringing, if there was one. Valid until the
+                next call to processBlock(), reset() or turnOff(). */
+    const juce::MidiBuffer& reset(int midiChannel = 1, const juce::Optional<juce::AudioPlayHead::CurrentPositionInfo> positionInfo = {})
     {
-        juce::MidiBuffer noteOffBuffer;
+        juce::MidiBuffer& noteOffBuffer = outMidi;
+        noteOffBuffer.clear();
         if (lastPlayedMidiNote != -1)
         {
             noteOffBuffer.addEvent(juce::MidiMessage::noteOff(lastPlayedMidiChannel, lastPlayedMidiNote), 0);
@@ -1122,10 +1163,13 @@ public:
         return noteOffBuffer;
     }
 
-    /** Generates a note-off for the last played note and resets the state. */
-    juce::MidiBuffer turnOff(int midiChannel = 1)
+    /** Generates a note-off for the last played note and resets the state.
+        @return A reference to this engine's output buffer. Valid until the
+                next call to processBlock(), reset() or turnOff(). */
+    const juce::MidiBuffer& turnOff(int midiChannel = 1)
     {
-        juce::MidiBuffer noteOffBuffer;
+        juce::MidiBuffer& noteOffBuffer = outMidi;
+        noteOffBuffer.clear();
         if (lastPlayedMidiNote != -1)
         {
             noteOffBuffer.addEvent(juce::MidiMessage::noteOff(lastPlayedMidiChannel, lastPlayedMidiNote), 0);
@@ -1359,6 +1403,17 @@ private:
     int subdivision = 4; // Default to 1/16
     double samplesPerNote = 0.0;
     double samplesUntilNextNote = 0.0;
+
+    // Output buffers, reused across calls so that nothing allocates on the
+    // audio thread. Sized in prepareToPlay(); see the note above processBlock()
+    // for the lifetime rule this places on callers.
+    //
+    // Two of them rather than one, because processBlock() merges getNext()'s
+    // result into its own buffer, and addEvents() from a buffer into itself
+    // would be self-aliasing. outMidi is shared by processBlock(), reset() and
+    // turnOff(), which are never in flight at the same time.
+    juce::MidiBuffer outMidi;
+    juce::MidiBuffer stepMidi;
 };
 
 } // namespace fxme
