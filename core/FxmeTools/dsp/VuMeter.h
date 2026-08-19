@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/Math.h>
+#include <algorithm>
 #include <atomic>
 #include <vector>
 #include <cmath>
@@ -76,9 +77,9 @@ public:
     }
 
     // Getters return dB values
-    float getRMS()  const { return juce::Decibels::gainToDecibels (rms.load()); }
-    float getPeak() const { return juce::Decibels::gainToDecibels (peak.load()); }
-    float getMax()  const { return juce::Decibels::gainToDecibels (maxLevel.load()); }
+    float getRMS()  const { return fxme::Decibels::gainToDecibels (rms.load()); }
+    float getPeak() const { return fxme::Decibels::gainToDecibels (peak.load()); }
+    float getMax()  const { return fxme::Decibels::gainToDecibels (maxLevel.load()); }
     void resetMax() { maxLevel = 0.0f; }
 
     void clear()
@@ -91,7 +92,7 @@ public:
 
     void setWindowDuration (double duration)
     {
-        windowSize = juce::jmax (1, juce::roundToInt (duration * currentSampleRate));
+        windowSize = fxme::jmax (1, fxme::roundToInt (duration * currentSampleRate));
         window.assign (windowSize, 0.0f);
         currentSample = 0;
         currentSum = 0.0;
