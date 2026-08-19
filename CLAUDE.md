@@ -8,6 +8,11 @@ being moved under `core/`, leaving only genuinely JUCE-coupled code in the
 `FxmeTools/` module directory. Read `core/README.md` before touching either
 side — the rules below are the short version.
 
+**Every consumer-visible change lives in `doc/api-changes.md`**, with a
+per-project checklist of what each plugin still has to do. Add to it whenever a
+change can be observed from outside this repository, and read it when picking a
+plugin back up.
+
 ## The split contract
 
 ```
@@ -99,19 +104,22 @@ Working discipline for the promotable batch:
 
 Stop and ask rather than choosing:
 
-- **`fxme::Random` produces a different sequence than JUCE's for a given seed.**
-  Same LCG family, so the statistical character is unchanged, but any behaviour
-  depending on a reproducible seed changes audibly. No test can settle this —
-  it needs listening. Flag every site you touch in `SignalGenerator` and
-  `CracksGenerator`.
-- **`Lfo.h` returns `juce::StringArray` from `shapeChoices()` /
-  `syncRateChoices()`.** Whether core returns `std::vector<std::string>` with a
-  JUCE-side adapter, or those lists simply stay on the JUCE side, is an API
-  design call. `dsp/ModLfo.h` is blocked on it.
-- Anything needing `juce::File`, `juce::String`, `juce::ValueTree`,
-  `juce::dsp::FFT`, `juce::Image` or `SmoothedValue` needs an **abstract
-  interface in core with a JUCE implementation beside it** — a design step, not
-  a substitution. Propose the interface before writing it.
+- ~~`fxme::Random` seeding~~ and ~~`Lfo.h`'s `StringArray` lists~~ — both
+  **settled**; see `doc/api-changes.md`. The Random one was not the question it
+  looked like: the sequence differing per seed mattered far less than the two
+  default constructors disagreeing, JUCE's seeding randomly and core's from a
+  fixed constant. Worth remembering as a pattern — when a substitution looks
+  like it only changes values, check the constructors too.
+- Anything needing `juce::File`, `juce::String`, `juce::ValueTree` or
+  `juce::Image` needs an **abstract interface in core with a JUCE
+  implementation beside it** — a design step, not a substitution. Propose the
+  interface before writing it. This is what still blocks `dsp/FirFilter.h`,
+  `dsp/MicCalibration.*`, `dsp/IemDecoder.*`, `presets/` and `image/`.
+- `juce::dsp::FFT` and `SmoothedValue` were on that list and came off it: both
+  turned out to have no platform behaviour to abstract, so they are plain
+  concrete replacements (`fxme::Fft`/`RealFft`, `fxme::SmoothedValue`) beside
+  `Math.h`. The abstract-interface rule is for things with a system behind
+  them, not for value types — but say which you think it is before writing.
 
 ## Licensing — in flux, do not mass-edit
 
