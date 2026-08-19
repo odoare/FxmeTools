@@ -29,6 +29,8 @@
 #include <FxmeTools/util/AudioBufferView.h>
 #include <FxmeTools/util/ProcessSpec.h>
 #include <FxmeTools/util/Fft.h>
+#include <FxmeTools/util/AudioBuffer.h>
+#include <FxmeTools/util/SmoothedValue.h>
 
 // -- dsp ------------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/AllpassChain.h>)

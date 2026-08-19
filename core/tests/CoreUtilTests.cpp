@@ -20,7 +20,9 @@
 #include <FxmeTools/util/ProcessSpec.h>
 
 #include <FxmeTools/dsp/AmbixToStereo.h>
+#include <FxmeTools/util/AudioBuffer.h>
 #include <FxmeTools/util/Fft.h>
+#include <FxmeTools/util/SmoothedValue.h>
 
 #include <cmath>
 #include <complex>
@@ -511,6 +513,137 @@ int main()
             realOne.performRealOnlyForwardTransform (buf);
             CHECK (buf[0] == 7.0f);              // left alone, as JUCE leaves it
         }
+    }
+
+    //--------------------------------------------------------------------------
+    // ---- SmoothedValue: JUCE's ramp, step for step --------------------------
+    //
+    // A ramp that lands a sample early or approaches its target by accumulated
+    // addition instead of snapping onto it is audible and compiles fine, so the
+    // arithmetic is pinned rather than assumed.
+    {
+        // An un-reset instance has no ramp length: setTargetValue must jump,
+        // not freeze at the initial value.
+        {
+            fxme::SmoothedValue<float> sv (0.0f);
+            sv.setTargetValue (1.0f);
+            CHECK (! sv.isSmoothing());
+            CHECK (sv.getNextValue() == 1.0f);
+        }
+
+        // reset() floors the step count and snaps to the current target.
+        {
+            fxme::SmoothedValue<float> sv (0.0f);
+            sv.reset (1000.0, 0.0049);          // 4.9 steps -> 4
+            sv.setTargetValue (1.0f);
+
+            CHECK (sv.isSmoothing());
+            CHECK_CLOSE (sv.getNextValue(), 0.25, 1e-6);
+            CHECK_CLOSE (sv.getNextValue(), 0.50, 1e-6);
+            CHECK_CLOSE (sv.getNextValue(), 0.75, 1e-6);
+
+            // Exactly on the last step, and exactly the target.
+            CHECK (sv.getNextValue() == 1.0f);
+            CHECK (! sv.isSmoothing());
+
+            // Past the end it holds, it does not overshoot.
+            CHECK (sv.getNextValue() == 1.0f);
+        }
+
+        // reset() mid-ramp abandons it rather than leaving it part way through.
+        {
+            fxme::SmoothedValue<float> sv (0.0f);
+            sv.reset (48000.0, 1.0);
+            sv.setTargetValue (1.0f);
+            sv.getNextValue();
+            CHECK (sv.isSmoothing());
+
+            sv.reset (48000.0, 1.0);
+            CHECK (! sv.isSmoothing());
+            CHECK (sv.getCurrentValue() == 1.0f);   // snapped onto the target
+        }
+
+        // setCurrentAndTargetValue cancels a ramp outright.
+        {
+            fxme::SmoothedValue<float> sv (0.0f);
+            sv.reset (48000.0, 1.0);
+            sv.setTargetValue (1.0f);
+            sv.setCurrentAndTargetValue (-3.0f);
+            CHECK (! sv.isSmoothing());
+            CHECK (sv.getNextValue() == -3.0f);
+        }
+
+        // skip() lands where the equivalent getNextValue calls would.
+        {
+            fxme::SmoothedValue<float> a (0.0f), b (0.0f);
+            a.reset (1000.0, 0.008);            // 8 steps
+            b.reset (1000.0, 0.008);
+            a.setTargetValue (1.0f);
+            b.setTargetValue (1.0f);
+
+            for (int i = 0; i < 3; ++i)
+                a.getNextValue();
+
+            CHECK_CLOSE (b.skip (3), a.getCurrentValue(), 1e-6);
+
+            // Skipping past the end settles exactly on the target.
+            CHECK (b.skip (100) == 1.0f);
+            CHECK (! b.isSmoothing());
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    // ---- AudioBuffer: owning storage that is still view-compatible ----------
+    {
+        fxme::AudioBuffer buf;
+        buf.setSize (3, 16);
+
+        CHECK (buf.getNumChannels() == 3 && buf.getNumSamples() == 16);
+
+        // setSize zeroes.
+        bool allZero = true;
+        for (int c = 0; c < 3; ++c)
+            for (int i = 0; i < 16; ++i)
+                if (buf.getSample (c, i) != 0.0f)
+                    allZero = false;
+        CHECK (allZero);
+
+        // Channels are independent regions, not aliases of one another.
+        for (int i = 0; i < 16; ++i)
+            buf.setSample (1, i, 2.0f);
+
+        CHECK (buf.getSample (0, 0) == 0.0f);
+        CHECK (buf.getSample (1, 0) == 2.0f);
+        CHECK (buf.getSample (2, 0) == 0.0f);
+        CHECK (buf.getReadPointer (1)[15] == 2.0f);
+
+        // The whole point: it satisfies the view's shape test, so it converts
+        // implicitly at a core API boundary with no adapter.
+        CHECK_CLOSE (sumBuffer (buf), 32.0, 1e-6);
+
+        fxme::AudioBufferView v (buf);
+        CHECK (v.getNumChannels() == 3 && v.getNumSamples() == 16);
+        v.applyGain (1, 0.5f);
+        CHECK (buf.getSample (1, 0) == 1.0f);       // the view wrote through
+
+        buf.clearChannel (1);
+        CHECK (buf.getSample (1, 0) == 0.0f);
+
+        for (int i = 0; i < 16; ++i)
+            buf.setSample (0, i, 1.0f);
+        buf.clear();
+        CHECK_CLOSE (sumBuffer (buf), 0.0, 1e-9);
+
+        // Resizing re-points the channel array rather than dangling.
+        buf.setSize (2, 64);
+        CHECK (buf.getNumChannels() == 2 && buf.getNumSamples() == 64);
+        buf.setSample (1, 63, 7.0f);
+        CHECK (buf.getReadPointer (1)[63] == 7.0f);
+
+        // Degenerate sizes must not blow up.
+        fxme::AudioBuffer empty;
+        CHECK (empty.getNumChannels() == 0 && empty.getNumSamples() == 0);
+        empty.clear();
     }
 
     //--------------------------------------------------------------------------
