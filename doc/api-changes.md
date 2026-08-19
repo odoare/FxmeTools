@@ -140,7 +140,7 @@ which is what this file is for.
 | FemPlate | `lib/FxmeTools` | **breaks** | `58a31f3` |
 | FxmeFX | `lib/FxmeTools` | safe (Pd externals needed core) | tracking branch |
 | Localizer | `lib/FxmeTools` | safe | `7a66389` |
-| Mango | `lib/FxmeTools` | migrated | tracking main |
+| Mango | `lib/FxmeTools` | done | tracking main |
 | Neorix | `lib/FxmeTools` | **breaks** | `58a31f3` |
 | SuperMoTo | `lib/FxmeTools` | done | **tip** |
 | TeAr | `Source/libs/FxmeTools` | safe | `0de002d` |
@@ -217,7 +217,10 @@ configure time, not as a missing header — a louder failure than the rest, at
 least. Fix by linking `FxmeCore`, which already compiles both, and deleting the
 two lines rather than repointing them.
 
-**Mango** — migrated and building; **not committed**.
+**Mango** — done. Plugin, Standalone and VST3 all link (0 undefined symbols,
+core archive members verifiably pulled into the bundle), and both test suites
+pass: `ctest` 2/2, 26,769 checks. Its CMakeLists and test fixes were left
+uncommitted for the author to land.
 
 The most core-dependent consumer so far: *every* FxmeTools header it uses — the
 dsp/ kernels, DeterministicRandom, the midi/ sequencing, SpectralFreeze — has
@@ -236,13 +239,17 @@ block, draw)`, a pure function of its arguments, which moved to core untouched.
 
 Two `MangoTests` failures surfaced, **both pre-existing and unrelated to the
 split** — proven by running the identical test source, flags and `fft.o` against
-Mango's pre-sync FxmeTools (`bb324dd`), where they fail on the same two lines:
+Mango's pre-sync FxmeTools (`bb324dd`), where they failed on the same two lines.
+Both are now resolved, but in opposite ways, and the difference is the point:
 
-- `testDownsampler`: `Downsampler.h` latches on the *last* sample of each group
-  instead of holding from the first (0,0,0,**3**,3,3,3,**7**… where the test
-  wants 0,0,0,0,**4**,4,4,4…). `reset()` sets `phase = 1.0` so the first sample
-  latches immediately, but `phase -= floor(phase)` then leaves `0.25` rather
-  than `0` — a quarter-period head start. The test's expectation is correct.
+- `testDownsampler` was a **real bug, since fixed**. `Downsampler.h` latched on
+  the *last* sample of each group instead of holding from the first
+  (0,0,0,**3**,3,3,3,**7**… where the test wants 0,0,0,0,**4**,4,4,4…): with
+  `phase` starting at 1 so the first input is taken immediately, incrementing
+  before the test left `phase` at `inc` rather than `0`, costing the opening
+  group a sample. Fixed by latching before advancing. **This changes how the
+  decimator sounds** — one sample per group — so presets leaning on the old
+  timing shift slightly.
 - `testSpectralFreezeMulti`: `rmsRatio = 0.3909` against a required 0.7–1.4.
   Read that number carefully — it is **not** an 8 dB level error, which is what
   it looks like at first glance. The test compares the *first* wash block at
@@ -252,22 +259,28 @@ Mango's pre-sync FxmeTools (`bb324dd`), where they fail on the same two lines:
   like for like, block 1 vs block 1, width 0 sits **1.8 dB** below width 1 —
   consistent at block 2 vs block 2 as well.
 
-  So there are two separate things here. The real defect is that the "equal
-  power" width blend is out by about 1.8 dB, quieter at width 0; it affects
-  FxmeFX's Freeze identically, since both plugins drive the same
-  `SpectralFreezeMulti` through a user-facing width control. And the test itself
-  is flawed: a 0.7-1.4 tolerance cannot mean anything when the quantity it
-  measures varies by 2.7x on its own. It would have to compare the same block
-  index at both widths.
+  And even the 1.8 dB was measurement noise. Averaged over 40 identities and 8
+  wash blocks the blend is flat to within 0.09 dB from width 0 to width 1 — the
+  `a² + b² = 1` normalisation in `setWidth` is correct and was never touched.
+  **The only defect here was in the test**, which has been fixed to capture two
+  instances, advance them in lockstep, skip the crossfade block and average
+  before comparing; the tolerance is now 0.9-1.1 rather than a 0.7-1.4 that only
+  ever accommodated an untrustworthy measurement.
+
+  Worth remembering as a method, not just an outcome: a single block of a
+  randomised-phase wash says nothing about level, because it varies 2.7x on its
+  own. Two such measurements agreeing says almost nothing either. This was read
+  as an 8 dB bug, then a 1.8 dB bug, before averaging showed there was none.
 
 Neither is fixed here: both are audible behaviour in shipped effects, so
 changing them changes how existing presets sound. `Downsampler.h` is in core
 now, so a fix lands in this repository.
 
 Note how they stayed hidden: `MangoTests` is opt-in (`MANGO_BUILD_TESTS=OFF`)
-and its `main()` returns on the first failure, so the Downsampler bug was
-masking every test after it — including all three SpectralFreeze tests. Worth
-considering whether that harness should run all cases and report at the end.
+and its `main()` returned on the first failure, so the Downsampler bug masked
+every test after it — the three SpectralFreeze cases included. That harness now
+runs all 19 cases and reports them together, verified by injecting failures into
+an early and a late case and confirming both are reported.
 
 **Neorix** — needs the CMake wiring. Nothing else; no `Lfo` calls, no `Random`.
 
