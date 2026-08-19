@@ -117,6 +117,12 @@
  #include <FxmeTools/dsp/SpectralFreeze.h>
 #endif
 
+// Reverb wraps WDL's Freeverb-derived engine, so it is gated the same way.
+#if defined(FXME_CORE_HAS_WDL) && FXME_CORE_HAS_WDL \
+    && FXME_TRY_INCLUDE(<FxmeTools/dsp/Reverb.h>)
+ #include <FxmeTools/dsp/Reverb.h>
+#endif
+
 // -- midi -----------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/ChordName.h>)
  #include <FxmeTools/midi/ChordName.h>
