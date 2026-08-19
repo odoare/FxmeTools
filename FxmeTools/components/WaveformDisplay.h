@@ -49,7 +49,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "../dsp/WaveformTap.h"
+#include <FxmeTools/dsp/WaveformTap.h>
 #include <cmath>
 #include <vector>
 

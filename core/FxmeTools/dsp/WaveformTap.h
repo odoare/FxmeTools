@@ -22,8 +22,10 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/Math.h>
 #include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace fxme
@@ -40,7 +42,7 @@ public:
     void prepare (double newSampleRate, double seconds)
     {
         sampleRate = newSampleRate;
-        const int n = juce::jmax (1024, (int) std::ceil (seconds * newSampleRate));
+        const int n = fxme::jmax (1024, (int) std::ceil (seconds * newSampleRate));
         buffer.assign ((size_t) n, 0.0f);
         size = n;
         writePos.store (0);
@@ -55,7 +57,7 @@ public:
 
     /** Total samples pushed since prepare() — a monotonic clock for the
         display's time axis. */
-    juce::int64 getTotalPushed() const noexcept
+    std::int64_t getTotalPushed() const noexcept
     {
         return totalPushed.load (std::memory_order_acquire);
     }
@@ -85,7 +87,7 @@ public:
         if (size == 0 || count <= 0)
             return;
 
-        count = juce::jmin (count, size);
+        count = fxme::jmin (count, size);
         int w = writePos.load (std::memory_order_acquire);
         int r = w - count;
         if (r < 0)
@@ -103,10 +105,15 @@ private:
     int size = 0;
     double sampleRate = 44100.0;
     std::atomic<int> writePos { 0 };
-    std::atomic<juce::int64> totalPushed { 0 };
+    std::atomic<std::int64_t> totalPushed { 0 };
     std::atomic<bool> enabled { false };
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformTap)
+    // Replaces JUCE's non-copyable-with-leak-detector macro. The leak detector
+    // is a debugging aid of the framework and gets no core equivalent; the
+    // non-copyable half is the part that carried meaning here, so it is spelt
+    // out rather than left implicit in the atomics.
+    WaveformTap (const WaveformTap&) = delete;
+    WaveformTap& operator= (const WaveformTap&) = delete;
 };
 
 } // namespace fxme
