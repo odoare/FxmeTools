@@ -20,8 +20,10 @@
 #include <FxmeTools/util/ProcessSpec.h>
 
 #include <FxmeTools/dsp/AmbixToStereo.h>
+#include <FxmeTools/util/Fft.h>
 
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -84,6 +86,39 @@ namespace
         std::uint32_t maximumBlockSize;
         std::uint32_t numChannels;
     };
+
+    // O(N^2) reference transform. Slow on purpose: it is the definition of the
+    // DFT written out, so agreeing with it is evidence the butterflies and the
+    // bit-reversal are right, in a way a forward/inverse round-trip is not —
+    // a round-trip passes even when both directions share the same error.
+    void naiveDft (const std::complex<float>* in, std::complex<float>* out,
+                   int n, bool inverse)
+    {
+        const double pi   = 3.141592653589793238;
+        const double sign = inverse ? 2.0 : -2.0;
+
+        for (int k = 0; k < n; ++k)
+        {
+            double re = 0.0, im = 0.0;
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double a = sign * pi * static_cast<double> (k)
+                                          * static_cast<double> (i) / static_cast<double> (n);
+                const double c = std::cos (a), s = std::sin (a);
+                re += static_cast<double> (in[i].real()) * c - static_cast<double> (in[i].imag()) * s;
+                im += static_cast<double> (in[i].real()) * s + static_cast<double> (in[i].imag()) * c;
+            }
+
+            if (inverse)
+            {
+                re /= static_cast<double> (n);
+                im /= static_cast<double> (n);
+            }
+
+            out[k] = { static_cast<float> (re), static_cast<float> (im) };
+        }
+    }
 
     // Core-style signatures: these must accept the JUCE-shaped types unchanged.
     float sumBuffer (fxme::ConstAudioBufferView v)
@@ -306,6 +341,176 @@ int main()
         // process() adds rather than replaces — running it twice doubles.
         decoder.process (ambi, stereo);
         CHECK_CLOSE (stereo.storage[0][0], 1.0, 1e-6);
+    }
+
+    //--------------------------------------------------------------------------
+    // ---- Fft / RealFft: JUCE's dsp::FFT semantics, without JUCE -------------
+    //
+    // Three DSP files are migrated on the promise that these match JUCE bin for
+    // bin — natural order, forward unscaled, inverse scaled by 1/N. Nothing in
+    // a JUCE build would catch a mismatch: the code would compile and simply
+    // sound or measure wrong, so the conventions are pinned here.
+    {
+        // --- forward agrees with the definition of the DFT -------------------
+        for (int order = 1; order <= 6; ++order)
+        {
+            const int n = 1 << order;
+            fxme::Random rng (12345);
+            std::vector<std::complex<float>> in ((std::size_t) n), got ((std::size_t) n), want ((std::size_t) n);
+
+            for (int i = 0; i < n; ++i)
+                in[(std::size_t) i] = { rng.nextBipolar(), rng.nextBipolar() };
+
+            fxme::Fft fft (order);
+            fft.perform (in.data(), got.data(), false);
+            naiveDft (in.data(), want.data(), n, false);
+
+            double worst = 0.0;
+            for (int k = 0; k < n; ++k)
+                worst = std::fmax (worst, (double) std::abs (got[(std::size_t) k] - want[(std::size_t) k]));
+
+            CHECK (worst < 1.0e-4);
+
+            // --- and so does the inverse, including the 1/N scaling ----------
+            fft.perform (in.data(), got.data(), true);
+            naiveDft (in.data(), want.data(), n, true);
+
+            worst = 0.0;
+            for (int k = 0; k < n; ++k)
+                worst = std::fmax (worst, (double) std::abs (got[(std::size_t) k] - want[(std::size_t) k]));
+
+            CHECK (worst < 1.0e-4);
+        }
+
+        // --- scaling, stated as the two facts call sites depend on -----------
+        {
+            const int order = 4, n = 1 << order;
+            std::vector<std::complex<float>> in ((std::size_t) n, { 2.0f, 0.0f }), out ((std::size_t) n);
+            fxme::Fft fft (order);
+
+            // Forward is UNSCALED: a constant 2 puts 2*N in the DC bin.
+            fft.perform (in.data(), out.data(), false);
+            CHECK_CLOSE (out[0].real(), 2.0 * n, 1e-3);
+            CHECK_CLOSE (std::abs (out[1]), 0.0, 1e-3);
+
+            // Inverse is scaled by 1/N: the same input gives back 2 at bin 0.
+            fft.perform (in.data(), out.data(), true);
+            CHECK_CLOSE (out[0].real(), 2.0, 1e-5);
+        }
+
+        // --- bin k really is frequency k (the permutation trap) --------------
+        {
+            const int order = 8, n = 1 << order;
+            const int bin = 5;
+            const double twoPi = 2.0 * 3.141592653589793238;
+            std::vector<std::complex<float>> in ((std::size_t) n), out ((std::size_t) n);
+
+            for (int i = 0; i < n; ++i)
+                in[(std::size_t) i] = { (float) std::cos (twoPi * bin * i / (double) n), 0.0f };
+
+            fxme::Fft (order).perform (in.data(), out.data(), false);
+
+            // A real cosine at bin k: N/2 at k and at N-k, nothing anywhere else.
+            CHECK_CLOSE (std::abs (out[(std::size_t) bin]), n / 2.0, 1e-2);
+            CHECK_CLOSE (std::abs (out[(std::size_t) (n - bin)]), n / 2.0, 1e-2);
+
+            double leak = 0.0;
+            for (int k = 0; k < n; ++k)
+                if (k != bin && k != n - bin)
+                    leak = std::fmax (leak, (double) std::abs (out[(std::size_t) k]));
+
+            CHECK (leak < 1.0e-2);
+        }
+
+        // --- RealFft forward == complex forward of the same samples ----------
+        {
+            const int order = 7, n = 1 << order;
+            fxme::Random rng (999);
+            std::vector<float> real ((std::size_t) (2 * n), 0.0f);
+            std::vector<std::complex<float>> in ((std::size_t) n), want ((std::size_t) n);
+
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = rng.nextBipolar();
+                real[(std::size_t) i] = s;
+                in[(std::size_t) i]   = { s, 0.0f };
+            }
+
+            fxme::RealFft (order).performRealOnlyForwardTransform (real.data());
+            fxme::Fft (order).perform (in.data(), want.data(), false);
+
+            const auto* got = reinterpret_cast<const std::complex<float>*> (real.data());
+            double worst = 0.0;
+            for (int k = 0; k < n; ++k)                     // all N bins, not just N/2+1
+                worst = std::fmax (worst, (double) std::abs (got[k] - want[(std::size_t) k]));
+
+            CHECK (worst < 1.0e-3);
+        }
+
+        // --- RealFft round-trip returns the samples in the first N floats ----
+        {
+            const int order = 9, n = 1 << order;
+            fxme::Random rng (4242);
+            std::vector<float> buf ((std::size_t) (2 * n), 0.0f), original ((std::size_t) n);
+
+            for (int i = 0; i < n; ++i)
+                original[(std::size_t) i] = buf[(std::size_t) i] = rng.nextBipolar();
+
+            fxme::RealFft fft (order);
+            fft.performRealOnlyForwardTransform (buf.data());
+            fft.performRealOnlyInverseTransform (buf.data());
+
+            double worst = 0.0;
+            for (int i = 0; i < n; ++i)
+                worst = std::fmax (worst, std::fabs ((double) (buf[(std::size_t) i]
+                                                               - original[(std::size_t) i])));
+
+            CHECK (worst < 1.0e-4);
+        }
+
+        // --- magnitude spectrum, and how far it zeroes behind itself ---------
+        {
+            const int order = 6, n = 1 << order;
+            const int bin = 3;
+            const double twoPi = 2.0 * 3.141592653589793238;
+
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                const bool nonNegOnly = (pass == 1);
+                std::vector<float> buf ((std::size_t) (2 * n), 0.0f);
+
+                for (int i = 0; i < n; ++i)
+                    buf[(std::size_t) i] = (float) std::cos (twoPi * bin * i / (double) n);
+
+                fxme::RealFft (order).performFrequencyOnlyForwardTransform (buf.data(), nonNegOnly);
+
+                CHECK_CLOSE (buf[(std::size_t) bin], n / 2.0, 1e-2);
+
+                const int limit = nonNegOnly ? (n / 2) + 1 : n;
+                bool tailZeroed = true;
+                for (int i = limit; i < 2 * n; ++i)
+                    if (buf[(std::size_t) i] != 0.0f)
+                        tailZeroed = false;
+
+                CHECK (tailZeroed);
+            }
+        }
+
+        // --- degenerate order 0, which JUCE special-cases everywhere ---------
+        {
+            fxme::Fft one (0);
+            CHECK (one.getSize() == 1);
+
+            const std::complex<float> in { 3.0f, -1.0f };
+            std::complex<float> out { 0.0f, 0.0f };
+            one.perform (&in, &out, false);
+            CHECK (out.real() == 3.0f && out.imag() == -1.0f);
+
+            fxme::RealFft realOne (0);
+            float buf[2] = { 7.0f, 0.0f };
+            realOne.performRealOnlyForwardTransform (buf);
+            CHECK (buf[0] == 7.0f);              // left alone, as JUCE leaves it
+        }
     }
 
     //--------------------------------------------------------------------------

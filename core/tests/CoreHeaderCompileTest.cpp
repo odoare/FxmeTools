@@ -28,6 +28,7 @@
 #include <FxmeTools/util/Random.h>
 #include <FxmeTools/util/AudioBufferView.h>
 #include <FxmeTools/util/ProcessSpec.h>
+#include <FxmeTools/util/Fft.h>
 
 // -- dsp ------------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/AllpassChain.h>)
