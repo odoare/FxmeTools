@@ -109,6 +109,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplashOverlay.h"
 #include "components/SphereView.h"
 #include "components/AccentToggle.h"
+#include "components/ScaleKeyboardComponent.h"
 #include "components/TextEntryFocusFixer.h"
 
 // Image / video input: still pictures, webcams (V4L2 on Linux,
