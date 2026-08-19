@@ -31,8 +31,10 @@ going through `fxmetools_attach()` get this for free — it is already wired int
 `cmake/FxmeTools.cmake`. Consumers that register the module directly need:
 
 ```cmake
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/core FxmeCore)
-juce_add_module(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/FxmeTools)
+# <FXME> is wherever the submodule sits: lib/FxmeTools in most projects,
+# Source/libs/FxmeTools in TeAr.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/<FXME>/core FxmeCore)
+juce_add_module(${CMAKE_CURRENT_SOURCE_DIR}/<FXME>/FxmeTools)
 target_link_libraries(FxmeTools INTERFACE FxmeCore)   # module sources include core headers
 ```
 
@@ -124,32 +126,88 @@ order, forward unscaled, inverse scaled by 1/N; no size ceiling, unlike WDL's
 
 ## Per-project checklist
 
-### SuperMoTo — done
+Eleven projects on this machine embed FxmeTools. **Nothing breaks in any of them
+until its submodule pointer moves forward** — the split is only visible once a
+project bumps. So the breakage arrives one project at a time, months apart,
+which is what this file is for.
 
-- [x] `fxmetools_attach()` carries FxmeCore; nothing to do in the plugin target.
-- [x] `SuperMoToTests`, `SuperMoToMicCalTests` and `SuperMoToSweepTests` bypass
-      `fxmetools_attach`, so they were given `${FXMETOOLS_ROOT}` and `FxmeCore`
-      explicitly. `AnalysisTest.cpp` needs it — `Biquad.h` is core now.
-- [x] Builds and runs. `Tests/SweepTest` passes against `fxme::Fft`.
-- [ ] Uses `fxme::SignalGenerator` in `SplMeterEngine` for its stimulus, so its
-      noise stream differs from before. Not a regression — it was never
-      reproducible run to run — but worth one listen.
+| project | submodule path | CMake exposure | pinned at (2026-08-19) |
+|---|---|---|---|
+| AmbiProbe | `lib/FxmeTools` | safe | `4b22e3c` |
+| AmbiRR2 | `lib/FxmeTools` | safe | `e55cedf1` |
+| Bloom | `lib/FxmeTools` | safe | `4b22e3c` |
+| Dede | `lib/FxmeTools` | wired by hand | **tip** |
+| FemPlate | `lib/FxmeTools` | **breaks** | `58a31f3` |
+| FxmeFX | `lib/FxmeTools` | safe | `0de002d` |
+| Localizer | `lib/FxmeTools` | safe | `7a66389` |
+| Mango | `lib/FxmeTools` | **breaks** | `bb324dd` |
+| Neorix | `lib/FxmeTools` | **breaks** | `58a31f3` |
+| SuperMoTo | `lib/FxmeTools` | done | **tip** |
+| TeAr | `Source/libs/FxmeTools` | safe | `0de002d` |
 
-### Dede — done
+"Safe" means the project does `include(.../cmake/FxmeTools.cmake)`, which adds
+the core subdirectory and hangs it off the module, so linking `FxmeTools` pulls
+core in with no edit. Calling `fxmetools_attach()` is not required for this —
+merely including the helper is enough.
 
-- [x] Registers the module directly rather than via `fxmetools_attach()` (it
-      compiles none of the WDL sources), so it needed the three CMake lines
-      above adding by hand.
-- [x] `Reverb.h`, which was an uncommitted file in Dede's own checkout, is now
-      in core.
-- [x] Compiles, links and runs.
+"Breaks" means the project calls `juce_add_module()` directly and never includes
+the helper, so it never gets core at all. Those three need the three lines above.
 
-### FxmeFX — NOT DONE, not yet checked out here
+### The auxiliary-target trap
 
-- [ ] Wire FxmeCore into its CMake (see above); which form depends on whether it
-      uses `fxmetools_attach()`.
-- [ ] Fix the `Lfo` choice-list call sites — the only source-breaking change.
-      It is the only project that calls them.
-- [ ] Check any default-constructed `fxme::Random`.
-- [ ] Build and listen: it is the heaviest user of `dsp/`, so it exercises far
-      more of the moved code than SuperMoTo or Dede do.
+Worth checking in any project, because it is invisible until it bites: a target
+that reaches FxmeTools headers **without linking the module** — a console test,
+an offline render check — has its own include roots and stops finding whatever
+moved. Linking `FxmeCore` fixes it, or add the second root by hand.
+
+Known instances: SuperMoTo had three (fixed). Mango has two. FemPlate has one,
+and its case is worse than a missing header — see below.
+
+### Per project
+
+**SuperMoTo** — done. Three offline test targets were given `${FXMETOOLS_ROOT}`
+and `FxmeCore` explicitly. Builds and runs; `Tests/SweepTest` passes against
+`fxme::Fft`. One open item: it uses `fxme::SignalGenerator` in `SplMeterEngine`,
+so its stimulus noise differs from before — not a regression, but worth a listen.
+
+**Dede** — done. Registers the module directly, so it was wired by hand.
+`Reverb.h`, previously an uncommitted file in Dede's own checkout, is now in
+core. Compiles, links and runs.
+
+**FxmeFX** — the only project needing *source* changes. Six files call the `Lfo`
+choice functions; that is the one source-breaking change in the split. Its CMake
+is already safe. It is also the heaviest user of `dsp/`, so it exercises far more
+of the moved code than any other project — the most valuable build to get green,
+and the one that should happen before this branch merges.
+
+**FemPlate** — the worst-affected. Needs the CMake wiring, *and* its `FemTests`
+target compiles two FxmeTools sources by path:
+
+```cmake
+lib/FxmeTools/FxmeTools/acoustics/FemMesh.cpp
+lib/FxmeTools/FxmeTools/acoustics/PlateModes.cpp
+```
+
+Both moved to `core/FxmeTools/acoustics/`. This fails as a missing *file* at
+configure time, not as a missing header — a louder failure than the rest, at
+least. Fix by linking `FxmeCore`, which already compiles both, and deleting the
+two lines rather than repointing them.
+
+**Mango** — needs the CMake wiring. Its `MangoTests` and `MangoRenderTest` set
+`lib/FxmeTools` as an include root by hand and need `lib/FxmeTools/core` as well.
+Its seed-determinism test is **not** affected by the `fxme::Random` change: Mango
+draws through `fxme::detrand::u01 (seed, lane, block, draw)`, a pure function of
+its arguments, which moved to core untouched in the first batch.
+
+**Neorix** — needs the CMake wiring. Nothing else; no `Lfo` calls, no `Random`.
+
+**TeAr** — CMake-safe, but special in one way: it is the **only** project that
+builds FxmeTools' own `tests/` directory (`add_subdirectory(.../tests)`, opt-in
+via `TEAR_BUILD_TESTS`). That `CMakeLists.txt` needed the core include root
+adding, because `ModDelayLine.h` and `AllpassChain.h` moved while `ModLfo.h` did
+not — the change is already made, but TeAr is the only place it is ever
+exercised. Also the only project on the older `Source/libs/` layout.
+
+**AmbiProbe, AmbiRR2, Bloom, Localizer** — CMake-safe, no `Lfo` calls, nothing
+special found. AmbiRR2 has one `Random` use worth a glance when it bumps. None
+have been built against the split; they are pinned well behind it.
