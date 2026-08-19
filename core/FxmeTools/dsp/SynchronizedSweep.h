@@ -39,8 +39,9 @@
 
 #pragma once
 
-#include <juce_core/juce_core.h>
-#include <juce_dsp/juce_dsp.h>
+#include <FxmeTools/util/Fft.h>
+#include <FxmeTools/util/Math.h>
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <vector>
@@ -103,7 +104,7 @@ public:
     float getSample (int n) const noexcept
     {
         const double t = (double) n / fs;
-        return (float) std::sin (juce::MathConstants<double>::twoPi * f1 * L
+        return (float) std::sin (fxme::MathConstants<double>::twoPi * f1 * L
                                  * (std::exp (t / L) - 1.0));
     }
 
@@ -144,7 +145,7 @@ public:
         while ((1 << order) < N)
             ++order;
 
-        juce::dsp::FFT fft (order);
+        fxme::Fft fft (order);
         std::vector<std::complex<float>> spec ((size_t) N), work ((size_t) N);
         for (int i = 0; i < numRecorded; ++i)
             work[(size_t) i] = { recorded[i], 0.0f };
@@ -159,9 +160,9 @@ public:
         {
             const double f = k * df;
             const double mag = 2.0 * std::sqrt (f / L) / fs;
-            const double ph  = -juce::MathConstants<double>::twoPi * f * L
+            const double ph  = -fxme::MathConstants<double>::twoPi * f * L
                                    * (1.0 - std::log (f / f1))
-                               + juce::MathConstants<double>::pi / 4.0;
+                               + fxme::MathConstants<double>::pi / 4.0;
             const std::complex<float> c ((float) (mag * std::cos (ph)),
                                          (float) (mag * std::sin (ph)));
             spec[(size_t) k] *= c;
@@ -229,8 +230,6 @@ private:
     double f1 = 10.0, f2 = 20000.0;
     double fs = 48000.0;
     double L  = 1.0;
-
-    JUCE_LEAK_DETECTOR (SynchronizedSweep)
 };
 
 } // namespace fxme

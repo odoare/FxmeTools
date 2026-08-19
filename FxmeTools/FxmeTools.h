@@ -66,7 +66,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/Biquad.h>
 #include <FxmeTools/dsp/SpectrumTap.h>
 #include <FxmeTools/dsp/WaveformTap.h>
-#include "dsp/SynchronizedSweep.h"
+#include <FxmeTools/dsp/SynchronizedSweep.h>
 #include "dsp/SpectrumAnalyzer.h"
 #include "dsp/SpectralBandSplitter.h"
 #include <FxmeTools/dsp/RmsMeter.h>
