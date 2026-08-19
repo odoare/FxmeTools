@@ -54,7 +54,7 @@
 #include <vector>
 #include <algorithm>
 #include "DeterministicRandom.h"
-#include "../../WDL/WDL/fft.h"
+#include "../../../WDL/WDL/fft.h"
 
 namespace fxme
 {

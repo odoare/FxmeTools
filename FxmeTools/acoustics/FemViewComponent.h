@@ -32,7 +32,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include "FemMesh.h"
+#include <FxmeTools/acoustics/FemMesh.h>
 
 #include <algorithm>
 #include <cmath>

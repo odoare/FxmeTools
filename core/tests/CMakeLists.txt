@@ -13,6 +13,18 @@ add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
 add_test(NAME FxmeCoreHeaderTest COMMAND FxmeCoreHeaderTest)
 
+# The test's includes are __has_include-guarded, so a header migrating into
+# core/ changes what this TU compiles without changing the TU itself — and the
+# compiler's depfile only lists headers that were included *last* time. Left
+# alone, the first build after a migration relinks a stale object and reports
+# success without ever having compiled the new header. Depending explicitly on
+# every core header closes that hole; CONFIGURE_DEPENDS re-globs when the
+# directory changes, so a migration still needs no CMake edit.
+file(GLOB_RECURSE FXMECORE_HEADERS CONFIGURE_DEPENDS
+     "${FXMECORE_ROOT}/FxmeTools/*.h")
+set_property(SOURCE CoreHeaderCompileTest.cpp
+             PROPERTY OBJECT_DEPENDS "${FXMECORE_HEADERS}")
+
 # SpectralFreeze.h sits in core but needs the WDL real FFT. Compile it into the
 # header test only when the WDL submodule is actually checked out, so a fresh
 # clone without submodules still builds and tests the rest.

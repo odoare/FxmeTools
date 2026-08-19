@@ -9,7 +9,7 @@
 */
 
 #include "IemDecoder.h"
-#include "Ambisonics.h"    // ambi::channelsForOrder / orderOfChannel / maxREGain
+#include <FxmeTools/dsp/Ambisonics.h>    // ambi::channelsForOrder / orderOfChannel / maxREGain
 #include <cmath>
 
 namespace fxme

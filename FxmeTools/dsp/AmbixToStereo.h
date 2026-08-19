@@ -27,7 +27,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "Ambisonics.h"
+#include <FxmeTools/dsp/Ambisonics.h>
 
 namespace fxme
 {

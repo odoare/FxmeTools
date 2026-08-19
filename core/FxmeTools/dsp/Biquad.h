@@ -2,7 +2,7 @@
   ------------------------------------------------------------------------------
     Biquad.h
 
-    Minimal allocation-free biquad (RBJ cookbook). juce::dsp::IIR coefficients
+    Minimal allocation-free biquad (RBJ cookbook). JUCE's dsp::IIR coefficients
     are reference-counted (allocate), which we must avoid when settings are
     applied on the audio thread. Header-only, depends only on <cmath>.
 

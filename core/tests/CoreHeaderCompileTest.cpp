@@ -96,6 +96,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/StereoCrossDelay.h>)
  #include <FxmeTools/dsp/StereoCrossDelay.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/UnisonSpread.h>)
+ #include <FxmeTools/dsp/UnisonSpread.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/VuMeter.h>)
  #include <FxmeTools/dsp/VuMeter.h>
 #endif

@@ -39,7 +39,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 
-#include "../dsp/Ambisonics.h"
+#include <FxmeTools/dsp/Ambisonics.h>
 
 namespace fxme
 {

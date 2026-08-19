@@ -45,13 +45,13 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "threading/BackgroundTaskRunner.h"
 
 // MIDI / music-theory (header-only, no external deps)
-#include "midi/Scale.h"
-#include "midi/ChordName.h"
-#include "midi/NeoRiemannGrid.h"
-#include "midi/GridTransform.h"
-#include "midi/StringSequencer.h"
-#include "midi/SequencerEngine.h"
-#include "midi/NoteDuration.h"
+#include <FxmeTools/midi/Scale.h>
+#include <FxmeTools/midi/ChordName.h>
+#include <FxmeTools/midi/NeoRiemannGrid.h>
+#include <FxmeTools/midi/GridTransform.h>
+#include <FxmeTools/midi/StringSequencer.h>
+#include <FxmeTools/midi/SequencerEngine.h>
+#include <FxmeTools/midi/NoteDuration.h>
 
 // MIDI / music-theory (header-only, JUCE-based). MidiTools keeps its original
 // namespace from CppMusicTools, nested inside fxme (fxme::MidiTools::Chord);
@@ -60,10 +60,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "midi/Arpeggiator.h"
 
 // DSP (header-only, no external deps)
-#include "dsp/Ambisonics.h"
+#include <FxmeTools/dsp/Ambisonics.h>
 #include "dsp/AmbixToStereo.h"
-#include "dsp/RoomAcoustics.h"
-#include "dsp/Biquad.h"
+#include <FxmeTools/dsp/RoomAcoustics.h>
+#include <FxmeTools/dsp/Biquad.h>
 #include "dsp/SpectrumTap.h"
 #include "dsp/WaveformTap.h"
 #include "dsp/SynchronizedSweep.h"
@@ -74,22 +74,22 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/SignalGenerator.h"
 #include "dsp/Lfo.h"
 #include "dsp/ModLfo.h"
-#include "dsp/UnisonSpread.h"
+#include <FxmeTools/dsp/UnisonSpread.h>
 #include "dsp/CracksGenerator.h"
-#include "dsp/PitchShifter.h"
-#include "dsp/GrainLooper.h"
-#include "dsp/Waveshapers.h"
-#include "dsp/Saturator.h"
-#include "dsp/FormantFilter.h"
-#include "dsp/BitCrusher.h"
-#include "dsp/Downsampler.h"
-#include "dsp/DelayLine.h"
-#include "dsp/ModDelayLine.h"
-#include "dsp/AllpassChain.h"
-#include "dsp/StereoCrossDelay.h"
-#include "dsp/DelayTimeResolver.h"
-#include "dsp/DeterministicRandom.h"
-#include "dsp/ArEnvelope.h"
+#include <FxmeTools/dsp/PitchShifter.h>
+#include <FxmeTools/dsp/GrainLooper.h>
+#include <FxmeTools/dsp/Waveshapers.h>
+#include <FxmeTools/dsp/Saturator.h>
+#include <FxmeTools/dsp/FormantFilter.h>
+#include <FxmeTools/dsp/BitCrusher.h>
+#include <FxmeTools/dsp/Downsampler.h>
+#include <FxmeTools/dsp/DelayLine.h>
+#include <FxmeTools/dsp/ModDelayLine.h>
+#include <FxmeTools/dsp/AllpassChain.h>
+#include <FxmeTools/dsp/StereoCrossDelay.h>
+#include <FxmeTools/dsp/DelayTimeResolver.h>
+#include <FxmeTools/dsp/DeterministicRandom.h>
+#include <FxmeTools/dsp/ArEnvelope.h>
 
 // DSP with out-of-line definitions (compiled from FxmeTools.cpp)
 #include "dsp/MicCalibration.h"
@@ -117,10 +117,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 // FrameSource interface, plus colour adjustments and an analysis-friendly
 // luminance grid. See image/README.md; enable the optional backends with
 // fxmetools_attach_video() (cmake/FxmeTools.cmake).
-#include "image/CameraPose.h"
+#include <FxmeTools/image/CameraPose.h>
 #include "image/ColorBlobTracker.h"
 #include "image/FrameSource.h"
-#include "image/Homography.h"
+#include <FxmeTools/image/Homography.h>
 #include "image/ImageAdjustments.h"
 #include "image/LuminanceGrid.h"
 #include "image/StillImageSource.h"
@@ -133,8 +133,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 // analysis (Morley elements, mixed boundary conditions, tension term) and a
 // grid / filled-contour display. The numerical core is JUCE-free — see
 // acoustics/README.md.
-#include "acoustics/FemMesh.h"
-#include "acoustics/PlateModes.h"
+#include <FxmeTools/acoustics/FemMesh.h>
+#include <FxmeTools/acoustics/PlateModes.h>
 #include "acoustics/FemViewComponent.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
