@@ -647,6 +647,62 @@ int main()
     }
 
     //--------------------------------------------------------------------------
+    // ---- Random's two constructors are meant to behave differently ----------
+    //
+    // The default one must decorrelate instances: two noise sources sharing a
+    // sequence sum coherently instead of spreading, which is the whole reason
+    // this is not just a fixed seed. The explicit one must stay reproducible.
+    {
+        // Independent by default — checked over a run of values, since any one
+        // draw could collide by chance.
+        {
+            fxme::Random a, b;
+            int identical = 0;
+            for (int i = 0; i < 32; ++i)
+                if (a.nextInt() == b.nextInt())
+                    ++identical;
+
+            CHECK (identical < 32);
+            CHECK (a.getSeed() != b.getSeed());
+        }
+
+        // Even built back to back in a tight loop, where the clock may not have
+        // ticked at all: the process-wide counter has to carry it.
+        {
+            std::int64_t seeds[8];
+            for (int i = 0; i < 8; ++i)
+                seeds[i] = fxme::Random().getSeed();
+
+            bool allDistinct = true;
+            for (int i = 0; i < 8; ++i)
+                for (int j = i + 1; j < 8; ++j)
+                    if (seeds[i] == seeds[j])
+                        allDistinct = false;
+
+            CHECK (allDistinct);
+        }
+
+        // And an explicit seed is still exactly reproducible.
+        {
+            fxme::Random a (2024), b (2024);
+            bool same = true;
+            for (int i = 0; i < 64; ++i)
+                if (a.nextFloat() != b.nextFloat())
+                    same = false;
+
+            CHECK (same);
+            CHECK (fxme::Random (7).getSeed() == 7);
+        }
+
+        // setSeedRandomly moves a deterministic instance off its seed.
+        {
+            fxme::Random r (12345);
+            r.setSeedRandomly();
+            CHECK (r.getSeed() != 12345);
+        }
+    }
+
+    //--------------------------------------------------------------------------
     std::printf ("%d checks, %d failure(s)\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

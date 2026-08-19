@@ -11,7 +11,24 @@
     noise is unchanged by the migration. Not cryptographically secure; that is
     not what it is for.
 
-    No allocation, no locking, no exceptions: safe to call from processBlock.
+    Two ways to construct one, and the difference matters:
+
+      - Random()          seeds from the clock, the object's own address and a
+                          process-wide counter, so two default-constructed
+                          generators decorrelate. This mirrors JUCE, whose
+                          default constructor also seeds randomly, and it is
+                          what noise sources want: give two of them the same
+                          sequence and they stop being independent noise —
+                          they sum coherently and collapse to the centre of the
+                          image instead of spreading.
+      - Random (seed)     fully deterministic and reproducible, for tests and
+                          for anything that must render identically twice.
+
+    Only the default constructor reads a clock, so only it is unsuitable for the
+    audio thread; construct at prepare time. Everything else — the seeded
+    constructor and every generator call — allocates nothing, locks nothing and
+    throws nothing, and is safe to call from processBlock.
+
     Not thread-safe: give each thread (and each voice) its own instance.
 
     Author: Olivier Doaré, github.com/odoare
@@ -21,6 +38,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 
@@ -30,12 +49,42 @@ namespace fxme
 class Random
 {
 public:
-    /** Seeds from a fixed default. Pass a seed for reproducible sequences. */
-    explicit Random (std::int64_t seedValue = 0x330e5deece66dLL) noexcept
+    /** Seeds unpredictably, so separate instances decorrelate. Reads the clock:
+        prepare time, not the audio thread. */
+    Random() { setSeedRandomly(); }
+
+    /** Seeds explicitly, for a reproducible sequence. */
+    explicit Random (std::int64_t seedValue) noexcept
         : seed (seedValue) {}
 
     void setSeed (std::int64_t newSeed) noexcept { seed = newSeed; }
     std::int64_t getSeed() const noexcept        { return seed; }
+
+    /** Mixes an extra value into the seed. */
+    void combineSeed (std::int64_t seedValue) noexcept
+    {
+        seed ^= nextInt64() ^ seedValue;
+    }
+
+    /** Re-seeds from whatever entropy is to hand.
+
+        The process-wide counter is what makes this reliable: clocks can be
+        coarse enough that two generators built in the same instant read the
+        same value, and a freed address can be handed straight back for the next
+        object, so neither the clock nor `this` is sufficient alone. */
+    void setSeedRandomly()
+    {
+        static std::atomic<std::int64_t> globalSeed { 0 };
+
+        combineSeed (globalSeed.load (std::memory_order_relaxed)
+                     ^ static_cast<std::int64_t> (reinterpret_cast<std::uintptr_t> (this)));
+        combineSeed (static_cast<std::int64_t> (
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+        combineSeed (static_cast<std::int64_t> (
+            std::chrono::system_clock::now().time_since_epoch().count()));
+
+        globalSeed.fetch_xor (seed, std::memory_order_relaxed);
+    }
 
     /** Uniformly distributed 32-bit integer over the full int range. */
     int nextInt() noexcept
@@ -89,7 +138,7 @@ public:
     float nextBipolar() noexcept { return nextFloat() * 2.0f - 1.0f; }
 
 private:
-    std::int64_t seed;
+    std::int64_t seed = 1;
 };
 
 } // namespace fxme
