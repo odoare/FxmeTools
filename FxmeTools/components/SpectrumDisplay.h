@@ -25,7 +25,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "../dsp/SpectrumAnalyzer.h"
+#include <FxmeTools/dsp/SpectrumAnalyzer.h>
 #include <FxmeTools/dsp/SpectrumTap.h>
 
 namespace fxme

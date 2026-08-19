@@ -15,8 +15,10 @@
 
 #pragma once
 
-#include <JuceHeader.h>
 #include <FxmeTools/dsp/SpectrumTap.h>
+#include <FxmeTools/util/Fft.h>
+#include <array>
+#include <memory>
 
 namespace fxme
 {
@@ -52,13 +54,14 @@ public:
 private:
     void rebuild (int order);
 
-    std::unique_ptr<juce::dsp::FFT> fft;
+    std::unique_ptr<RealFft> fft;
     int fftOrder = spectrumFftOrder;
     int fftSize  = spectrumFftSize;
     std::array<float, (size_t) spectrumMaxFftSize> window;
     std::array<float, (size_t) (2 * spectrumMaxFftSize)> fftData {};
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumAnalyzer)
+    SpectrumAnalyzer (const SpectrumAnalyzer&) = delete;
+    SpectrumAnalyzer& operator= (const SpectrumAnalyzer&) = delete;
 };
 
 } // namespace fxme
