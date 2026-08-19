@@ -55,8 +55,15 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/AudioBuffer.h>
+#include <FxmeTools/util/Fft.h>
+#include <FxmeTools/util/Math.h>
+#include <FxmeTools/util/SmoothedValue.h>
+#include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <memory>
+#include <utility>
 #include <vector>
 
 namespace fxme
@@ -102,18 +109,18 @@ public:
     void prepare (double sampleRateIn, int maxBlockSize, int numBandsIn, int fftOrder = 11)
     {
         sampleRate = sampleRateIn > 0.0 ? sampleRateIn : 48000.0;
-        order      = juce::jlimit (minFftOrder, maxFftOrder, fftOrder);
+        order      = fxme::jlimit (minFftOrder, maxFftOrder, fftOrder);
         fftSize    = 1 << order;
         hop        = fftSize / 4;
         numBins    = fftSize / 2 + 1;
-        numBands   = juce::jmax (0, numBandsIn);
-        blockSize  = juce::jmax (1, maxBlockSize);
+        numBands   = fxme::jmax (0, numBandsIn);
+        blockSize  = fxme::jmax (1, maxBlockSize);
 
-        fft = std::make_unique<juce::dsp::FFT> (order);
+        fft = std::make_unique<RealFft> (order);
 
         window.resize ((size_t) fftSize);
         for (int i = 0; i < fftSize; ++i)   // periodic Hann: sums to a constant at 75% overlap
-            window[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi
+            window[(size_t) i] = 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::twoPi
                                                          * (float) i / (float) fftSize);
 
         history.assign ((size_t) fftSize, 0.0f);
@@ -131,7 +138,7 @@ public:
             state.push_back (std::move (s));
         }
 
-        outputs.setSize (juce::jmax (1, 2 * numBands), blockSize);
+        outputs.setSize (fxme::jmax (1, 2 * numBands), blockSize);
         outputs.clear();
 
         setGateTimes (gateAttackSeconds, gateReleaseSeconds);
@@ -171,7 +178,7 @@ public:
         comparable magnitude, and gain/pan become smoothed targets. */
     void setBand (int index, const SpectralBand& b) noexcept
     {
-        if (! juce::isPositiveAndBelow (index, numBands))
+        if (! fxme::isPositiveAndBelow (index, numBands))
             return;
 
         bands[(size_t) index] = b;
@@ -180,23 +187,23 @@ public:
         // Compare squared magnitudes so the gate costs no logarithm per bin.
         // The analyser convention is level = mag * 2 / fftSize, so the raw
         // magnitude a threshold corresponds to is the inverse of that.
-        const float thresholdMag = juce::Decibels::decibelsToGain (b.gateDb, -200.0f)
+        const float thresholdMag = fxme::Decibels::decibelsToGain (b.gateDb, -200.0f)
                                      * (float) fftSize * 0.5f;
         s.gateThresholdSq = thresholdMag * thresholdMag;
         s.gateOpen = b.gateDb <= openGateDb;
 
         // Constant-power pan, so sweeping a band across the image keeps its
         // loudness; folded together with the gain into two smoothed targets.
-        const float g     = juce::Decibels::decibelsToGain (b.gainDb, -100.0f);
-        const float theta = (juce::jlimit (-1.0f, 1.0f, b.pan) + 1.0f)
-                                * juce::MathConstants<float>::pi * 0.25f;
+        const float g     = fxme::Decibels::decibelsToGain (b.gainDb, -100.0f);
+        const float theta = (fxme::jlimit (-1.0f, 1.0f, b.pan) + 1.0f)
+                                * fxme::MathConstants<float>::pi * 0.25f;
         s.gainL.setTargetValue (g * std::cos (theta));
         s.gainR.setTargetValue (g * std::sin (theta));
     }
 
     SpectralBand getBand (int index) const noexcept
     {
-        return juce::isPositiveAndBelow (index, numBands) ? bands[(size_t) index]
+        return fxme::isPositiveAndBelow (index, numBands) ? bands[(size_t) index]
                                                           : SpectralBand {};
     }
 
@@ -206,8 +213,8 @@ public:
         the two (defaults: 5 ms and 80 ms). */
     void setGateTimes (float attackSeconds, float releaseSeconds) noexcept
     {
-        gateAttackSeconds  = juce::jmax (0.0f, attackSeconds);
-        gateReleaseSeconds = juce::jmax (0.0f, releaseSeconds);
+        gateAttackSeconds  = fxme::jmax (0.0f, attackSeconds);
+        gateReleaseSeconds = fxme::jmax (0.0f, releaseSeconds);
 
         // One update per hop, so the time constants are in hops.
         const double hopSeconds = (double) hop / sampleRate;
@@ -220,7 +227,7 @@ public:
         ringing a hard mask produces; the default is 2. */
     void setEdgeTaperBins (int bins) noexcept
     {
-        edgeTaper = juce::jlimit (0, 64, bins);
+        edgeTaper = fxme::jlimit (0, 64, bins);
     }
 
     /** Glide applied to gain and pan changes, in seconds (default 20 ms). */
@@ -241,8 +248,8 @@ public:
     {
         // A host handing over more than the block size prepare() was told about
         // would need a bigger output buffer, which cannot be allocated here.
-        jassert (numSamples <= outputs.getNumSamples());
-        numSamples = juce::jmin (numSamples, outputs.getNumSamples());
+        assert (numSamples <= outputs.getNumSamples());
+        numSamples = fxme::jmin (numSamples, outputs.getNumSamples());
         if (numSamples <= 0 || numBands == 0)
             return;
 
@@ -283,7 +290,7 @@ public:
         1 (right). Never null once prepare() has run. */
     const float* getBandOutput (int band, int channel) const noexcept
     {
-        const int ch = juce::jlimit (0, juce::jmax (0, outputs.getNumChannels() - 1),
+        const int ch = fxme::jlimit (0, fxme::jmax (0, outputs.getNumChannels() - 1),
                                      2 * band + channel);
         return outputs.getReadPointer (ch);
     }
@@ -296,7 +303,7 @@ private:
         std::vector<float> gateGain;      // per-bin gate gain, smoothed across frames
         float gateThresholdSq = 0.0f;
         bool  gateOpen = true;
-        juce::SmoothedValue<float> gainL { 0.0f }, gainR { 0.0f };
+        SmoothedValue<float> gainL { 0.0f }, gainR { 0.0f };
     };
 
     static float coefFor (float seconds, double stepSeconds)
@@ -330,8 +337,8 @@ private:
             auto& s = state[(size_t) b];
 
             // Bins fully inside the band, plus the taper skirt on each side.
-            const int kLo = juce::jlimit (0, numBins - 1, (int) std::ceil  (cfg.lowHz  / binHz));
-            const int kHi = juce::jlimit (0, numBins - 1, (int) std::floor (cfg.highHz / binHz));
+            const int kLo = fxme::jlimit (0, numBins - 1, (int) std::ceil  (cfg.lowHz  / binHz));
+            const int kHi = fxme::jlimit (0, numBins - 1, (int) std::floor (cfg.highHz / binHz));
 
             std::copy (spectrum.begin(), spectrum.end(), frame.begin());
 
@@ -386,12 +393,12 @@ private:
         if (edgeTaper <= 0)
             return 1.0f;
 
-        const int d = juce::jmin (k - kLo, kHi - k);
+        const int d = fxme::jmin (k - kLo, kHi - k);
         if (d >= edgeTaper)
             return 1.0f;
 
         const float x = (float) (d + 1) / (float) (edgeTaper + 1);
-        return 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi * x);
+        return 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::pi * x);
     }
 
     /** Scales bin k of a real-only transform, mirroring onto its conjugate so
@@ -413,11 +420,11 @@ private:
 
     static constexpr float olaNorm = 1.0f / 1.5f;   // sum of Hann^2 at 75% overlap
 
-    std::unique_ptr<juce::dsp::FFT> fft;
+    std::unique_ptr<RealFft> fft;
     std::vector<float> window, history, spectrum, frame;
     std::vector<SpectralBand> bands;
     std::vector<BandState> state;
-    juce::AudioBuffer<float> outputs;
+    AudioBuffer outputs;
 
     double sampleRate = 48000.0;
     int order = 11, fftSize = 2048, hop = 512, numBins = 1025;
@@ -428,7 +435,8 @@ private:
     float gateAttackSeconds = 0.005f, gateReleaseSeconds = 0.080f;
     float gateAttackCoef = 0.0f, gateReleaseCoef = 0.0f;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectralBandSplitter)
+    SpectralBandSplitter (const SpectralBandSplitter&) = delete;
+    SpectralBandSplitter& operator= (const SpectralBandSplitter&) = delete;
 };
 
 } // namespace fxme
