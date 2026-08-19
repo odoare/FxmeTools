@@ -61,7 +61,12 @@ SOURCE_SUFFIXES = (".h", ".hpp", ".cpp", ".mm", ".c")
 NEVER_MOVE = {"FxmeTools.h", "FxmeTools.cpp", "FxmeTools.mm"}
 
 INCLUDE_RE = re.compile(r'^(\s*#\s*include\s*)"([^"]+)"(.*)$')
-JUCE_ANY_RE = re.compile(r"juce::|JuceHeader\.h|#\s*include\s*<juce_")
+# Must stay in step with core/cmake/CheckNoJuce.cmake, or the script moves a
+# file the guard then rejects. JUCE_* and jassert matter because a macro leaves
+# no juce:: token behind — a class whose only JUCE contact is
+# JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR looks entirely JUCE-free here.
+JUCE_ANY_RE = re.compile(
+    r"juce::|JuceHeader\.h|#\s*include\s*<juce_|JUCE_[A-Z0-9_]+|jassert")
 JUCE_TOKEN_RE = re.compile(r"juce::(?:dsp::)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?")
 COMMENT_MENTION_RE = re.compile(r"juce::")
 

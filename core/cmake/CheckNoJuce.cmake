@@ -40,6 +40,17 @@ foreach(_f IN LISTS _core_sources)
         list(APPEND _hits "<juce_*> module header")
     endif()
 
+    # JUCE reaches into code through macros as well as through the namespace,
+    # and a macro leaves no juce:: behind: a class carrying nothing but
+    # JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR passed every check above and
+    # then failed to compile. Anything spelled JUCE_* or jassert is JUCE.
+    if(_text MATCHES "JUCE_[A-Z0-9_]+")
+        list(APPEND _hits "JUCE_* macro")
+    endif()
+    if(_text MATCHES "jassert")
+        list(APPEND _hits "jassert")
+    endif()
+
     if(NOT _hits STREQUAL "")
         file(RELATIVE_PATH _rel "${FXMECORE_DIR}" "${_f}")
         string(REPLACE ";" ", " _hits_str "${_hits}")
@@ -61,7 +72,11 @@ if(NOT _offenders STREQUAL "")
         "  juce::roundToInt            -> fxme::roundToInt            <FxmeTools/util/Math.h>\n"
         "  juce::Random                -> fxme::Random                <FxmeTools/util/Random.h>\n"
         "  juce::AudioBuffer<float>&   -> fxme::AudioBufferView       <FxmeTools/util/AudioBufferView.h>\n"
-        "  juce::dsp::ProcessSpec      -> fxme::ProcessSpec           <FxmeTools/util/ProcessSpec.h>\n")
+        "  juce::dsp::ProcessSpec      -> fxme::ProcessSpec           <FxmeTools/util/ProcessSpec.h>\n"
+        "\n"
+        "JUCE macros have no core equivalent and are not meant to get one:\n"
+        "  JUCE_DECLARE_NON_COPYABLE[_WITH_LEAK_DETECTOR]  -> delete the copy operations by hand\n"
+        "  jassert                                         -> <cassert>'s assert, or drop it\n")
 endif()
 
 list(LENGTH _core_sources _scanned)
