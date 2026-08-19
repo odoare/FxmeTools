@@ -138,7 +138,7 @@ which is what this file is for.
 | Bloom | `lib/FxmeTools` | safe | `4b22e3c` |
 | Dede | `lib/FxmeTools` | wired by hand | **tip** |
 | FemPlate | `lib/FxmeTools` | **breaks** | `58a31f3` |
-| FxmeFX | `lib/FxmeTools` | safe | `0de002d` |
+| FxmeFX | `lib/FxmeTools` | safe (Pd externals needed core) | tracking branch |
 | Localizer | `lib/FxmeTools` | safe | `7a66389` |
 | Mango | `lib/FxmeTools` | **breaks** | `bb324dd` |
 | Neorix | `lib/FxmeTools` | **breaks** | `58a31f3` |
@@ -160,8 +160,21 @@ that reaches FxmeTools headers **without linking the module** — a console test
 an offline render check — has its own include roots and stops finding whatever
 moved. Linking `FxmeCore` fixes it, or add the second root by hand.
 
-Known instances: SuperMoTo had three (fixed). Mango has two. FemPlate has one,
-and its case is worse than a missing header — see below.
+Known instances: SuperMoTo had three (fixed). FxmeFX had thirteen — every one
+of its Pure Data externals (fixed). Mango has two. FemPlate has one, and its
+case is worse than a missing header — see below.
+
+The FxmeFX case is the one worth internalising, because the target was *right*
+to avoid the JUCE module and still broke. A Pd external is headless DSP: it
+deliberately omits `FxmeTools` and reached the header-only helpers through a
+bare `lib/FxmeTools` include dir. That dir covers the module half only, so every
+migrated header disappeared from it at once. The fix is not to add a second
+include path but to link `FxmeCore` — DSP without a framework is exactly what
+core is, so a Pd external is its ideal consumer. One line in the shared helper
+covered all thirteen.
+
+**Rule of thumb:** if a target uses FxmeTools DSP but not FxmeTools GUI, it
+should link `FxmeCore`, not add include paths.
 
 ### Per project
 
@@ -174,11 +187,22 @@ so its stimulus noise differs from before — not a regression, but worth a list
 `Reverb.h`, previously an uncommitted file in Dede's own checkout, is now in
 core. Compiles, links and runs.
 
-**FxmeFX** — the only project needing *source* changes. Six files call the `Lfo`
-choice functions; that is the one source-breaking change in the split. Its CMake
-is already safe. It is also the heaviest user of `dsp/`, so it exercises far more
-of the moved code than any other project — the most valuable build to get green,
-and the one that should happen before this branch merges.
+**FxmeFX** — migrated and building; **not yet committed or listened to**.
+
+Two changes were needed. Twelve `Lfo` call sites across six files (Chorus,
+Flanger, Phaser — each a processor and a component), the split's only
+source-breaking change. And `Source/PdCommon/PdExternal.cmake` now links
+`FxmeCore`, which fixed all thirteen Pure Data externals at once — see the
+auxiliary-target trap above; `<FxmeTools/dsp/VuMeter.h>` was what broke first.
+
+The plugin CMake itself needed nothing: including `cmake/FxmeTools.cmake` was
+already enough, even though FxmeFX never calls `fxmetools_attach()`.
+
+Result: 13 plugins and 13 Pd externals build clean. As the heaviest user of
+`dsp/` it exercises far more of the moved code than SuperMoTo or Dede, which
+makes it the strongest evidence the split is sound — but it is a compile, not a
+listen. Chorus, Flanger and Phaser drive `ModLfo`/`Lfo`, and Freeze drives
+`SpectralFreeze`; those are worth hearing before the branch merges.
 
 **FemPlate** — the worst-affected. Needs the CMake wiring, *and* its `FemTests`
 target compiles two FxmeTools sources by path:
