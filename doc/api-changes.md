@@ -140,7 +140,7 @@ which is what this file is for.
 | FemPlate | `lib/FxmeTools` | **breaks** | `58a31f3` |
 | FxmeFX | `lib/FxmeTools` | safe (Pd externals needed core) | tracking branch |
 | Localizer | `lib/FxmeTools` | safe | `7a66389` |
-| Mango | `lib/FxmeTools` | **breaks** | `bb324dd` |
+| Mango | `lib/FxmeTools` | migrated | tracking main |
 | Neorix | `lib/FxmeTools` | **breaks** | `58a31f3` |
 | SuperMoTo | `lib/FxmeTools` | done | **tip** |
 | TeAr | `Source/libs/FxmeTools` | safe | `0de002d` |
@@ -217,11 +217,57 @@ configure time, not as a missing header — a louder failure than the rest, at
 least. Fix by linking `FxmeCore`, which already compiles both, and deleting the
 two lines rather than repointing them.
 
-**Mango** — needs the CMake wiring. Its `MangoTests` and `MangoRenderTest` set
-`lib/FxmeTools` as an include root by hand and need `lib/FxmeTools/core` as well.
-Its seed-determinism test is **not** affected by the `fxme::Random` change: Mango
-draws through `fxme::detrand::u01 (seed, lane, block, draw)`, a pure function of
-its arguments, which moved to core untouched in the first batch.
+**Mango** — migrated and building; **not committed**.
+
+The most core-dependent consumer so far: *every* FxmeTools header it uses — the
+dsp/ kernels, DeterministicRandom, the midi/ sequencing, SpectralFreeze — has
+moved to core. It needed the three CMake lines, plus `FxmeCore` on `MangoTests`.
+`MangoRenderTest` needed nothing: it links the module and gets core transitively.
+
+`MangoTests` is worth noting as the third distinct shape of the auxiliary-target
+trap. SuperMoTo's were JUCE console apps; FxmeFX's were Pd externals; Mango's is
+a plain `add_executable` with **no JUCE linked at all** — "unit tests for the
+JUCE-free pieces". That is core's ideal consumer, and linking `FxmeCore` is not
+a workaround there but the natural expression of what the target already was.
+
+Its seed-determinism test is **not** affected by the `fxme::Random` change, now
+confirmed by running it: Mango draws through `fxme::detrand::u01 (seed, lane,
+block, draw)`, a pure function of its arguments, which moved to core untouched.
+
+Two `MangoTests` failures surfaced, **both pre-existing and unrelated to the
+split** — proven by running the identical test source, flags and `fft.o` against
+Mango's pre-sync FxmeTools (`bb324dd`), where they fail on the same two lines:
+
+- `testDownsampler`: `Downsampler.h` latches on the *last* sample of each group
+  instead of holding from the first (0,0,0,**3**,3,3,3,**7**… where the test
+  wants 0,0,0,0,**4**,4,4,4…). `reset()` sets `phase = 1.0` so the first sample
+  latches immediately, but `phase -= floor(phase)` then leaves `0.25` rather
+  than `0` — a quarter-period head start. The test's expectation is correct.
+- `testSpectralFreezeMulti`: `rmsRatio = 0.3909` against a required 0.7–1.4.
+  Read that number carefully — it is **not** an 8 dB level error, which is what
+  it looks like at first glance. The test compares the *first* wash block at
+  width 0 against the *second* wash block at width 1, and the wash level swings
+  by a factor of ~2.7 from block to block at a fixed width (randomised-phase
+  resynthesis, plus the capture->wash crossfade making block 1 low). Measured
+  like for like, block 1 vs block 1, width 0 sits **1.8 dB** below width 1 —
+  consistent at block 2 vs block 2 as well.
+
+  So there are two separate things here. The real defect is that the "equal
+  power" width blend is out by about 1.8 dB, quieter at width 0; it affects
+  FxmeFX's Freeze identically, since both plugins drive the same
+  `SpectralFreezeMulti` through a user-facing width control. And the test itself
+  is flawed: a 0.7-1.4 tolerance cannot mean anything when the quantity it
+  measures varies by 2.7x on its own. It would have to compare the same block
+  index at both widths.
+
+Neither is fixed here: both are audible behaviour in shipped effects, so
+changing them changes how existing presets sound. `Downsampler.h` is in core
+now, so a fix lands in this repository.
+
+Note how they stayed hidden: `MangoTests` is opt-in (`MANGO_BUILD_TESTS=OFF`)
+and its `main()` returns on the first failure, so the Downsampler bug was
+masking every test after it — including all three SpectralFreeze tests. Worth
+considering whether that harness should run all cases and report at the end.
 
 **Neorix** — needs the CMake wiring. Nothing else; no `Lfo` calls, no `Random`.
 
