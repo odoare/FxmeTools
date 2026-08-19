@@ -13,7 +13,9 @@
 
 #pragma once
 
+#include <FxmeTools/util/Math.h>
 #include <cmath>
+#include <cstddef>
 
 namespace fxme
 {
@@ -34,41 +36,53 @@ public:
             case sawUp:    return 2.0f * phase - 1.0f;
             case sawDown:  return 1.0f - 2.0f * phase;
             case sine:
-            default:       return std::sin (juce::MathConstants<float>::twoPi * phase);
+            default:       return std::sin (fxme::MathConstants<float>::twoPi * phase);
         }
     }
 
-    // Beats per LFO cycle for a tempo-sync rate index, matching syncRateChoices()
-    // ("1/1","1/2","1/4","1/8","1/16","1/8T","1/16T"). Out-of-range indices clamp.
+    // Beats per LFO cycle for a tempo-sync rate index, one per syncRateNames
+    // entry and in the same order. Out-of-range indices clamp.
     static float syncRateBeats (int index) noexcept
     {
         static const float beats[] = { 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 1.0f / 3.0f, 1.0f / 6.0f };
+        static_assert (sizeof (beats) / sizeof (beats[0]) == (std::size_t) numSyncRates,
+                       "syncRateNames and the beats table must stay the same length");
         const int n = (int) (sizeof (beats) / sizeof (beats[0]));
-        return beats[juce::jlimit (0, n - 1, index)];
+        return beats[fxme::jlimit (0, n - 1, index)];
     }
 
-    // Convenience choice lists for building GUI combos / APVTS choice parameters.
-    static juce::StringArray shapeChoices()    { return { "Sine", "Tri", "Square", "Saw Up", "Saw Dn" }; }
-    static juce::StringArray syncRateChoices() { return { "1/1", "1/2", "1/4", "1/8", "1/16", "1/8T", "1/16T" }; }
+    // Choice lists for GUI combos / APVTS choice parameters. Plain string
+    // literals plus a count rather than a framework string container, so this
+    // header stays framework-free and allocates nothing. JUCE consumers build
+    // the container they need directly from these:
+    //
+    //     StringArray (fxme::Lfo::shapeNames, fxme::Lfo::numShapes)   // JUCE's
+    //
+    // They live here, beside the beats tables they index into, so the two
+    // cannot drift apart unnoticed — see the static_asserts below.
+    static constexpr const char* const shapeNames[] = { "Sine", "Tri", "Square", "Saw Up", "Saw Dn" };
+    static constexpr int numShapes = (int) (sizeof (shapeNames) / sizeof (shapeNames[0]));
+
+    static constexpr const char* const syncRateNames[] = { "1/1", "1/2", "1/4", "1/8", "1/16", "1/8T", "1/16T" };
+    static constexpr int numSyncRates = (int) (sizeof (syncRateNames) / sizeof (syncRateNames[0]));
 
     // ── Longer sync table, for modulation effects ────────────────────────────
-    // syncRateChoices() above tops out at a whole note, which is far too fast
+    // syncRateNames above tops out at a whole note, which is far too fast
     // for a chorus or phaser sweep. This list runs from eight bars down to a
     // 1/32, then the triplets and the dotted values, and is returned in *beats
     // per cycle* (one beat = a quarter note) rather than as a note name, so a
     // consumer only ever multiplies by 60/bpm. Stored as an index in host
     // state, so the order only ever extends at the tail.
-    static juce::StringArray syncDivisionChoices()
-    {
-        return { "8/1", "4/1", "2/1", "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
-                 "1/2T", "1/4T", "1/8T", "1/16T",
-                 "1/2.", "1/4.", "1/8.", "1/16." };
-    }
+    static constexpr const char* const syncDivisionNames[] = {
+        "8/1", "4/1", "2/1", "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
+        "1/2T", "1/4T", "1/8T", "1/16T",
+        "1/2.", "1/4.", "1/8.", "1/16." };
+    static constexpr int numSyncDivisions = (int) (sizeof (syncDivisionNames) / sizeof (syncDivisionNames[0]));
 
-    /** Index of "1/1" in syncDivisionChoices() — a sane default for a sweep. */
+    /** Index of "1/1" in syncDivisionNames — a sane default for a sweep. */
     static constexpr int defaultSyncDivision = 3;
 
-    // Beats per cycle for a syncDivisionChoices() index. Out-of-range clamps.
+    // Beats per cycle for a syncDivisionNames index. Out-of-range clamps.
     static float syncDivisionBeats (int index) noexcept
     {
         static const float beats[] = {
@@ -76,8 +90,10 @@ public:
             4.0f / 3.0f, 2.0f / 3.0f, 1.0f / 3.0f, 1.0f / 6.0f,
             3.0f, 1.5f, 0.75f, 0.375f
         };
+        static_assert (sizeof (beats) / sizeof (beats[0]) == (std::size_t) numSyncDivisions,
+                       "syncDivisionNames and the beats table must stay the same length");
         const int n = (int) (sizeof (beats) / sizeof (beats[0]));
-        return beats[juce::jlimit (0, n - 1, index)];
+        return beats[fxme::jlimit (0, n - 1, index)];
     }
 };
 
