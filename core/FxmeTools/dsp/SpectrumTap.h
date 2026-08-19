@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/Math.h>
 #include <array>
 #include <atomic>
 
@@ -61,7 +61,7 @@ public:
     /** Copies the most recent `count` samples in chronological order. */
     void snapshot (float* dest, int count) const noexcept
     {
-        count = juce::jlimit (1, size, count);
+        count = fxme::jlimit (1, size, count);
         int w = writePos.load (std::memory_order_acquire);
         int r = w - count;
         if (r < 0)

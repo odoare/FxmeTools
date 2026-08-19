@@ -26,7 +26,7 @@
 
 #include <JuceHeader.h>
 #include "../dsp/SpectrumAnalyzer.h"
-#include "../dsp/SpectrumTap.h"
+#include <FxmeTools/dsp/SpectrumTap.h>
 
 namespace fxme
 {

@@ -64,7 +64,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/AmbixToStereo.h"
 #include <FxmeTools/dsp/RoomAcoustics.h>
 #include <FxmeTools/dsp/Biquad.h>
-#include "dsp/SpectrumTap.h"
+#include <FxmeTools/dsp/SpectrumTap.h>
 #include "dsp/WaveformTap.h"
 #include "dsp/SynchronizedSweep.h"
 #include "dsp/SpectrumAnalyzer.h"

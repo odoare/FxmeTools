@@ -16,7 +16,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "SpectrumTap.h"
+#include <FxmeTools/dsp/SpectrumTap.h>
 
 namespace fxme
 {
