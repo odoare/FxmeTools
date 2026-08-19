@@ -71,7 +71,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/SpectralBandSplitter.h>
 #include <FxmeTools/dsp/RmsMeter.h>
 #include <FxmeTools/dsp/VuMeter.h>
-#include "dsp/SignalGenerator.h"
+#include <FxmeTools/dsp/SignalGenerator.h>
 #include "dsp/Lfo.h"
 #include "dsp/ModLfo.h"
 #include <FxmeTools/dsp/UnisonSpread.h>

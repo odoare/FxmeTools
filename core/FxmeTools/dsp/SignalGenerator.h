@@ -18,7 +18,10 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/Math.h>
+#include <FxmeTools/util/Random.h>
+#include <atomic>
+#include <cmath>
 
 namespace fxme
 {
@@ -50,9 +53,9 @@ public:
     {
         blkSine  = sineOn.load();
         blkNoise = noiseOn.load();
-        blkSineGain  = juce::Decibels::decibelsToGain (sineAmpDb.load());
-        blkNoiseGain = juce::Decibels::decibelsToGain (noiseAmpDb.load());
-        blkPhaseInc  = 2.0 * juce::MathConstants<double>::pi * (double) sineFreq.load() / sr;
+        blkSineGain  = fxme::Decibels::decibelsToGain (sineAmpDb.load());
+        blkNoiseGain = fxme::Decibels::decibelsToGain (noiseAmpDb.load());
+        blkPhaseInc  = 2.0 * fxme::MathConstants<double>::pi * (double) sineFreq.load() / sr;
     }
 
     /** Audio thread. One mono stimulus sample (sine + noise per beginBlock()). */
@@ -63,8 +66,8 @@ public:
         {
             v += blkSineGain * (float) std::sin (sinePhase);
             sinePhase += blkPhaseInc;
-            if (sinePhase >= juce::MathConstants<double>::twoPi)
-                sinePhase -= juce::MathConstants<double>::twoPi;
+            if (sinePhase >= fxme::MathConstants<double>::twoPi)
+                sinePhase -= fxme::MathConstants<double>::twoPi;
         }
         if (blkNoise)
             v += blkNoiseGain * (random.nextFloat() * 2.0f - 1.0f);
@@ -83,9 +86,10 @@ private:
     double blkPhaseInc = 0.0;
 
     double sinePhase = 0.0;
-    juce::Random random;
+    Random random;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SignalGenerator)
+    SignalGenerator (const SignalGenerator&) = delete;
+    SignalGenerator& operator= (const SignalGenerator&) = delete;
 };
 
 } // namespace fxme
