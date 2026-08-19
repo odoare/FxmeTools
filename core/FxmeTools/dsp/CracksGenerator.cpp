@@ -22,7 +22,7 @@ CracksGenerator::~CracksGenerator()
 {
 }
 
-void CracksGenerator::prepare(juce::dsp::ProcessSpec spec)
+void CracksGenerator::prepare(ProcessSpec spec)
 {
   sampleRateMin = int(60*spec.sampleRate);
 }

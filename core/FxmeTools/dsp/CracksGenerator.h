@@ -13,13 +13,16 @@
 
 #pragma once
 
+#include <FxmeTools/util/ProcessSpec.h>
+#include <FxmeTools/util/Random.h>
+
 namespace fxme
 {
 
 class CracksGenerator
 {
 private:
-  juce::Random rnd;
+  Random rnd;
 
   // Density of clicks as number of clicks per minute
   int density;
@@ -30,7 +33,7 @@ public:
   CracksGenerator(/* args */);
   ~CracksGenerator();
 
-  void prepare(juce::dsp::ProcessSpec spec);
+  void prepare(ProcessSpec spec);
   float nextSample();
   void setDensity(int d);
 };

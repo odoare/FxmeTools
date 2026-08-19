@@ -75,7 +75,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/Lfo.h"
 #include "dsp/ModLfo.h"
 #include <FxmeTools/dsp/UnisonSpread.h>
-#include "dsp/CracksGenerator.h"
+#include <FxmeTools/dsp/CracksGenerator.h>
 #include <FxmeTools/dsp/PitchShifter.h>
 #include <FxmeTools/dsp/GrainLooper.h>
 #include <FxmeTools/dsp/Waveshapers.h>
