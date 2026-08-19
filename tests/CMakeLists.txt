@@ -27,11 +27,15 @@ target_sources(FxmeToolsTests
         test_modulation.cpp
 )
 
-# The FxmeTools module folder lives one directory up from here, so
-# <FxmeTools/midi/Arpeggiator.h> resolves against the repo root.
+# <FxmeTools/...> headers live under two roots since the core/shell split:
+# the repo root (JUCE-coupled half) and core/ (JUCE-free half). Both are needed
+# because the spelling does not say which side a header is on — ModLfo.h is
+# still module-side while ModDelayLine.h and AllpassChain.h have moved to core.
+# These tests only use header-only components, so no FxmeCore link is required.
 target_include_directories(FxmeToolsTests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../core
 )
 
 target_compile_definitions(FxmeToolsTests

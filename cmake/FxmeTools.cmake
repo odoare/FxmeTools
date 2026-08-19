@@ -4,8 +4,13 @@
 # Registers the FxmeTools JUCE module and provides:
 #
 #   fxmetools_attach(<target>)
-#       links the module and compiles + exposes the WDL convolution engine
-#       (needed by <FxmeTools/dsp/FirFilter.h>).
+#       links the module and the JUCE-free FxmeCore static library, and
+#       compiles + exposes the WDL convolution engine (needed by
+#       <FxmeTools/dsp/FirFilter.h>).
+#
+#       A target that only needs headers — an offline test with no GUI, say —
+#       can skip this and add both include roots by hand instead:
+#           ${FXMETOOLS_ROOT} and ${FXMETOOLS_CORE_DIR}
 #
 #   fxmetools_attach_video(<target> [NO_CAMERA] [NO_FFMPEG])
 #       enables the optional backends of FxmeTools/image (see its README):
@@ -22,14 +27,25 @@
 
 get_filename_component(FXMETOOLS_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(FXMETOOLS_MODULE_DIR "${FXMETOOLS_ROOT}/FxmeTools")
+set(FXMETOOLS_CORE_DIR   "${FXMETOOLS_ROOT}/core")
 set(FXMETOOLS_WDL_DIR    "${FXMETOOLS_ROOT}/WDL/WDL")
+
+# The JUCE-free half of the library (see core/README.md). It is a second
+# include root for the very same <FxmeTools/...> spelling, so whether a header
+# lives here or in the module directory is invisible to consumers.
+add_subdirectory("${FXMETOOLS_CORE_DIR}" FxmeCore)
 
 # Registers the module target `FxmeTools` (named after the module folder).
 juce_add_module("${FXMETOOLS_MODULE_DIR}")
 
+# The module's own headers include core ones, and the module target is an
+# INTERFACE library whose sources are compiled into the consumer — so core has
+# to travel with it rather than being linked separately by every consumer.
+target_link_libraries(FxmeTools INTERFACE FxmeCore)
+
 # Attach FxmeTools (module + WDL convolution engine) to a target.
 function(fxmetools_attach target)
-    target_link_libraries(${target} PRIVATE FxmeTools)
+    target_link_libraries(${target} PRIVATE FxmeTools FxmeCore)
 
     # WDL convolution engine sources for <FxmeTools/dsp/FirFilter.h>.
     target_sources(${target} PRIVATE
