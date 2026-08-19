@@ -40,12 +40,17 @@ public:
 
     float processSample (float x)
     {
-        phase += inc;
+        // Latch first, advance after. The other order costs a sample: with
+        // phase starting at 1 so the first input is taken immediately,
+        // incrementing first leaves phase at `inc` rather than 0 after that
+        // latch, so the opening group runs one sample short and every later
+        // latch lands on the last sample of its group instead of the first.
         if (phase >= 1.0f)
         {
             phase -= std::floor (phase);
             held = x;
         }
+        phase += inc;
         return held;
     }
 
