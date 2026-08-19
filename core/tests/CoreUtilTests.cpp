@@ -19,6 +19,8 @@
 #include <FxmeTools/util/AudioBufferView.h>
 #include <FxmeTools/util/ProcessSpec.h>
 
+#include <FxmeTools/dsp/AmbixToStereo.h>
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -274,6 +276,36 @@ int main()
 
         fxme::ProcessSpec direct (44100.0, 256, 1);
         CHECK (direct.sampleRate == 44100.0 && direct.maximumBlockSize == 256u);
+    }
+
+    //--------------------------------------------------------------------------
+    // ---- A real core API taking the views, fed a JUCE-shaped buffer ---------
+    //
+    // AmbixToStereo::process used to take AudioBuffer<float> references. The
+    // claim that swapping those for views costs consumers nothing rests
+    // entirely on the implicit conversion, and no consumer's call sites were
+    // edited on the strength of it — so it is asserted here, at the one
+    // boundary where the substitution actually changed a signature.
+    {
+        FakeJuceAudioBuffer ambi (4, 8);      // W = 1, Y = Z = X = 0
+        for (int i = 0; i < 8; ++i)
+            ambi.storage[0][static_cast<std::size_t> (i)] = 1.0f;
+
+        FakeJuceAudioBuffer stereo (2, 8);
+
+        fxme::AmbixToStereo decoder;
+        decoder.process (ambi, stereo);       // no adapter, no cast
+
+        // A figure-of-eight has no omni component, so a W-only field puts
+        // nothing in the side signal: both channels get the cardioid's
+        // alpha = 0.5 of W, and they are equal.
+        CHECK_CLOSE (stereo.storage[0][0], 0.5, 1e-6);
+        CHECK_CLOSE (stereo.storage[1][0], 0.5, 1e-6);
+        CHECK (stereo.storage[0][7] == stereo.storage[1][7]);
+
+        // process() adds rather than replaces — running it twice doubles.
+        decoder.process (ambi, stereo);
+        CHECK_CLOSE (stereo.storage[0][0], 1.0, 1e-6);
     }
 
     //--------------------------------------------------------------------------

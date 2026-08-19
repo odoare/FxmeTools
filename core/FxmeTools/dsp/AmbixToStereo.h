@@ -16,7 +16,7 @@
     carry no extra information for first-order microphone patterns and are
     correctly ignored, so a third-order stream can be fed in directly.
 
-    Header-only, depends only on JUCE and dsp/Ambisonics.h.
+    Header-only, depends only on the core util layer and dsp/Ambisonics.h.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0
@@ -26,8 +26,9 @@
 
 #pragma once
 
-#include <JuceHeader.h>
 #include <FxmeTools/dsp/Ambisonics.h>
+#include <FxmeTools/util/AudioBufferView.h>
+#include <FxmeTools/util/Math.h>
 
 namespace fxme
 {
@@ -59,17 +60,17 @@ public:
         you want a plain write.
 
         Realtime safe: no allocation, no locking. */
-    void process (const juce::AudioBuffer<float>& inputBuffer,
-                  juce::AudioBuffer<float>& outputBuffer)
+    void process (ConstAudioBufferView inputBuffer,
+                  AudioBufferView outputBuffer)
     {
         if (inputBuffer.getNumChannels() < 4 || outputBuffer.getNumChannels() < 2)
             return;
 
-        const int numSamples = juce::jmin (inputBuffer.getNumSamples(),
+        const int numSamples = fxme::jmin (inputBuffer.getNumSamples(),
                                            outputBuffer.getNumSamples());
 
-        const float azRad = juce::degreesToRadians (azimuth);
-        const float elRad = juce::degreesToRadians (elevation);
+        const float azRad = fxme::degreesToRadians (azimuth);
+        const float elRad = fxme::degreesToRadians (elevation);
 
         // Mid: cardioid on the aiming direction.
         float mid[4];
@@ -80,17 +81,17 @@ public:
         // Side: horizontal figure-of-eight, rotated a quarter turn from it.
         float side[4];
         ambi::micDecodeWeights (ambi::micFigure8,
-                                ambi::directionFromAngles (azRad + juce::MathConstants<float>::halfPi, 0.0f),
+                                ambi::directionFromAngles (azRad + fxme::MathConstants<float>::halfPi, 0.0f),
                                 side);
 
         // ACN ordering: 0 = W, 1 = Y, 2 = Z, 3 = X.
-        const float* wCh = inputBuffer.getReadPointer (0);
-        const float* yCh = inputBuffer.getReadPointer (1);
-        const float* zCh = inputBuffer.getReadPointer (2);
-        const float* xCh = inputBuffer.getReadPointer (3);
+        const float* wCh = inputBuffer.getChannel (0);
+        const float* yCh = inputBuffer.getChannel (1);
+        const float* zCh = inputBuffer.getChannel (2);
+        const float* xCh = inputBuffer.getChannel (3);
 
-        float* outL = outputBuffer.getWritePointer (0);
-        float* outR = outputBuffer.getWritePointer (1);
+        float* outL = outputBuffer.getChannel (0);
+        float* outR = outputBuffer.getChannel (1);
 
         for (int i = 0; i < numSamples; ++i)
         {
