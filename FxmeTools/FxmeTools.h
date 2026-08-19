@@ -69,7 +69,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "dsp/SynchronizedSweep.h"
 #include "dsp/SpectrumAnalyzer.h"
 #include "dsp/SpectralBandSplitter.h"
-#include "dsp/RmsMeter.h"
+#include <FxmeTools/dsp/RmsMeter.h>
 #include <FxmeTools/dsp/VuMeter.h>
 #include "dsp/SignalGenerator.h"
 #include "dsp/Lfo.h"

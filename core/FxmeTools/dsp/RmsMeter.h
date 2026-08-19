@@ -18,7 +18,10 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <FxmeTools/util/Math.h>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <vector>
 
 namespace fxme
@@ -33,8 +36,8 @@ public:
     void prepare (double sampleRate, float maxWindowSeconds = 2.0f)
     {
         sr = sampleRate > 0.0 ? sampleRate : 44100.0;
-        maxWindowSec = juce::jmax (0.01f, maxWindowSeconds);
-        ringCap = juce::jmax (1, (int) (maxWindowSec * sr));
+        maxWindowSec = fxme::jmax (0.01f, maxWindowSeconds);
+        ringCap = fxme::jmax (1, (int) (maxWindowSec * sr));
         sq.assign ((size_t) ringCap, 0.0f);
         reset();
     }
@@ -54,14 +57,14 @@ public:
         (so metering can resume from where it paused). Audio-thread safe. */
     void clearReading() noexcept       { rmsDbFs.store (-120.0f); }
 
-    void setWindowSeconds (float s)    { windowSec.store (juce::jlimit (0.005f, maxWindowSec, s)); }
+    void setWindowSeconds (float s)    { windowSec.store (fxme::jlimit (0.005f, maxWindowSec, s)); }
     float getWindowSeconds() const noexcept { return windowSec.load(); }
 
     /** Audio thread. Feeds n samples and updates the RMS reading. `mic` may be
         null (treated as silence). */
     void process (const float* mic, int n) noexcept
     {
-        const int L = juce::jlimit (1, ringCap, (int) (windowSec.load() * sr));
+        const int L = fxme::jlimit (1, ringCap, (int) (windowSec.load() * sr));
         if (L != curWindowLen)
         {
             // Window length changed: restart the accumulation cleanly.
@@ -88,9 +91,9 @@ public:
                 ++valid;
         }
 
-        const int denom = juce::jmax (1, juce::jmin (valid, L));
-        const double meanSq = juce::jmax (0.0, runningSum) / (double) denom;
-        rmsDbFs.store (juce::Decibels::gainToDecibels ((float) std::sqrt (meanSq), -120.0f));
+        const int denom = fxme::jmax (1, fxme::jmin (valid, L));
+        const double meanSq = fxme::jmax (0.0, runningSum) / (double) denom;
+        rmsDbFs.store (fxme::Decibels::gainToDecibels ((float) std::sqrt (meanSq), -120.0f));
     }
 
     float getRmsDbFs() const noexcept  { return rmsDbFs.load(); }
@@ -106,7 +109,10 @@ private:
     int ringCap = 0, writePos = 0, valid = 0, curWindowLen = 0;
     double runningSum = 0.0;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RmsMeter)
+    // Replaces JUCE's non-copyable-with-leak-detector macro; the leak detector
+    // is a framework debugging aid and gets no core equivalent.
+    RmsMeter (const RmsMeter&) = delete;
+    RmsMeter& operator= (const RmsMeter&) = delete;
 };
 
 } // namespace fxme
