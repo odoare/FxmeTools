@@ -167,9 +167,12 @@ public:
     float minv = 0.f,
     float maxv = 100.f
   )
+  // Ordered to match the member declarations below (backgroundColour is
+  // declared first), because that is the order they are actually initialised
+  // in regardless of what is written here.
   : valueSupplier(std::move(valueFunction)),
-    valueColour(vcol),
     backgroundColour(bcol),
+    valueColour(vcol),
     minVal(minv),
     maxVal(maxv)
   {
@@ -245,9 +248,12 @@ public:
     float minv = 0.f,
     float maxv = 100.f
   )
+  // Ordered to match the member declarations below (backgroundColour is
+  // declared first), because that is the order they are actually initialised
+  // in regardless of what is written here.
   : valueSupplier(std::move(valueFunction)),
-    valueColour(vcol),
     backgroundColour(bcol),
+    valueColour(vcol),
     minVal(minv),
     maxVal(maxv)
   {

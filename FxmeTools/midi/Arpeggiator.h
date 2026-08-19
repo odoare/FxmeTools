@@ -216,8 +216,8 @@ public:
         @param arpPattern The string pattern defining the arpeggio.
         @param baseOctave The starting MIDI octave.
     */
-    Arpeggiator(const MidiTools::Chord& initialChord, const juce::String& arpPattern, int baseOctave)
-        : chord(initialChord), pattern(arpPattern), octave(baseOctave)
+    Arpeggiator(const MidiTools::Chord& initialChord, const juce::String& arpPattern, int initialOctave)
+        : chord(initialChord), pattern(arpPattern), octave(initialOctave)
     {
     }
 
@@ -1138,6 +1138,11 @@ public:
                 next call to processBlock(), reset() or turnOff(). */
     const juce::MidiBuffer& reset(int midiChannel = 1, const juce::Optional<juce::AudioPlayHead::CurrentPositionInfo> positionInfo = {})
     {
+        // Kept in the signature for source compatibility, but unused: the
+        // note-off below goes out on lastPlayedMidiChannel, the channel the
+        // note was actually played on.
+        juce::ignoreUnused(midiChannel);
+
         juce::MidiBuffer& noteOffBuffer = outMidi;
         noteOffBuffer.clear();
         if (lastPlayedMidiNote != -1)
@@ -1180,6 +1185,8 @@ public:
                 next call to processBlock(), reset() or turnOff(). */
     const juce::MidiBuffer& turnOff(int midiChannel = 1)
     {
+        juce::ignoreUnused(midiChannel);   // see reset() above
+
         juce::MidiBuffer& noteOffBuffer = outMidi;
         noteOffBuffer.clear();
         if (lastPlayedMidiNote != -1)

@@ -180,8 +180,7 @@ public:
         g.fillRect (bounds);
 
         // Step dividers
-        const double pps = pixelsPerStep();
-        const int    ns  = seq_.getNumSteps();
+        const int ns = seq_.getNumSteps();
         g.setColour (juce::Colour (0xff2a3040));
         for (int s = 0; s <= ns; ++s)
         {
