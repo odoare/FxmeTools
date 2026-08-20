@@ -154,10 +154,9 @@ TEST_CASE ("ModLfo reads offset phases for the other channel")
 
 TEST_CASE ("Lfo sync-division table matches its choice list")
 {
-    const auto names = fxme::Lfo::syncDivisionChoices();
-    CHECK (names.size() == 17);
+    CHECK (fxme::Lfo::numSyncDivisions == 17);
 
-    CHECK (names[fxme::Lfo::defaultSyncDivision] == "1/1");
+    CHECK (juce::String (fxme::Lfo::syncDivisionNames[fxme::Lfo::defaultSyncDivision]) == "1/1");
     CHECK (fxme::Lfo::syncDivisionBeats (fxme::Lfo::defaultSyncDivision)
            == doctest::Approx (4.0f));
 
