@@ -23,11 +23,16 @@
 #include <FxmeTools/util/AudioBuffer.h>
 #include <FxmeTools/util/Fft.h>
 #include <FxmeTools/util/SmoothedValue.h>
+#include <FxmeTools/util/StringRef.h>
+#include <FxmeTools/util/StringUtils.h>
+#include <FxmeTools/util/ArrayView.h>
+#include <FxmeTools/midi/MidiTools.h>
 
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 //==============================================================================
@@ -80,6 +85,30 @@ namespace
         std::vector<float*>             writePtrs;
         std::vector<const float*>       readPtrs;
         int nCh, nS;
+    };
+
+    /** Mimics the shape of the framework's string: UTF-8 out, and a byte
+        count that excludes the terminator. Nothing here includes it. */
+    struct FakeJuceString
+    {
+        std::string s;
+        const char* toRawUTF8()        const { return s.c_str(); }
+        std::size_t getNumBytesAsUTF8() const { return s.size(); }
+    };
+
+    /** A narrower one that cannot report its own length. */
+    struct FakeUnsizedString
+    {
+        std::string s;
+        const char* toRawUTF8() const { return s.c_str(); }
+    };
+
+    /** Mimics the framework's array: contiguous, with an int size(). */
+    struct FakeJuceArray
+    {
+        std::vector<int> v;
+        const int* data() const { return v.data(); }
+        int        size() const { return static_cast<int> (v.size()); }
     };
 
     struct FakeJuceProcessSpec
@@ -699,6 +728,392 @@ int main()
             fxme::Random r (12345);
             r.setSeedRandomly();
             CHECK (r.getSeed() != 12345);
+        }
+    }
+
+    // ---- StringRef: implicit conversion, the whole point of the type ---------
+    {
+        auto lengthOf = [] (fxme::StringRef s) { return s.length(); };
+        auto textOf   = [] (fxme::StringRef s) { return std::string (s.data(), s.length()); };
+
+        // A framework-shaped string binds with no conversion at the call site.
+        FakeJuceString framework { "C#maj7" };
+        CHECK (lengthOf (framework) == 6);
+        CHECK (textOf (framework) == "C#maj7");
+
+        // So does one that cannot report its own length.
+        FakeUnsizedString narrow { "Bb" };
+        CHECK (lengthOf (narrow) == 2);
+
+        // And so do the two standard spellings.
+        CHECK (lengthOf ("Am7") == 3);
+        CHECK (lengthOf (std::string ("Am7")) == 3);
+
+        // data() is always null-terminated, so it can go to a C interface.
+        fxme::StringRef r (framework);
+        CHECK (r.data()[r.length()] == '\0');
+        CHECK (std::string (r.data()) == "C#maj7");
+
+        CHECK (fxme::StringRef().isEmpty());
+        CHECK (fxme::StringRef ("").isEmpty());
+        CHECK (fxme::StringRef ("x").isNotEmpty());
+        CHECK (fxme::StringRef (nullptr).isEmpty());   // must not crash
+
+        CHECK (fxme::StringRef ("abc") == fxme::StringRef ("abc"));
+        CHECK (fxme::StringRef ("abc") != fxme::StringRef ("abd"));
+        CHECK (fxme::StringRef ("ab")  != fxme::StringRef ("abc"));
+        CHECK (fxme::StringRef ("ab")  <  fxme::StringRef ("abc"));
+        CHECK (fxme::StringRef ("abc") <  fxme::StringRef ("abd"));
+        CHECK (! (fxme::StringRef ("abc") < fxme::StringRef ("abc")));
+        CHECK (fxme::StringRef ("abc").str() == "abc");
+    }
+
+    // ---- StringUtils: same answers the framework's own methods gave ----------
+    {
+        CHECK (fxme::trim ("  hello  ") == "hello");
+        CHECK (fxme::trim ("\t\r\n x \n") == "x");
+        CHECK (fxme::trim ("   ") == "");
+        CHECK (fxme::trim ("") == "");
+        CHECK (fxme::trim ("no-padding") == "no-padding");
+
+        CHECK (fxme::toLower ("C#M7") == "c#m7");
+        CHECK (fxme::toUpper ("c#m7") == "C#M7");
+        CHECK (fxme::toLower ("") == "");
+
+        CHECK (fxme::endsWith ("CM7", "M7"));
+        CHECK (! fxme::endsWith ("CM7", "m7"));
+        CHECK (fxme::endsWith ("CM7", ""));
+        CHECK (! fxme::endsWith ("7", "M7"));       // suffix longer than subject
+        CHECK (fxme::startsWith ("CM7", "C"));
+        CHECK (! fxme::startsWith ("CM7", "D"));
+
+        CHECK (fxme::containsOnly ("-123", "-0123456789"));
+        CHECK (! fxme::containsOnly ("1a3", "-0123456789"));
+        CHECK (fxme::containsOnly ("", "abc"));      // vacuously, as before
+
+        CHECK (fxme::dropLast ("CM7", 2) == "C");
+        CHECK (fxme::dropLast ("CM7", 0) == "CM7");
+        CHECK (fxme::dropLast ("CM7", 3) == "");
+        CHECK (fxme::dropLast ("CM7", 9) == "");     // over-drop clamps
+
+        CHECK (fxme::substring ("c#4", 0, 2) == "c#");
+        CHECK (fxme::substring ("c#4", 2)    == "4");
+        CHECK (fxme::substring ("c#4", 0, 9) == "c#4");   // end clamps
+        CHECK (fxme::substring ("c#4", 9)    == "");
+        CHECK (fxme::substring ("c#4", 2, 1) == "");      // inverted range
+
+        // getIntValue semantics: leading signed digits, junk ignored, 0 if none.
+        CHECK (fxme::toInt ("4")    == 4);
+        CHECK (fxme::toInt ("-1")   == -1);
+        CHECK (fxme::toInt ("+3")   == 3);
+        CHECK (fxme::toInt ("12ab") == 12);
+        CHECK (fxme::toInt ("ab")   == 0);
+        CHECK (fxme::toInt ("")     == 0);
+    }
+
+    // ---- ArrayView: converts from both container shapes ----------------------
+    {
+        auto sum = [] (fxme::ArrayView<int> v)
+        {
+            int t = 0;
+            for (int x : v) t += x;
+            return t;
+        };
+
+        std::vector<int> vec { 1, 2, 3, 4 };
+        FakeJuceArray arr { { 5, 6, 7 } };
+
+        CHECK (sum (vec) == 10);
+        CHECK (sum (arr) == 18);
+
+        fxme::ArrayView<int> v (vec);
+        CHECK (v.size() == 4);
+        CHECK (! v.isEmpty());
+        CHECK (v[0] == 1 && v[3] == 4);
+        CHECK (v.getFirst() == 1);
+        CHECK (v.getLast() == 4);
+        CHECK (v.getUnchecked (2) == 3);
+        CHECK (v.contains (3));
+        CHECK (! v.contains (9));
+        CHECK (v.indexOf (3) == 2);
+        CHECK (v.indexOf (9) == -1);   // -1, as the framework array returned
+
+        std::vector<int> none;
+        CHECK (fxme::ArrayView<int> (none).isEmpty());
+        CHECK (fxme::ArrayView<int>().isEmpty());
+
+        // Copying a view must not go through the container conversion.
+        fxme::ArrayView<int> copy (v);
+        CHECK (copy.size() == 4 && copy.data() == v.data());
+    }
+
+    // ---- MidiTools: the behaviour the framework version had -------------------
+    {
+        using namespace fxme::MidiTools;
+
+        CHECK (getNoteName (60) == "C4");
+        CHECK (getNoteName (61) == "C#4");
+        CHECK (getNoteName (0)  == "C-1");
+        CHECK (getNoteName (127) == "G9");
+        CHECK (getNoteName (-1) == "Invalid");
+        CHECK (getNoteName (128) == "Invalid");
+
+        CHECK (getNoteNumber ("C4")  == 60);
+        CHECK (getNoteNumber ("c4")  == 60);
+        CHECK (getNoteNumber (" C4 ") == 60);
+        CHECK (getNoteNumber ("C#4") == 61);
+        CHECK (getNoteNumber ("Db4") == 61);
+        CHECK (getNoteNumber ("C-1") == 0);
+        CHECK (getNoteNumber ("G9")  == 127);
+        CHECK (getNoteNumber ("G#9") == -1);    // out of MIDI range
+        CHECK (getNoteNumber ("H4")  == -1);    // not a note
+        CHECK (getNoteNumber ("C")   == -1);    // no octave
+        CHECK (getNoteNumber ("Cx")  == -1);    // junk octave
+        CHECK (getNoteNumber ("")    == -1);
+
+        CHECK (isNoteEqual (60, "C"));
+        CHECK (isNoteEqual (72, "c"));
+        CHECK (isNoteEqual (61, "Db"));
+        CHECK (! isNoteEqual (60, "D"));
+        CHECK (! isNoteEqual (60, "H"));
+        CHECK (! isNoteEqual (-1, "C"));
+
+        CHECK (getRootNoteFromChord ("CM7") == 0);
+        CHECK (getRootNoteFromChord ("Am")  == 9);
+        CHECK (getRootNoteFromChord ("F#7") == 6);
+        CHECK (getRootNoteFromChord ("Eb5") == 3);
+        CHECK (getRootNoteFromChord ("")    == 0);
+        CHECK (getRootNoteFromChord ("???") == 0);   // falls back to C
+
+        // Chord parsing: the seven suffix branches, by their degrees.
+        {
+            Chord cM7 ("CM7");
+            CHECK (cM7.getName() == "CM7");
+            CHECK (cM7.getDegrees().size() == 7);
+            CHECK (cM7.getDegree (0) == 0);
+            CHECK (cM7.getDegree (1) == 4);
+            CHECK (cM7.getDegree (2) == 7);
+            CHECK (cM7.getDegree (3) == 11);
+            CHECK (cM7.getDegree (4) == -1);
+            CHECK (cM7.getDegree (99) == -1);   // out of range
+
+            CHECK (Chord ("Cm7").getDegree (1) == 3);
+            CHECK (Chord ("Cm7").getDegree (3) == 10);
+            CHECK (Chord ("C7").getDegree (1)  == 4);
+            CHECK (Chord ("C7").getDegree (3)  == 10);
+            CHECK (Chord ("C5").getDegree (1)  == -1);
+            CHECK (Chord ("C5").getDegree (2)  == 7);
+            CHECK (Chord ("Cm").getDegree (1)  == 3);
+            CHECK (Chord ("CM").getDegree (1)  == 4);
+            CHECK (Chord ("C").getDegree (0)   == 0);
+            CHECK (Chord ("C").getDegree (1)   == -1);
+
+            // Unparseable names leave every degree absent.
+            CHECK (Chord ("").getDegree (0) == -1);
+            CHECK (Chord ("Hm7").getDegree (0) == -1);
+
+            // A framework-shaped string still constructs one, unchanged.
+            FakeJuceString name { "F#m7" };
+            CHECK (Chord (name).getDegree (0) == 6);
+        }
+
+        // getSortedSet: sorted, duplicate-free, absent degrees dropped.
+        {
+            Chord c ("CM7");
+            auto set = c.getSortedSet();
+            CHECK (set.size() == 4);
+            CHECK (set[0] == 0 && set[1] == 4 && set[2] == 7 && set[3] == 11);
+        }
+
+        // setDegreesByArray takes either container shape and normalises octaves.
+        {
+            Chord c ("");
+            std::vector<int> notes { 60, 64, 67 };      // C E G
+            c.setDegreesByArray (notes);
+            CHECK (c.getName() == "Custom");
+            CHECK (c.getDegree (0) == 0);
+            CHECK (c.getDegree (1) == 4);
+            CHECK (c.getDegree (2) == 7);
+            CHECK (c.getDegree (3) == -1);
+
+            FakeJuceArray arr { { 67, 60, 64 } };       // same chord, out of order
+            Chord d ("");
+            d.setDegreesByArray (arr);
+            CHECK (d.getDegree (0) == 0 && d.getDegree (1) == 4 && d.getDegree (2) == 7);
+
+            // Duplicates collapse, as the sorted set did.
+            std::vector<int> dupes { 60, 72, 64 };
+            Chord e ("");
+            e.setDegreesByArray (dupes);
+            CHECK (e.getDegree (0) == 0 && e.getDegree (1) == 4 && e.getDegree (2) == -1);
+
+            Chord f ("CM7");
+            f.setDegreesByArray (std::vector<int>{});
+            CHECK (f.getDegree (0) == -1);
+        }
+
+        // setNotesByArray keeps the octave and sorts.
+        {
+            Chord c ("");
+            std::vector<int> notes { 67, 60, 64 };
+            c.setNotesByArray (notes);
+            auto raw = c.getRawNotes();
+            CHECK (raw.size() == 3);
+            CHECK (raw[0] == 60 && raw[1] == 64 && raw[2] == 67);
+        }
+
+        // isChordEqual: octave and inversion do not matter.
+        {
+            FakeJuceArray held { { 60, 64, 67 } };
+            CHECK (isChordEqual (held, "CM"));
+            CHECK (! isChordEqual (held, "Cm"));
+            // A bare name is a single note, not a triad — the parser's
+            // long-standing behaviour, kept deliberately.
+            CHECK (! isChordEqual (held, "C"));
+
+            FakeJuceArray inverted { { 64, 67, 72 } };
+            CHECK (isChordEqual (inverted, "CM"));
+
+            FakeJuceArray empty { {} };
+            CHECK (! isChordEqual (empty, "CM"));
+            CHECK (! isChordEqual (held, ""));
+            CHECK (! isChordEqual (held, "  "));
+        }
+
+        // Scale: the intervals, and the name list matching the enum.
+        {
+            Scale major ("C", Scale::Type::Major);
+            auto n = major.getNotes();
+            CHECK (n.size() == 7);
+            CHECK (n[0] == 0 && n[1] == 2 && n[2] == 4 && n[3] == 5);
+            CHECK (n[4] == 7 && n[5] == 9 && n[6] == 11);
+            CHECK (major.getRootNote() == 0);
+
+            Scale aMinor ("A", Scale::Type::Aeolian);
+            CHECK (aMinor.getNotes()[0] == 9);
+            CHECK (aMinor.getRootNote() == 9);
+
+            Scale byNumber (69, Scale::Type::Aeolian);   // A4, octave ignored
+            CHECK (byNumber.getNotes()[0] == 9);
+
+            // An unknown root name falls back to C rather than failing.
+            CHECK (Scale ("H", Scale::Type::Major).getRootNote() == 0);
+
+            // Non-7-note scales keep their own length.
+            CHECK (Scale (0, Scale::Type::MajorPentatonic).getNotes().size() == 5);
+            CHECK (Scale (0, Scale::Type::Blues).getNotes().size() == 6);
+            CHECK (Scale (0, Scale::Type::OctatonicHalfWhole).getNotes().size() == 8);
+
+            // reset() reuses the storage and gives the same answer.
+            Scale s (0, Scale::Type::Major);
+            s.reset (2, Scale::Type::Dorian);
+            CHECK (s.getRootNote() == 2);
+            CHECK (s.getNotes().size() == 7);
+            CHECK (s.getNotes()[0] == 2);
+
+            // The name list is the framework string list's replacement.
+            CHECK (Scale::numScaleTypes == 32);
+            CHECK (std::string (Scale::scaleTypeNames[0]) == "Major (Ionian)");
+            CHECK (std::string (Scale::scaleTypeNames[Scale::numScaleTypes - 1])
+                     == "Octatonic (Whole-Half)");
+            CHECK (std::string (Scale::scaleTypeNames[(int) Scale::Type::Aeolian]) == "Aeolian");
+        }
+
+        // Chord from a scale degree.
+        {
+            Scale cMajor (0, Scale::Type::Major);
+            auto triad = Chord::fromScaleAndDegree (cMajor, 0, true);
+            CHECK (triad.getDegree (0) == 0);
+            CHECK (triad.getDegree (1) == 4);
+            CHECK (triad.getDegree (2) == 7);
+            CHECK (triad.getDegree (3) == 11);
+
+            // Non-chord mode gives the scale itself, voiced above the root.
+            auto run = Chord::fromScaleAndDegree (cMajor, 1, false);
+            CHECK (run.getDegrees().size() == 7);
+            CHECK (run.getDegree (0) == 2);
+
+            // The in-place form must agree with the returning one.
+            Chord inPlace ("");
+            inPlace.ensureCapacity (8, 16);
+            inPlace.setFromScaleAndDegree (cMajor, 0, true);
+            CHECK (inPlace.getName() == "Diatonic");
+            for (int i = 0; i < 7; ++i)
+                CHECK (inPlace.getDegree (i) == triad.getDegree (i));
+
+            inPlace.reset();
+            CHECK (inPlace.getDegrees().size() == 7);
+            CHECK (inPlace.getDegree (0) == -1);
+            CHECK (inPlace.getName().empty());
+        }
+
+        // French names.
+        {
+            CHECK (getFrenchNoteName ("C")  == "Do");
+            CHECK (getFrenchNoteName ("c#") == "Do#");
+            CHECK (getFrenchNoteName ("A")  == "La");
+            CHECK (getFrenchNoteName ("Db") == "Do#");
+            CHECK (getFrenchNoteName ("H").empty());
+
+            CHECK (getFrenchChordName ("CM7") == "DoM7");
+            CHECK (getFrenchChordName ("Am7") == "Lam7");
+            CHECK (getFrenchChordName ("G7")  == "Sol7");
+            CHECK (getFrenchChordName ("G5")  == "Sol5");
+            CHECK (getFrenchChordName ("Am")  == "Lam");
+            CHECK (getFrenchChordName ("CM")  == "DoM");
+            CHECK (getFrenchChordName ("C")   == "Do");
+            CHECK (getFrenchChordName ("")    == "");
+            CHECK (getFrenchChordName ("Hm")  == "Hm");   // unparseable: unchanged
+
+            // The French map is still keyed as it was.
+            CHECK (getFrenchNoteNameOffsetMap().at ("sol") == 7);
+            CHECK (getFrenchNoteNameOffsetMap().at ("re")  == 2);
+        }
+
+        // Euclidean rhythms: the classic distributions.
+        {
+            auto pattern = [] (int hits, int steps, int rot)
+            {
+                std::string s;
+                for (char b : euclidianRythm (hits, steps, rot))
+                    s += (b ? '1' : '.');
+                return s;
+            };
+
+            CHECK (pattern (4, 16, 0).size() == 16);
+            CHECK (pattern (0, 8, 0)  == "........");
+            CHECK (pattern (8, 8, 0)  == "11111111");
+            CHECK (pattern (99, 8, 0) == "11111111");   // hits clamp to steps
+            CHECK (pattern (4, 8, 0)  == "1.1.1.1.");
+            CHECK (pattern (3, 8, 0)  == "1..1..1.");
+
+            // Rotation shifts the same pattern, keeping the hit count.
+            auto count = [] (int hits, int steps, int rot)
+            {
+                int n = 0;
+                for (char b : euclidianRythm (hits, steps, rot))
+                    n += (b ? 1 : 0);
+                return n;
+            };
+            CHECK (count (3, 8, 2) == 3);
+            CHECK (count (3, 8, -2) == 3);
+            CHECK (pattern (3, 8, 1) == ".1..1..1");
+
+            CHECK (euclidianRythm (4, 0, 0).empty());
+            CHECK (euclidianRythm (4, -1, 0).empty());
+        }
+
+        // The random generators must produce names the parsers accept.
+        {
+            bool allValid = true;
+            for (int i = 0; i < 200; ++i)
+            {
+                if (Chord (getRandomChordName()).getDegree (0) == -1)      allValid = false;
+                if (Chord (getRandomSeventhChord()).getDegree (3) == -1)   allValid = false;
+                if (Chord (getRandomSingleNoteName()).getDegree (0) == -1) allValid = false;
+                if (Chord (getRandomFifthInterval()).getDegree (2) == -1)  allValid = false;
+            }
+            CHECK (allValid);
         }
     }
 

@@ -39,9 +39,9 @@ ctest --test-dir build-core --output-on-failure
 
 | directory | what is in it |
 |---|---|
-| `core/FxmeTools/util/` | the framework-free primitives: `Math`, `Random`, `Fft`/`RealFft`, `SmoothedValue`, `AudioBuffer` and its non-owning `AudioBufferView`, `ProcessSpec` |
+| `core/FxmeTools/util/` | the framework-free primitives: `Math`, `Random`, `Fft`/`RealFft`, `SmoothedValue`, `AudioBuffer` and its non-owning `AudioBufferView`, `ArrayView`, `StringRef` and its `StringUtils`, `ProcessSpec` |
 | `core/FxmeTools/dsp/` | filters, delays, saturation, pitch and grain manipulation, spectral freeze, ambisonics, metering |
-| `core/FxmeTools/midi/` | scales, chords, neo-Riemannian harmony, sequencing, note durations |
+| `core/FxmeTools/midi/` | scales, chords, note and chord name parsing, neo-Riemannian harmony, sequencing, note durations, Euclidean rhythms |
 | `core/FxmeTools/acoustics/` | triangular meshing and a Morley-element plate eigensolver |
 | `core/FxmeTools/image/` | homography and camera-pose geometry |
 
@@ -66,12 +66,15 @@ Three mechanisms, because intent alone does not survive a deadline:
 
 ### Interoperating without adapters
 
-`AudioBufferView` and `ProcessSpec` convert *implicitly* from any framework type
-of the same shape, detected structurally rather than by including anything. A
-core function can take a `fxme::AudioBufferView` and still be called with a JUCE
-`AudioBuffer<float>` — no adapter, no cast, no call-site change. The same trick
-will accept an iPlug2 `(sample**, channels, frames)` triple, which is what makes
-the framework half replaceable rather than merely separable.
+`AudioBufferView`, `ProcessSpec`, `StringRef` and `ArrayView` convert
+*implicitly* from any framework type of the same shape, detected structurally
+rather than by including anything. A core function can take a
+`fxme::AudioBufferView` and still be called with a JUCE `AudioBuffer<float>`; it
+can take a `fxme::StringRef` and be called with a `juce::String`, or a
+`fxme::ArrayView<int>` and be called with a `juce::Array<int>` — no adapter, no
+cast, no call-site change. The same trick will accept an iPlug2
+`(sample**, channels, frames)` triple, which is what makes the framework half
+replaceable rather than merely separable.
 
 ## The JUCE half
 
@@ -140,7 +143,7 @@ the two halves may end up under different terms — see the note above on why th
 ## A note on how this was built
 
 The separation of the two halves — moving the framework-free sources across
-(`core/` now holds 56 of them), writing from scratch the replacements for the
+(`core/` now holds 60 of them), writing from scratch the replacements for the
 framework primitives they had relied on, building the guard and the tests that
 keep the halves apart, and migrating every consuming project onto it — was
 carried out with [Claude](https://claude.ai), working from the existing codebase

@@ -31,6 +31,9 @@
 #include <FxmeTools/util/Fft.h>
 #include <FxmeTools/util/AudioBuffer.h>
 #include <FxmeTools/util/SmoothedValue.h>
+#include <FxmeTools/util/StringRef.h>
+#include <FxmeTools/util/StringUtils.h>
+#include <FxmeTools/util/ArrayView.h>
 
 // -- dsp ------------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/AllpassChain.h>)
@@ -137,6 +140,9 @@
 #endif
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/NeoRiemannGrid.h>)
  #include <FxmeTools/midi/NeoRiemannGrid.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/midi/MidiTools.h>)
+ #include <FxmeTools/midi/MidiTools.h>
 #endif
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/NoteDuration.h>)
  #include <FxmeTools/midi/NoteDuration.h>

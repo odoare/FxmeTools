@@ -141,4 +141,20 @@ private:
     std::int64_t seed = 1;
 };
 
+//==============================================================================
+/** A shared generator, for the free functions that need randomness but have no
+    instance to hold one — random note and chord names, mostly. Anything that
+    runs per block should own a Random member instead, so that its sequence is
+    its own and reproducible.
+
+    Thread-local, so two threads drawing at once neither race nor interleave.
+    Each thread's instance seeds itself on first use, and Random's default
+    seeding already mixes in the object address and the clock, so the threads
+    do not start out agreeing. */
+inline Random& systemRandom()
+{
+    static thread_local Random shared;
+    return shared;
+}
+
 } // namespace fxme

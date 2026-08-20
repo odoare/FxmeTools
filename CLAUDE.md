@@ -49,12 +49,28 @@ edits are textual — do not reorder operands.
 | `Random` | `fxme::Random` | `<FxmeTools/util/Random.h>` |
 | `AudioBuffer<float>&` | `fxme::AudioBufferView` / `ConstAudioBufferView` | `<FxmeTools/util/AudioBufferView.h>` |
 | `dsp::ProcessSpec` | `fxme::ProcessSpec` | `<FxmeTools/util/ProcessSpec.h>` |
+| `const String&` (a parameter) | `fxme::StringRef` | `<FxmeTools/util/StringRef.h>` |
+| `String` (a return) | `std::string` | `<string>` |
+| `.trim()`, `.toLowerCase()`, `.endsWith()`, `.dropLastCharacters()`, `.substring()`, `.containsOnly()`, `.getIntValue()` | `fxme::trim`, `toLower`, `endsWith`, `dropLast`, `substring`, `containsOnly`, `toInt` | `<FxmeTools/util/StringUtils.h>` |
+| `const Array<T>&` (parameter or return) | `fxme::ArrayView<T>` | `<FxmeTools/util/ArrayView.h>` |
+| `Array<T>` (a member) | `std::vector<T>` | `<vector>` |
+| `SortedSet<T>` | a sorted, de-duplicated `std::vector<T>` | `<vector>`, `<algorithm>` |
+| `StringArray` (a fixed name list) | `static constexpr const char* const names[]` + `numNames` | — |
+| `Random::getSystemRandom()` | `fxme::systemRandom()` | `<FxmeTools/util/Random.h>` |
 | `int64`, `uint32`, `uint8` | `std::int64_t`, … | `<cstdint>` |
 
-`AudioBufferView` and `ProcessSpec` convert **implicitly** from the JUCE types
-(SFINAE on shape, no JUCE include). Changing a core signature to take them
-therefore does **not** require editing JUCE-side call sites. Do not add
-conversion helpers or adapter overloads — that is the whole point of the design.
+`AudioBufferView`, `ProcessSpec`, `StringRef` and `ArrayView` convert
+**implicitly** from the JUCE types (SFINAE on shape, no JUCE include). Changing
+a core signature to take them therefore does **not** require editing JUCE-side
+call sites. Do not add conversion helpers or adapter overloads — that is the
+whole point of the design.
+
+`ArrayView` also deliberately keeps JUCE's *method* spellings — `isEmpty()`,
+`size()` returning `int`, `indexOf()` returning -1 — so that returning one in
+place of a `const Array<T>&` breaks nothing either. When you promote something
+that returns a container, return an `ArrayView` over a `std::vector` member
+rather than the vector itself; `.isEmpty()` at the call sites is the thing that
+would otherwise force edits.
 
 ## Build and verify
 
@@ -110,11 +126,15 @@ Stop and ask rather than choosing:
   default constructors disagreeing, JUCE's seeding randomly and core's from a
   fixed constant. Worth remembering as a pattern — when a substitution looks
   like it only changes values, check the constructors too.
-- Anything needing `juce::File`, `juce::String`, `juce::ValueTree` or
-  `juce::Image` needs an **abstract interface in core with a JUCE
-  implementation beside it** — a design step, not a substitution. Propose the
-  interface before writing it. This is what still blocks `dsp/FirFilter.h`,
-  `dsp/MicCalibration.*`, `dsp/IemDecoder.*`, `presets/` and `image/`.
+- Anything needing `juce::File`, `juce::ValueTree` or `juce::Image` needs an
+  **abstract interface in core with a JUCE implementation beside it** — a
+  design step, not a substitution. Propose the interface before writing it.
+  This is what still blocks `dsp/FirFilter.h`, `dsp/MicCalibration.*`,
+  `dsp/IemDecoder.*`, `presets/` and `image/`.
+- `juce::String` came off that list: `midi/MidiTools.h` showed it needed a
+  value type, not an interface, and `fxme::StringRef` plus `StringUtils.h`
+  covers it. `midi/Arpeggiator.h` is still blocked, but by `MidiBuffer`,
+  `MidiMessage` and `AudioPlayHead::CurrentPositionInfo` — not by text.
 - `juce::dsp::FFT` and `SmoothedValue` were on that list and came off it: both
   turned out to have no platform behaviour to abstract, so they are plain
   concrete replacements (`fxme::Fft`/`RealFft`, `fxme::SmoothedValue`) beside

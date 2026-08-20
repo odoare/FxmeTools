@@ -45,11 +45,66 @@ and `FxmeCore` in the target's own `target_link_libraries`.
 include roots and will stop finding whatever moved into core. SuperMoTo had
 three such targets. Give them `${FXMETOOLS_ROOT}` and link `FxmeCore`.
 
+### Source-breaking: `MidiTools` moves into core
+
+`midi/MidiTools.h` is now a core header. It had been the largest remaining
+piece of pure music theory stuck on the JUCE side, blocked by nothing but its
+text and container types — no file, no image, no `ValueTree` — so it needed
+substitutions rather than an abstract interface.
+
+Three new core primitives carry it, and they are worth knowing about because
+everything promoted after this will use them too:
+
+| type | header | what it is for |
+|---|---|---|
+| `fxme::StringRef` | `<FxmeTools/util/StringRef.h>` | a string *parameter*. Converts implicitly from `juce::String`, `std::string` or a literal, so call sites do not change |
+| `fxme::ArrayView<T>` | `<FxmeTools/util/ArrayView.h>` | a read-only sequence, in or out. Converts implicitly from `juce::Array<T>` and `std::vector<T>`, and answers to `isEmpty()`, `size()`, `indexOf()` and `[]` the way `juce::Array` does |
+| `fxme::trim`, `toLower`, `endsWith`, … | `<FxmeTools/util/StringUtils.h>` | the parsing operations, on `StringRef`, returning `std::string` |
+
+`StringRef` and `ArrayView` use the same structural-conversion trick as
+`AudioBufferView`: they detect the JUCE type by its shape (`toRawUTF8()` /
+`data()` + `size()`) without including anything from JUCE. That is why almost
+nothing had to be edited.
+
+**What actually breaks.** Only the return types, and only where the result is
+used as a JUCE type rather than passed straight on:
+
+| was | is now | fix |
+|---|---|---|
+| `Scale::getScaleTypeNames()` → `juce::StringArray` | `Scale::scaleTypeNames`, `Scale::numScaleTypes` | `juce::StringArray (Scale::scaleTypeNames, Scale::numScaleTypes)` — same as `Lfo` above |
+| `Chord::getSortedSet()` → `juce::SortedSet<int>` | `std::vector<int>`, sorted and duplicate-free | assign to `auto` |
+| `Chord::getName()` → `const juce::String&` | `const std::string&` | `==` against a literal still works; `.isEmpty()` becomes `.empty()` |
+| `getNoteName`, `getFrenchChordName`, the four `getRandom*` → `juce::String` | `std::string` | `juce::String` constructs from it implicitly, so only `.isEmpty()`-style calls on the result need an edit |
+| `euclidianRythm()` → `juce::Array<bool>` | `std::vector<char>` | `for (bool b : …)` is unchanged; `std::vector<bool>` was avoided because its proxy references behave unlike every other vector here |
+| `isChordEqual (Collection, …)` | `isChordEqual (ArrayView<int>, …)` | it had no callers; a `juce::Array` still binds |
+
+`Scale::getNotes()`, `Chord::getDegrees()` and `Chord::getRawNotes()` return
+`ArrayView<int>` instead of `const juce::Array<int>&`, which is deliberately
+*not* in that table: every call site kept compiling, including
+`for (int n : …)`, `.isEmpty()`, `.size()`, `.indexOf()` and `const auto&`
+binding. Binding `const auto&` to the returned view is safe — it extends the
+temporary's lifetime, and the view points into a member that outlives it. What
+does not work is storing one past the owner's lifetime; use it, do not keep it.
+
+Two JUCE-side signatures moved with it, both inside this repository:
+
+- `ScaleKeyboardComponent::update()` takes `fxme::ArrayView<int>` for its scale
+  and input notes, so a core `Scale` binds to it directly. A `juce::Array`
+  still converts, so no caller changed.
+- `Arpeggiator` needed one edit, at the `getSortedSet()` call.
+
+Also new: `fxme::systemRandom()` in `<FxmeTools/util/Random.h>`, a thread-local
+shared generator for free functions with no instance to hold one. Anything
+running per block should still own a `Random` member.
+
+Only TeAr uses any of this, and it needed exactly one line changed — the
+`scaleType` parameter's name list.
+
 ### Source-breaking: `Lfo` choice lists
 
-The only source-breaking change in the split. Three functions returning a JUCE
-string container became string literals plus a count, so the header could stop
-depending on JUCE:
+Three functions returning a JUCE string container became string literals plus a
+count, so the header could stop depending on JUCE. `MidiTools` above did the
+same thing to `Scale::getScaleTypeNames()` later, for the same reason:
 
 | was | is now |
 |---|---|
@@ -119,8 +174,10 @@ audio thread. The seeded constructor stays audio-thread safe.
 `fxme::Fft` / `fxme::RealFft` (radix-2, JUCE's exact semantics — natural bin
 order, forward unscaled, inverse scaled by 1/N; no size ceiling, unlike WDL's
 32768), `fxme::SmoothedValue` (linear, JUCE's ramp arithmetic step for step),
-`fxme::AudioBuffer` (owning counterpart to `AudioBufferView`), and the existing
-`Math.h` / `Random.h` / `ProcessSpec.h` helpers.
+`fxme::AudioBuffer` (owning counterpart to `AudioBufferView`), `fxme::StringRef`
++ `StringUtils.h` and `fxme::ArrayView` (see the `MidiTools` section above),
+`fxme::systemRandom()`, and the existing `Math.h` / `Random.h` /
+`ProcessSpec.h` helpers.
 
 ---
 
@@ -131,19 +188,26 @@ until its submodule pointer moves forward** — the split is only visible once a
 project bumps. So the breakage arrives one project at a time, months apart,
 which is what this file is for.
 
-| project | submodule path | CMake exposure | pinned at (2026-08-19) |
+| project | submodule path | state | last built against the split |
 |---|---|---|---|
-| AmbiProbe | `lib/FxmeTools` | safe | `4b22e3c` |
-| AmbiRR2 | `lib/FxmeTools` | safe | `e55cedf1` |
-| Bloom | `lib/FxmeTools` | safe | `4b22e3c` |
-| Dede | `lib/FxmeTools` | wired by hand | **tip** |
-| FemPlate | `lib/FxmeTools` | **breaks** | `58a31f3` |
-| FxmeFX | `lib/FxmeTools` | safe (Pd externals needed core) | tracking branch |
-| Localizer | `lib/FxmeTools` | safe | `7a66389` |
-| Mango | `lib/FxmeTools` | done | tracking main |
-| Neorix | `lib/FxmeTools` | **breaks** | `58a31f3` |
-| SuperMoTo | `lib/FxmeTools` | done | **tip** |
-| TeAr | `Source/libs/FxmeTools` | safe | `0de002d` |
+| AmbiProbe | `lib/FxmeTools` | CMake safe, **never built** | — |
+| AmbiRR2 | `lib/FxmeTools` | CMake safe, **never built** | — |
+| Bloom | `lib/FxmeTools` | CMake safe, **never built** | — |
+| Dede | `lib/FxmeTools` | done (wired by hand) | 2026-08 |
+| FemPlate | `lib/FxmeTools` | done | 2026-08 |
+| FxmeFX | `lib/FxmeTools` | done (Pd externals needed core) | 2026-08 |
+| Localizer | `lib/FxmeTools` | CMake safe, **never built** | — |
+| Mango | `lib/FxmeTools` | done | 2026-08 |
+| Neorix | `lib/FxmeTools` | done | 2026-08 |
+| SuperMoTo | `lib/FxmeTools` | done | 2026-08-20 |
+| TeAr | `Source/libs/FxmeTools` | done | 2026-08-20 |
+
+**"CMake safe" is a claim about wiring, not about sources.** It means the
+project includes `cmake/FxmeTools.cmake` and so gets core with no edit. It says
+nothing about whether a renamed API breaks a call site, and that is the failure
+mode that actually bites: the `Lfo` rename went through five consumers cleanly
+and then broke this repository's own test suite, which only TeAr builds. Treat
+the four never-built projects as unverified.
 
 "Safe" means the project does `include(.../cmake/FxmeTools.cmake)`, which adds
 the core subdirectory and hangs it off the module, so linking `FxmeTools` pulls

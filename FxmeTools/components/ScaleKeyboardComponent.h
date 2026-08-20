@@ -43,6 +43,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <FxmeTools/util/ArrayView.h>
+
 #include <algorithm>
 #include <functional>
 
@@ -97,15 +99,20 @@ public:
         @param newRootNote    semitone of the root, or -1 for none
         @param newPlaying     notes currently sounding, with their voice
         @param newInputNotes  notes held down on the way in */
-    void update (const juce::Array<int>&         newScaleNotes,
+    void update (fxme::ArrayView<int>            newScaleNotes,
                  int                             newRootNote,
                  const juce::Array<PlayingNote>& newPlaying,
-                 const juce::Array<int>&         newInputNotes = {})
+                 fxme::ArrayView<int>            newInputNotes = {})
     {
-        scaleNotes   = newScaleNotes;
+        // ArrayView rather than juce::Array so that a scale coming straight
+        // out of the JUCE-free MidiTools::Scale binds here without a copy;
+        // a juce::Array still converts implicitly, so callers are unchanged.
+        scaleNotes.clearQuick();
+        scaleNotes.addArray (newScaleNotes.data(), newScaleNotes.size());
         rootNote     = newRootNote;
         playingNotes = newPlaying;
-        inputNotes   = newInputNotes;
+        inputNotes.clearQuick();
+        inputNotes.addArray (newInputNotes.data(), newInputNotes.size());
         repaint();
     }
 

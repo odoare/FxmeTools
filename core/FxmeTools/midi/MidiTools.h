@@ -7,7 +7,17 @@
     Moved here from the CppMusicTools repository; the original `MidiTools`
     namespace is kept, nested inside `fxme`.
 
-    Depends on juce_core only.
+    Framework-free. Text arrives as util/StringRef.h's StringRef, which
+    converts implicitly from a framework string, and is parsed with the
+    helpers in util/StringUtils.h. Sequences are returned as
+    util/ArrayView.h's ArrayView, which answers to isEmpty(), size() and []
+    exactly as the framework array it replaced did; the storage behind it is
+    std::vector.
+
+    Parsing a name allocates and is setup work, not audio-thread work. The
+    in-place paths that the arpeggiator does call per block — Scale::reset,
+    Chord::reset and Chord::setFromScaleAndDegree — still reuse their storage
+    and do not allocate once ensureCapacity() has been called.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0
@@ -17,8 +27,17 @@
 
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <FxmeTools/util/ArrayView.h>
+#include <FxmeTools/util/Math.h>
+#include <FxmeTools/util/Random.h>
+#include <FxmeTools/util/StringRef.h>
+#include <FxmeTools/util/StringUtils.h>
+
+#include <algorithm>
+#include <cstddef>
 #include <map>
+#include <string>
+#include <vector>
 
 namespace fxme
 {
@@ -28,9 +47,9 @@ namespace MidiTools
         Returns a map of note names (C, C#, Db, etc.) to their semitone offset from C.
         This is defined as a static function to ensure it's initialized only once.
     */
-    inline const std::map<juce::String, int>& getNoteNameOffsetMap()
+    inline const std::map<std::string, int>& getNoteNameOffsetMap()
     {
-        static const std::map<juce::String, int> noteOffsets = {
+        static const std::map<std::string, int> noteOffsets = {
             {"c", 0}, {"b#", 0},
             {"c#", 1}, {"db", 1},
             {"d", 2},
@@ -101,10 +120,10 @@ namespace MidiTools
             @param rootNoteName The name of the root note (e.g., "C", "F#", "Bb").
             @param scaleType    The type of scale to generate.
         */
-        Scale(const juce::String& rootNoteName, Type scaleType)
+        Scale(StringRef rootNoteName, Type scaleType)
         {
             auto& noteMap = getNoteNameOffsetMap();
-            auto cleanedName = rootNoteName.trim().toLowerCase();
+            auto cleanedName = toLower(trim(rootNoteName));
             int rootSemitone = 0;
 
             if (noteMap.count(cleanedName))
@@ -124,7 +143,7 @@ namespace MidiTools
         }
 
         /** Returns a sorted array of 7 semitones (0-11) representing the notes in the scale. */
-        const juce::Array<int>& getNotes() const
+        ArrayView<int> getNotes() const
         {
             return notes;
         }
@@ -136,19 +155,22 @@ namespace MidiTools
         */
         void reset(int rootNoteNumber, Type scaleType)
         {
-            notes.clearQuick();
+            notes.clear();   // keeps the capacity, so this does not allocate
             buildScale(rootNoteNumber % 12, scaleType);
         }
 
         int getRootNote() const { return rootNote; }
         Type getType() const { return type; }
 
-        /** Returns an ordered list of names for all available scale types. */
+        /** The names of the scale types, in enum order.
 
-        /** Returns an ordered list of names for all available scale types. */
-        static const juce::StringArray& getScaleTypeNames()
-        {
-            static const juce::StringArray names = {
+            A plain array of literals rather than a framework string list, so
+            that this header stays framework-free. A caller that needs the
+            framework's own list type builds one from the pair:
+
+                SomeStringArray (Scale::scaleTypeNames, Scale::numScaleTypes);
+        */
+        static constexpr const char* const scaleTypeNames[] = {
                 // Major Scale Modes
                 "Major (Ionian)",
                 "Dorian",
@@ -186,9 +208,13 @@ namespace MidiTools
                 "Whole Tone",
                 "Octatonic (Half-Whole)",
                 "Octatonic (Whole-Half)",
-            };
-            return names;
-        }
+        };
+
+        static constexpr int numScaleTypes
+            = static_cast<int> (sizeof (scaleTypeNames) / sizeof (scaleTypeNames[0]));
+
+        static_assert (numScaleTypes == static_cast<int> (Type::OctatonicWholeHalf) + 1,
+                       "scaleTypeNames must have one entry per Scale::Type, in enum order");
 
     private:
         void buildScale(int rootSemitone, Type scaleType)
@@ -196,7 +222,7 @@ namespace MidiTools
             this->rootNote = rootSemitone;
             this->type = scaleType;
 
-            static const std::map<Type, juce::Array<int>> scaleIntervals = {
+            static const std::map<Type, std::vector<int>> scaleIntervals = {
                 {Type::Major,           {0, 2, 4, 5, 7, 9, 11}}, // Ionian
                 {Type::Dorian,          {0, 2, 3, 5, 7, 9, 10}},
                 {Type::Phrygian,        {0, 1, 3, 5, 7, 8, 10}},
@@ -235,11 +261,10 @@ namespace MidiTools
 
             const auto& intervals = scaleIntervals.at(scaleType);
             for (int interval : intervals)
-                // notes.add((rootSemitone + interval) % 12);
-                notes.add((rootSemitone + interval) % 12);
+                notes.push_back((rootSemitone + interval) % 12);
         }
 
-        juce::Array<int> notes; // Stores the 7 semitones of the scale (0-11).
+        std::vector<int> notes; // Stores the 7 semitones of the scale (0-11).
         int rootNote = 0;
         Type type = Type::Major;
     };
@@ -256,83 +281,83 @@ namespace MidiTools
             then populates the set of semitones that define the chord.
             @param chordName The name of the chord, e.g., "C", "Am", "G7", "F#M7".
         */
-        Chord(const juce::String& chordName) : name(chordName)
+        Chord(StringRef chordName) : name(chordName.str())
         {
             // Initialize all 7 degrees to -1 (absent)
             // [0] = fundamental, [1] = 3rd, [2] = 5th, [3] = 7th, [4] = 9th, [5] = 11th, [6] = 13th
-            degrees.insertMultiple(0, -1, 7);
+            degrees.assign(7, -1);
 
-            juce::String input = name.trim();
-            if (input.isEmpty())
+            std::string input = trim(name);
+            if (input.empty())
                 return;
 
-            juce::String rootNoteStr;
+            std::string rootNoteStr;
             auto& noteMap = getNoteNameOffsetMap();
             int root = -1;
 
             // --- 1. Parse the chord string to find the root and quality ---
-            if (input.endsWith("M7"))
+            if (endsWith(input, "M7"))
             {
-                rootNoteStr = input.dropLastCharacters(2).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 2));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(1, (root + 4) % 12);       // Major Third
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
-                degrees.set(3, (root + 11) % 12);      // Major Seventh
+                degrees[0] = root;                  // Root
+                degrees[1] = (root + 4) % 12;       // Major Third
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
+                degrees[3] = (root + 11) % 12;      // Major Seventh
             }
-            else if (input.endsWith("m7"))
+            else if (endsWith(input, "m7"))
             {
-                rootNoteStr = input.dropLastCharacters(2).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 2));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(1, (root + 3) % 12);       // Minor Third
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
-                degrees.set(3, (root + 10) % 12);      // Minor Seventh
+                degrees[0] = root;                  // Root
+                degrees[1] = (root + 3) % 12;       // Minor Third
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
+                degrees[3] = (root + 10) % 12;      // Minor Seventh
             }
-            else if (input.endsWith("7"))
+            else if (endsWith(input, "7"))
             {
-                rootNoteStr = input.dropLastCharacters(1).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 1));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(1, (root + 4) % 12);       // Major Third
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
-                degrees.set(3, (root + 10) % 12);      // Minor Seventh
+                degrees[0] = root;                  // Root
+                degrees[1] = (root + 4) % 12;       // Major Third
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
+                degrees[3] = (root + 10) % 12;      // Minor Seventh
             }
-            else if (input.endsWith("5"))
+            else if (endsWith(input, "5"))
             {
-                rootNoteStr = input.dropLastCharacters(1).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 1));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
+                degrees[0] = root;                  // Root
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
             }
-            else if (input.endsWith("m"))
+            else if (endsWith(input, "m"))
             {
-                rootNoteStr = input.dropLastCharacters(1).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 1));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(1, (root + 3) % 12);       // Minor Third
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
+                degrees[0] = root;                  // Root
+                degrees[1] = (root + 3) % 12;       // Minor Third
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
             }
-            else if (input.endsWith("M"))
+            else if (endsWith(input, "M"))
             {
-                rootNoteStr = input.dropLastCharacters(1).toLowerCase();
+                rootNoteStr = toLower(dropLast(input, 1));
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root);                  // Root
-                degrees.set(1, (root + 4) % 12);       // Major Third
-                degrees.set(2, (root + 7) % 12);       // Perfect Fifth
+                degrees[0] = root;                  // Root
+                degrees[1] = (root + 4) % 12;       // Major Third
+                degrees[2] = (root + 7) % 12;       // Perfect Fifth
             }
             else // Assume single note
             {
-                rootNoteStr = input.toLowerCase();
+                rootNoteStr = toLower(input);
                 if (noteMap.find(rootNoteStr) == noteMap.end()) return;
                 root = noteMap.at(rootNoteStr);
-                degrees.set(0, root); // Only the root note
+                degrees[0] = root; // Only the root note
             }
         }
 
@@ -340,10 +365,10 @@ namespace MidiTools
             The order is: fundamental, 3rd, 5th, 7th, 9th, 11th, 13th.
             An absent degree is represented by -1.
         */
-        const juce::Array<int>& getDegrees() const { return degrees; }
+        ArrayView<int> getDegrees() const { return degrees; }
 
         /** Returns the original name of the chord. */
-        const juce::String& getName() const { return name; }
+        const std::string& getName() const { return name; }
 
         /** Gets the semitone value of a specific degree of the chord.
          *  This is primarily for named chords (e.g. "CM7") where degrees have musical meaning.
@@ -354,8 +379,8 @@ namespace MidiTools
         */
         int getDegree(int degreeIndex) const
         {
-            if (juce::isPositiveAndBelow(degreeIndex, degrees.size()))
-                return degrees[degreeIndex];
+            if (isPositiveAndBelow(degreeIndex, static_cast<int> (degrees.size())))
+                return degrees[static_cast<std::size_t> (degreeIndex)];
             return -1;
         }
 
@@ -366,31 +391,32 @@ namespace MidiTools
             The degrees are assigned in the order they appear in the input array.
             @param notes An array of MIDI note numbers.
         */
-        void setDegreesByArray(const juce::Array<int>& notes)
+        void setDegreesByArray(ArrayView<int> notes)
         {
             name = "Custom";
-            degrees.clear();
-            degrees.insertMultiple(0, -1, 7); // Reset to 7 absent degrees
+            degrees.assign(7, -1); // Reset to 7 absent degrees
 
             if (notes.isEmpty())
                 return;
 
-            juce::Array<int> sortedNotes = notes;
-            sortedNotes.sort();
+            std::vector<int> sortedNotes (notes.begin(), notes.end());
+            std::sort(sortedNotes.begin(), sortedNotes.end());
 
-            int lowestNote = sortedNotes.getFirst() % 12;
+            int lowestNote = sortedNotes.front() % 12;
 
-            juce::SortedSet<int> relativeSemitones;
+            // Sorted and unique, as the set this replaced was.
+            std::vector<int> relativeSemitones;
             for (int note : sortedNotes)
             {
-                if (lowestNote > note % 12)
-                    relativeSemitones.add(note % 12 + 12);
-                else
-                    relativeSemitones.add(note % 12);
+                const int semitone = (lowestNote > note % 12) ? note % 12 + 12 : note % 12;
+                auto pos = std::lower_bound(relativeSemitones.begin(), relativeSemitones.end(), semitone);
+                if (pos == relativeSemitones.end() || *pos != semitone)
+                    relativeSemitones.insert(pos, semitone);
             }
 
-            for (int i = 0; i < juce::jmin(7, relativeSemitones.size()); ++i)
-                degrees.set(i, relativeSemitones.getUnchecked(i));
+            const int n = jmin(7, static_cast<int> (relativeSemitones.size()));
+            for (int i = 0; i < n; ++i)
+                degrees[static_cast<std::size_t> (i)] = relativeSemitones[static_cast<std::size_t> (i)];
         }
 
         /**
@@ -399,15 +425,15 @@ namespace MidiTools
             preserving octave and allowing for complex, non-standard chords.
             @param notes An array of MIDI note numbers.
         */
-        void setNotesByArray(const juce::Array<int>& notes)
+        void setNotesByArray(ArrayView<int> notes)
         {
             name = "Custom";
-            rawNotes = notes;
-            rawNotes.sort(); // Keep a consistent order
+            rawNotes.assign(notes.begin(), notes.end());
+            std::sort(rawNotes.begin(), rawNotes.end()); // Keep a consistent order
         }
 
         /** Returns the raw MIDI notes that were set via setNotesByArray. */
-        const juce::Array<int>& getRawNotes() const
+        ArrayView<int> getRawNotes() const
         {
             return rawNotes;
         }
@@ -433,7 +459,7 @@ namespace MidiTools
             degree = degree % scaleSize; // Ensure degree is within bounds of the actual scale size
 
             int fundamental = scaleNotes[(degree + 0) % scaleSize];
-            newChord.degrees.set(0, fundamental); // Fundamental
+            newChord.degrees[0] = fundamental; // Fundamental
 
             auto getVoicedNote = [&](int interval) -> int
             {
@@ -448,12 +474,12 @@ namespace MidiTools
                 // Build the 7-note chord by stacking thirds from the scale
                 // The interval indices (2, 4, 6, 1, 3, 5) refer to diatonic steps.
                 // We map these to the actual scale size.
-                newChord.degrees.set(1, getVoicedNote(2)); // Third (2 steps in the scale)
-                newChord.degrees.set(2, getVoicedNote(4)); // Fifth (4 steps in the scale)
-                newChord.degrees.set(3, getVoicedNote(6)); // Seventh (6 steps in the scale)
-                newChord.degrees.set(4, getVoicedNote(1)); // Ninth (1 step in the scale, but diatonic 9th is 2nd note)
-                newChord.degrees.set(5, getVoicedNote(3)); // Eleventh (3 steps in the scale, but diatonic 11th is 4th note)
-                newChord.degrees.set(6, getVoicedNote(5)); // Thirteenth (5 steps in the scale, but diatonic 13th is 6th note)
+                newChord.degrees[1] = getVoicedNote(2); // Third (2 steps in the scale)
+                newChord.degrees[2] = getVoicedNote(4); // Fifth (4 steps in the scale)
+                newChord.degrees[3] = getVoicedNote(6); // Seventh (6 steps in the scale)
+                newChord.degrees[4] = getVoicedNote(1); // Ninth (1 step in the scale, but diatonic 9th is 2nd note)
+                newChord.degrees[5] = getVoicedNote(3); // Eleventh (3 steps in the scale, but diatonic 11th is 4th note)
+                newChord.degrees[6] = getVoicedNote(5); // Thirteenth (5 steps in the scale, but diatonic 13th is 6th note)
             }
             else
             {
@@ -463,7 +489,7 @@ namespace MidiTools
                 {
                     int noteInScale = scaleNotes[(degree + i) % scaleSize];
                     int voicedNote = (noteInScale < fundamental) ? noteInScale + 12 : noteInScale;
-                    newChord.degrees.add(voicedNote);
+                    newChord.degrees.push_back(voicedNote);
                 }
             }
             return newChord;
@@ -476,12 +502,11 @@ namespace MidiTools
         */
         void reset()
         {
-            static const juce::String emptyName;
-            name = emptyName;
-            degrees.clearQuick();
-            rawNotes.clearQuick();
+            name.clear();
+            degrees.clear();     // clear() keeps the capacity, so none of this allocates
+            rawNotes.clear();
             for (int i = 0; i < 7; ++i)
-                degrees.add(-1); // 7 absent degrees
+                degrees.push_back(-1); // 7 absent degrees
         }
 
         /**
@@ -491,16 +516,15 @@ namespace MidiTools
         */
         void setFromScaleAndDegree(const Scale& scale, int degree, bool chordMode = false)
         {
-            static const juce::String diatonicName ("Diatonic");
-            name = diatonicName;
-            degrees.clearQuick();
-            rawNotes.clearQuick();
+            name = "Diatonic";
+            degrees.clear();
+            rawNotes.clear();
 
             const auto& scaleNotes = scale.getNotes();
             if (scaleNotes.isEmpty())
             {
                 for (int i = 0; i < 7; ++i)
-                    degrees.add(-1);
+                    degrees.push_back(-1);
                 return;
             }
 
@@ -517,22 +541,22 @@ namespace MidiTools
 
             if (chordMode && scaleSize == 7)
             {
-                degrees.add(fundamental);
-                degrees.add(getVoicedNote(2));
-                degrees.add(getVoicedNote(4));
-                degrees.add(getVoicedNote(6));
-                degrees.add(getVoicedNote(1));
-                degrees.add(getVoicedNote(3));
-                degrees.add(getVoicedNote(5));
+                degrees.push_back(fundamental);
+                degrees.push_back(getVoicedNote(2));
+                degrees.push_back(getVoicedNote(4));
+                degrees.push_back(getVoicedNote(6));
+                degrees.push_back(getVoicedNote(1));
+                degrees.push_back(getVoicedNote(3));
+                degrees.push_back(getVoicedNote(5));
             }
             else
             {
-                degrees.add(fundamental);
+                degrees.push_back(fundamental);
                 for (int i = 1; i < scaleSize; ++i)
                 {
                     int noteInScale = scaleNotes[(degree + i) % scaleSize];
                     int voicedNote = (noteInScale < fundamental) ? noteInScale + 12 : noteInScale;
-                    degrees.add(voicedNote);
+                    degrees.push_back(voicedNote);
                 }
             }
         }
@@ -542,37 +566,41 @@ namespace MidiTools
         */
         void ensureCapacity(int maxDegrees, int maxRawNotes)
         {
-            degrees.ensureStorageAllocated(maxDegrees);
-            rawNotes.ensureStorageAllocated(maxRawNotes);
+            degrees.reserve(static_cast<std::size_t> (maxDegrees));
+            rawNotes.reserve(static_cast<std::size_t> (maxRawNotes));
         }
 
         /** Returns a SortedSet of the present semitones (0-11) in the chord.
             This is useful for checking against a collection of played MIDI notes
             where order and octave do not matter.
         */
-        juce::SortedSet<int> getSortedSet() const
+        std::vector<int> getSortedSet() const
         {
-            juce::SortedSet<int> presentSemitones;
+            std::vector<int> presentSemitones;
             for (int degree : degrees)
             {
-                if (degree != -1)
-                    presentSemitones.add(degree);
+                if (degree == -1)
+                    continue;
+
+                auto pos = std::lower_bound(presentSemitones.begin(), presentSemitones.end(), degree);
+                if (pos == presentSemitones.end() || *pos != degree)
+                    presentSemitones.insert(pos, degree);
             }
             return presentSemitones;
         }
 
     private:
-        juce::String name;
-        juce::Array<int> degrees; // Stores 7 degrees: 1, 3, 5, 7, 9, 11, 13. -1 means absent.
-        juce::Array<int> rawNotes; // Stores raw MIDI notes for "as is" mode.
+        std::string name;
+        std::vector<int> degrees; // Stores 7 degrees: 1, 3, 5, 7, 9, 11, 13. -1 means absent.
+        std::vector<int> rawNotes; // Stores raw MIDI notes for "as is" mode.
     };
 
     /**
         Returns a map of French note names (Do, Ré b, etc.) to their semitone offset from C.
     */
-    inline const std::map<juce::String, int>& getFrenchNoteNameOffsetMap()
+    inline const std::map<std::string, int>& getFrenchNoteNameOffsetMap()
     {
-        static const std::map<juce::String, int> noteOffsets = {
+        static const std::map<std::string, int> noteOffsets = {
             {"do", 0},
             {"do#", 1}, {"reb", 1},
             {"re", 2}, {"ré", 2},
@@ -595,17 +623,16 @@ namespace MidiTools
         @param noteNumber The MIDI note number (0-127).
         @return A string representing the note name and octave.
     */
-    inline juce::String getNoteName(int noteNumber)
+    inline std::string getNoteName(int noteNumber)
     {
         if (noteNumber < 0 || noteNumber > 127)
             return "Invalid";
 
-        static const juce::String noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const char* const noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
         const int octave = (noteNumber / 12) - 1;
-        const juce::String& note = noteNames[noteNumber % 12];
 
-        return note + juce::String(octave);
+        return std::string (noteNames[noteNumber % 12]) + std::to_string (octave);
     }
 
     /**
@@ -614,23 +641,23 @@ namespace MidiTools
         @param noteNameWithOctave The note string, e.g., "C4", "Db-1", "f#5".
         @return The MIDI note number (0-127), or -1 if the string is invalid.
     */
-    inline int getNoteNumber(const juce::String& noteNameWithOctave)
+    inline int getNoteNumber(StringRef noteNameWithOctave)
     {
-        juce::String input = noteNameWithOctave.trim().toLowerCase();
-        if (input.isEmpty())
+        std::string input = toLower(trim(noteNameWithOctave));
+        if (input.empty())
             return -1;
 
-        juce::String notePart;
-        int octavePartStartIndex = 1;
+        std::string notePart;
+        std::size_t octavePartStartIndex = 1;
 
         if (input.length() > 1 && (input[1] == '#' || input[1] == 'b'))
         {
-            notePart = input.substring(0, 2);
+            notePart = substring(input, 0, 2);
             octavePartStartIndex = 2;
         }
         else
         {
-            notePart = input.substring(0, 1);
+            notePart = substring(input, 0, 1);
         }
 
         auto& noteMap = getNoteNameOffsetMap();
@@ -639,11 +666,11 @@ namespace MidiTools
 
         int noteOffset = noteMap.at(notePart);
 
-        juce::String octaveString = input.substring(octavePartStartIndex);
-        if (octaveString.isEmpty() || !octaveString.containsOnly("-0123456789"))
+        std::string octaveString = substring(input, octavePartStartIndex);
+        if (octaveString.empty() || !containsOnly(octaveString, "-0123456789"))
             return -1; // Invalid or missing octave
 
-        int octave = octaveString.getIntValue();
+        int octave = toInt(octaveString);
 
         int midiNote = (octave + 1) * 12 + noteOffset;
 
@@ -659,13 +686,13 @@ namespace MidiTools
         @param noteName   The note name to compare against (e.g., "C", "Db", "F#"). Case-insensitive.
         @return True if the note number's pitch class matches the note name, false otherwise.
     */
-    inline bool isNoteEqual(int noteNumber, const juce::String& noteName)
+    inline bool isNoteEqual(int noteNumber, StringRef noteName)
     {
         if (noteNumber < 0 || noteNumber > 127)
             return false;
 
-        juce::String cleanedNoteName = noteName.trim().toLowerCase();
-        if (cleanedNoteName.isEmpty())
+        std::string cleanedNoteName = toLower(trim(noteName));
+        if (cleanedNoteName.empty())
             return false;
 
         const int noteNumberSemitone = noteNumber % 12;
@@ -682,31 +709,31 @@ namespace MidiTools
         @param chordName The chord name, e.g., "C", "Am", "G7", "F#5".
         @return The semitone of the root note (0-11), or 0 (C) if parsing fails.
     */
-    inline int getRootNoteFromChord(const juce::String& chordName)
+    inline int getRootNoteFromChord(StringRef chordName)
     {
-        juce::String input = chordName.trim();
-        if (input.isEmpty())
+        std::string input = trim(chordName);
+        if (input.empty())
             return 0;
 
-        juce::String rootNoteStr;
+        std::string rootNoteStr;
         auto& noteMap = getNoteNameOffsetMap();
 
         // Check for multi-character suffixes first
-        if (input.endsWith("M7") || input.endsWith("m7"))
+        if (endsWith(input, "M7") || endsWith(input, "m7"))
         {
-            rootNoteStr = input.dropLastCharacters(2).toLowerCase();
+            rootNoteStr = toLower(dropLast(input, 2));
         }
-        else if (input.endsWith("7") || input.endsWith("5") || input.endsWith("m") || input.endsWith("M"))
+        else if (endsWith(input, "7") || endsWith(input, "5") || endsWith(input, "m") || endsWith(input, "M"))
         {
-            rootNoteStr = input.dropLastCharacters(1).toLowerCase();
+            rootNoteStr = toLower(dropLast(input, 1));
         }
         else // Assume single note
         {
-            rootNoteStr = input.toLowerCase();
+            rootNoteStr = toLower(input);
         }
 
         // Handle sharp/flat in root note
-        if (rootNoteStr.length() > 1 && (rootNoteStr.endsWith("#") || rootNoteStr.endsWith("b")))
+        if (rootNoteStr.length() > 1 && (endsWith(rootNoteStr, "#") || endsWith(rootNoteStr, "b")))
         {
             // Already have the full root note string
         }
@@ -727,32 +754,39 @@ namespace MidiTools
     /**
         Checks if a collection of MIDI notes forms a specific major or minor chord,
         regardless of octave or inversion.
+        Was a template over any collection answering to the framework's
+        isEmpty(); it takes an ArrayView now, which is what lets a caller on
+        either side of the split pass its own array type unchanged. It has no
+        callers in this repository, so nothing had to be edited for it.
+
         @param heldNotes          A collection of MIDI note numbers currently being played.
         @param chordName          The chord to check for, e.g., "CM", "F#m", "Ebm".
                                   Case-insensitive. 'M' or no suffix for major, 'm' for minor.
         @return True if the notes form the specified chord, false otherwise.
     */
-    template <typename Collection>
-    inline bool isChordEqual(const Collection& heldNotes, const juce::String& chordName)
+    inline bool isChordEqual(ArrayView<int> heldNotes, StringRef chordName)
     {
-        if (chordName.trim().isEmpty() || heldNotes.isEmpty())
+        if (trim(chordName).empty() || heldNotes.isEmpty())
             return false;
-    
+
         // 1. Create a Chord object to get the target semitones.
         Chord targetChord(chordName);
-        juce::SortedSet<int> targetSemitones = targetChord.getSortedSet();
-    
+        std::vector<int> targetSemitones = targetChord.getSortedSet();
+
         // If the chord name was invalid, the set of target notes will be empty.
-        if (targetSemitones.isEmpty())
+        if (targetSemitones.empty())
             return false;
-    
-        // 2. Build a set of the currently played semitones.
-        juce::SortedSet<int> playedSemitones;
-        for (const auto& noteNumber : heldNotes)
+
+        // 2. Build a sorted, duplicate-free list of the currently played semitones.
+        std::vector<int> playedSemitones;
+        for (const int noteNumber : heldNotes)
         {
-            playedSemitones.add(noteNumber % 12);
+            const int semitone = noteNumber % 12;
+            auto pos = std::lower_bound(playedSemitones.begin(), playedSemitones.end(), semitone);
+            if (pos == playedSemitones.end() || *pos != semitone)
+                playedSemitones.insert(pos, semitone);
         }
-    
+
         // --- 3. Compare the sets ---
         return playedSemitones == targetSemitones;
     }
@@ -762,18 +796,18 @@ namespace MidiTools
         Uses the same nomenclature as isChordEqual (e.g., "C#M", "Am").
         @return A string representing a random chord.
     */
-    inline juce::String getRandomChordName()
+    inline std::string getRandomChordName()
     {
-        static const juce::String rootNotes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        
-        juce::Random& random = juce::Random::getSystemRandom();
-        
+        static const char* const rootNotes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+
+        Random& random = systemRandom();
+
         // 1. Pick a random root note
-        const juce::String& root = rootNotes[random.nextInt(12)];
-        
+        const std::string root = rootNotes[random.nextInt(12)];
+
         // 2. Pick a random quality (major or minor)
         const bool isMinor = random.nextBool();
-        
+
         return root + (isMinor ? "m" : "M");
     }
 
@@ -782,26 +816,22 @@ namespace MidiTools
         Note that "Bb" will be represented as "A#".
         @return A string representing a random note name.
     */
-    inline juce::String getRandomSingleNoteName()
+    inline std::string getRandomSingleNoteName()
     {
-        static const juce::String noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const char* const noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
-        juce::Random& random = juce::Random::getSystemRandom();
-
-        return noteNames[random.nextInt(12)];
+        return noteNames[systemRandom().nextInt(12)];
     }
 
     /**
         Returns a random fifth interval name string (e.g., "C5", "F#5").
         @return A string representing a random fifth interval.
     */
-    inline juce::String getRandomFifthInterval()
+    inline std::string getRandomFifthInterval()
     {
-        static const juce::String noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const char* const noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
-        juce::Random& random = juce::Random::getSystemRandom();
-
-        const juce::String& root = noteNames[random.nextInt(12)];
+        const std::string root = noteNames[systemRandom().nextInt(12)];
         return root + "5";
     }
 
@@ -809,18 +839,18 @@ namespace MidiTools
         Returns a random 7th chord name string (e.g., "CM7", "Am7", "G7").
         @return A string representing a random 7th chord.
     */
-    inline juce::String getRandomSeventhChord()
+    inline std::string getRandomSeventhChord()
     {
-        static const juce::String rootNotes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        static const juce::String chordTypes[] = { "M7", "m7", "7" };
+        static const char* const rootNotes[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const char* const chordTypes[] = { "M7", "m7", "7" };
 
-        juce::Random& random = juce::Random::getSystemRandom();
+        Random& random = systemRandom();
 
         // 1. Pick a random root note
-        const juce::String& root = rootNotes[random.nextInt(12)];
+        const std::string root = rootNotes[random.nextInt(12)];
 
         // 2. Pick a random 7th quality
-        const juce::String& type = chordTypes[random.nextInt(3)];
+        const char* const type = chordTypes[random.nextInt(3)];
 
         return root + type;
     }
@@ -830,12 +860,12 @@ namespace MidiTools
         @param standardNoteName The standard note name (C, C#, Db, etc.).
         @return The corresponding French note name as a string. Returns an empty string if not found.
     */
-    inline juce::String getFrenchNoteName(const juce::String& standardNoteName)
+    inline std::string getFrenchNoteName(StringRef standardNoteName)
     {
-        static const juce::String frenchNoteNames[] = { "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si" };
+        static const char* const frenchNoteNames[] = { "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si" };
 
         auto& noteMap = getNoteNameOffsetMap();
-        auto cleanedName = standardNoteName.trim().toLowerCase();
+        auto cleanedName = toLower(trim(standardNoteName));
 
         if (noteMap.count(cleanedName))
         {
@@ -850,44 +880,44 @@ namespace MidiTools
         @param standardChordName The standard chord name.
         @return The corresponding French chord name as a string. Returns the original name if it can't be parsed.
     */
-    inline juce::String getFrenchChordName(const juce::String& standardChordName)
+    inline std::string getFrenchChordName(StringRef standardChordName)
     {
-        juce::String input = standardChordName.trim();
-        if (input.isEmpty())
+        std::string input = trim(standardChordName);
+        if (input.empty())
             return {};
 
-        juce::String rootNoteStr;
-        juce::String suffix;
+        std::string rootNoteStr;
+        std::string suffix;
 
         // Check for longer suffixes first
-        if (input.endsWith("M7"))
+        if (endsWith(input, "M7"))
         {
-            rootNoteStr = input.dropLastCharacters(2);
+            rootNoteStr = dropLast(input, 2);
             suffix = "M7"; // e.g., "DoM7"
         }
-        else if (input.endsWith("m7"))
+        else if (endsWith(input, "m7"))
         {
-            rootNoteStr = input.dropLastCharacters(2);
+            rootNoteStr = dropLast(input, 2);
             suffix = "m7"; // e.g., "Lam7"
         }
-        else if (input.endsWith("7"))
+        else if (endsWith(input, "7"))
         {
-            rootNoteStr = input.dropLastCharacters(1);
+            rootNoteStr = dropLast(input, 1);
             suffix = "7"; // e.g., "Sol7"
         }
-        else if (input.endsWith("5"))
+        else if (endsWith(input, "5"))
         {
-            rootNoteStr = input.dropLastCharacters(1);
+            rootNoteStr = dropLast(input, 1);
             suffix = "5"; // e.g., "Sol5"
         }
-        else if (input.endsWith("m"))
+        else if (endsWith(input, "m"))
         {
-            rootNoteStr = input.dropLastCharacters(1);
+            rootNoteStr = dropLast(input, 1);
             suffix = "m";
         }
-        else if (input.endsWith("M"))
+        else if (endsWith(input, "M"))
         {
-            rootNoteStr = input.dropLastCharacters(1);
+            rootNoteStr = dropLast(input, 1);
             suffix = "M";
         }
         else // Handles single notes ("C")
@@ -896,8 +926,8 @@ namespace MidiTools
             suffix = ""; // This case now only handles single notes.
         }
 
-        juce::String frenchRoot = getFrenchNoteName(rootNoteStr);
-        return frenchRoot.isNotEmpty() ? frenchRoot + suffix : standardChordName;
+        std::string frenchRoot = getFrenchNoteName(rootNoteStr);
+        return ! frenchRoot.empty() ? frenchRoot + suffix : standardChordName.str();
     }
 
     /**
@@ -905,20 +935,23 @@ namespace MidiTools
         This distributes 'hits' pulses as evenly as possible over 'steps'.
         @param hits The number of active steps (pulses).
         @param steps The total number of steps.
-        @return A juce::Array<bool> where true represents a hit and false a rest.
+        @return A vector of `steps` flags where true represents a hit and false a rest.
     */
-    inline juce::Array<bool> euclidianRythm(int hits, int steps, int rotation = 0)
+    inline std::vector<char> euclidianRythm(int hits, int steps, int rotation = 0)
     {
-        juce::Array<bool> pattern;
+        // char rather than bool: std::vector<bool> is a bit-packed proxy type,
+        // which would make `for (bool b : pattern)` and any pointer into the
+        // result behave differently from every other vector here.
+        std::vector<char> pattern;
         if (steps <= 0) return pattern;
-        
-        hits = juce::jlimit(0, steps, hits);
+
+        hits = jlimit(0, steps, hits);
 
         for (int i = 0; i < steps; ++i)
         {
             int index = (i - rotation) % steps;
             if (index < 0) index += steps;
-            pattern.add(((index * hits) % steps) < hits);
+            pattern.push_back(((index * hits) % steps) < hits ? 1 : 0);
         }
 
         return pattern;

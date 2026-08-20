@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "MidiTools.h"
+#include <FxmeTools/midi/MidiTools.h>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -1250,10 +1250,10 @@ protected:
 
             if (activeChord.getName() == "Custom")
             {
-                juce::SortedSet<int> playedNotes = activeChord.getSortedSet();
-                int numPlayedNotes = playedNotes.size();
+                const auto playedNotes = activeChord.getSortedSet();
+                const int numPlayedNotes = static_cast<int> (playedNotes.size());
                 if (numPlayedNotes > 0)
-                    return playedNotes[degreeIndex % numPlayedNotes];
+                    return playedNotes[static_cast<std::size_t> (degreeIndex % numPlayedNotes)];
             }
 
             int semitone = activeChord.getDegree(degreeIndex);

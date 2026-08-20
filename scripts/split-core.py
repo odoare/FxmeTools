@@ -33,7 +33,7 @@ will write. There is no second code path.
 What it deliberately does NOT do
 --------------------------------
 Files whose only JUCE contact is a helper with a drop-in core equivalent
-(jlimit, Decibels, MathConstants, Random, dsp::ProcessSpec) are reported by
+(jlimit, Decibels, MathConstants, Random, String, Array, dsp::ProcessSpec) are reported by
 --promotable and left untouched. Those edits are one line per call site and one
 of them changes behaviour — fxme::Random's sequence differs from JUCE's for a
 given seed — so they want a human and a listen, not a regex.
@@ -87,6 +87,13 @@ PROMOTABLE = {
     "juce::uint32": "std::uint32_t               <cstdint>",
     "juce::uint8": "std::uint8_t                <cstdint>",
     "juce::AudioBuffer": "fxme::AudioBufferView       <FxmeTools/util/AudioBufferView.h>  [!] signature change",
+    "juce::dsp::FFT": "fxme::Fft / fxme::RealFft   <FxmeTools/util/Fft.h>",
+    "juce::SmoothedValue": "fxme::SmoothedValue         <FxmeTools/util/SmoothedValue.h>  [!] linear only",
+    "juce::String": "fxme::StringRef             <FxmeTools/util/StringRef.h>        [!] std::string for returns",
+    "juce::StringRef": "fxme::StringRef             <FxmeTools/util/StringRef.h>",
+    "juce::StringArray": "const char* const[] + count                                     [!] source-breaking",
+    "juce::Array": "fxme::ArrayView             <FxmeTools/util/ArrayView.h>        [!] std::vector for members",
+    "juce::SortedSet": "sorted std::vector          <vector>, <algorithm>              [!] signature change",
 }
 
 
