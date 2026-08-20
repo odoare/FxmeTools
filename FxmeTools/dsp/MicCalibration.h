@@ -19,7 +19,7 @@
     applied both to a live SPL / spectrum display and to analysis transfer
     functions; the recorded measurement files themselves stay raw. Owning the
     shared instance and remembering its path is the host application's business
-    (SuperMoTo keeps it in its AppSettings) — this class is just the curve.
+    — this class is just the curve.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0

@@ -4,7 +4,7 @@
     StringSequencer.h
 
     A generic, JUCE-free step sequencer whose "payload" per block is an
-    arbitrary string (e.g. a chord ID in Neorix). Blocks live on an integer
+    arbitrary string (a chord ID, a sample name, a pattern label). Blocks live on an integer
     step grid, are always sorted by start step, and are guaranteed
     non-overlapping: every mutation method enforces this invariant.
 

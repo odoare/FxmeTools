@@ -2,8 +2,8 @@
   ------------------------------------------------------------------------------
     Arpeggiator.h
 
-    Text-pattern MIDI arpeggiator engine (the core of the TeAr plugin). Moved
-    here from the CppMusicTools repository, now living in the `fxme` namespace.
+    Text-pattern MIDI arpeggiator engine. Moved here from the CppMusicTools
+    repository, now living in the `fxme` namespace.
 
     Depends on juce_core and juce_audio_basics.
 

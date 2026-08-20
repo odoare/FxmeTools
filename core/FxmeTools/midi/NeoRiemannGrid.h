@@ -4,8 +4,8 @@
     NeoRiemannGrid.h
 
     A dependency-free model of an isomorphic "Harmonic Table" hexagonal grid and
-    the three sub-hexagon selection geometries (Face / Spoke / Border) used by
-    Neorix to extract 4-note chords. The model knows nothing about JUCE or
+    the three sub-hexagon selection geometries (Face / Spoke / Border) used to
+    extract 4-note chords. The model knows nothing about JUCE or
     drawing: it deals in axial hex coordinates, plain 2-D points for pixel
     layout, and pitch classes. A host component layers Graphics + mouse on top.
 
@@ -295,7 +295,7 @@ namespace grid
         sorted ascending.
 
         @param pcs        the four pitch classes (pcs[0] is always the bass)
-        @param bassIndex  which of the four is the bass (always 0 in Neorix)
+        @param bassIndex  which of the four is the bass
         @param bassC      MIDI note of C in the bass octave (e.g. 36 for C2)
         @returns          ascending MIDI note numbers (bass first), 1..4 notes. */
     inline std::vector<int> voiceChord (const std::array<int, 4>& pcs, int bassIndex, int bassC)

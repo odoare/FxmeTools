@@ -12,7 +12,7 @@
 
     Usage (message thread only, like any juce::Component):
 
-        fxme::TopBar topBar { "Mango", "modular sound glitcher",
+        fxme::TopBar topBar { "My Plugin", "what it does, briefly",
                               JucePlugin_VersionString,
                               juce::ImageCache::getFromMemory (
                                   BinaryData::logo686_png,

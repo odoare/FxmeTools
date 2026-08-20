@@ -3,9 +3,9 @@
     MidiTools.h
 
     Note-name parsing and conversion (incl. French names), the Scale and Chord
-    classes used by the text arpeggiator (TeAr), and a Euclidean rhythm
-    generator. Moved here from the CppMusicTools repository; the original
-    `MidiTools` namespace is kept, nested inside `fxme`.
+    classes used by the text arpeggiator, and a Euclidean rhythm generator.
+    Moved here from the CppMusicTools repository; the original `MidiTools`
+    namespace is kept, nested inside `fxme`.
 
     Depends on juce_core only.
 

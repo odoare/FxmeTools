@@ -4,9 +4,9 @@
 
     Mono tube-style saturation stage built on the shared waveshaper curves
     (dsp/Waveshapers.h): drive -> curve -> power-supply "sag" rail model ->
-    DC blocker. This is the distortion core of FxmeFX's Tube without the tone
-    shelf and without any parameter/JUCE coupling, so it can be dropped into
-    any per-channel chain. Use one instance per channel.
+    DC blocker. Deliberately just the distortion core — no tone shaping, no
+    parameter or framework coupling — so it drops into any per-channel chain.
+    Use one instance per channel.
 
     Models
       Standard : static tanh(drive*x + bias) — the reference curve.

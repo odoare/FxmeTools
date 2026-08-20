@@ -28,7 +28,6 @@
             fxme::paintComponentBackground (g, getLocalBounds().toFloat(), myTint);
         }
 
-    (Promoted from the local copy first written for FxmeFX's Source/Common.)
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0

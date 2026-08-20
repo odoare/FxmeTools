@@ -29,8 +29,8 @@ core/
 
 The include spelling is deliberately unchanged: core headers are still reached
 as `<FxmeTools/dsp/Ambisonics.h>`, because `core/` becomes a second include
-root alongside the repository root. **No consumer needs editing** — SuperMoTo
-and FxmeFX keep building exactly as they did.
+root alongside the repository root. **No consumer include needs editing** — a
+header moving between the halves is invisible from the outside.
 
 ## The util layer
 

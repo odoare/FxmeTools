@@ -30,9 +30,8 @@
                      draws white.
       input notes    outlined, for keys held down on the way in.
 
-    Promoted from TeAr's local KeyboardComponent, which had the arpeggiator
-    palette compiled into it. Nothing here knows what a voice is: it is an
-    integer the caller gives meaning to.
+    Nothing here knows what a voice is: it is an integer the caller gives
+    meaning to, so the palette is supplied rather than compiled in.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0

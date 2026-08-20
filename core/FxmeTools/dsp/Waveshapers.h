@@ -2,10 +2,9 @@
   ------------------------------------------------------------------------------
     Waveshapers.h
 
-    Pure, stateless saturation curves shared by the FX-Mechanics distortions
-    (lifted from FxmeFX's Tube; FxmeFX is to be refactored to include this
-    header instead of its private copies). Header-only, depends only on
-    <cmath>. All functions are safe to call from the audio thread.
+    Pure, stateless saturation curves for distortion and drive stages.
+    Header-only, depends only on <cmath>. All functions are safe to call from
+    the audio thread.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0

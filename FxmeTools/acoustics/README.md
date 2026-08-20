@@ -1,7 +1,6 @@
 # FxmeTools / acoustics
 
-Finite-element vibro-acoustics tools, first written for the **FemPlate**
-plugin but designed to be reused: mesh an arbitrary 2D shape, compute the
+Finite-element vibro-acoustics tools: mesh an arbitrary 2D shape, compute the
 bending modes of the corresponding thin plate (with optional membrane
 tension and mixed boundary conditions), display grid and modal fields as
 filled contours.
@@ -29,7 +28,8 @@ d²w/dt² + Δ²w − T Δw = f(x, y, t)
 `(K + T G) φ = ω² M φ` is discretised with **Morley triangles** (3 vertex
 deflections + 3 mid-edge normal derivatives), the classic minimal
 non-conforming element for the biharmonic operator. Eigenvalues converge
-from below at O(h²) (validated in FemPlate's `Tests/FemTests.cpp`).
+from below at O(h²), which the consuming project's FEM tests check against
+analytic references.
 
 ## Typical use
 

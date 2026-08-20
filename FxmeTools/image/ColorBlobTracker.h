@@ -44,8 +44,7 @@
     why track() is an instance method rather than a static one. Message
     thread, like everything image-side.
 
-    Header-only, depends on juce_graphics only. Known user: Localizer's
-    ColorFollower tracking module.
+    Header-only, depends on juce_graphics only.
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0

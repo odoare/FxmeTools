@@ -3,14 +3,15 @@
 
     Scale.h
 
-    Lightweight, dependency-free pitch-class scale engine for the FX-Mechanics
-    tools. Scales are represented as 12-bit pitch-class masks (bit p set means
-    pitch class p belongs to the scale), which makes membership tests and the
-    "reverse lookup" used by the Neorix scale engine a couple of bit operations.
+    Lightweight, dependency-free pitch-class scale engine. Scales are
+    represented as 12-bit pitch-class masks (bit p set means pitch class p
+    belongs to the scale), which reduces membership tests and the reverse
+    lookup — which scales contain a given set of notes — to a couple of bit
+    operations.
 
-    This is a focused reimplementation of the subset of CppMusicTools::Scale that
-    Neorix relies on, living in the `fxme` namespace so the project can depend on
-    FxmeTools alone.
+    A focused reimplementation of the part of CppMusicTools::Scale that the
+    chord tools need, in the `fxme` namespace so consumers depend on FxmeTools
+    alone.
 
   ==============================================================================
 */
@@ -28,7 +29,7 @@ namespace fxme
 /** A pitch-class set over the 12 chromatic notes, stored as a 12-bit mask. */
 using PitchClassSet = std::uint16_t;
 
-/** The three scale families Neorix cross-references chords against. Kept as a
+/** The three scale families chords are cross-referenced against. Kept as a
     small, ordered enum so callers can iterate over `ScaleType::Count`. */
 enum class ScaleType
 {
