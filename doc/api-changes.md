@@ -189,6 +189,11 @@ submodule pointer moves forward** — the split is only visible once a project
 bumps. So the breakage arrives one project at a time, months apart, which is
 what this file is for.
 
+As of 2026-08-20, ten are through plus this repository's own test suite. The
+four outstanding ones are all direct consumers that wire the module by hand
+(AmbiProbe, AmbiRR2, Bloom, Localizer); they are also the only ones left that
+need real CMake work rather than a pointer bump.
+
 ### Direct consumers
 
 Their own `.gitmodules` names FxmeTools.
@@ -214,11 +219,37 @@ FxmeFX and use the FxmeTools nested inside it, reaching it as
 `<FxmeFX path>/lib/FxmeTools`. They also compile FxmeFX's effect sources
 straight into their own target by path, so they inherit its source changes too.
 
-| project | FxmeFX at | reaches FxmeTools as | state |
-|---|---|---|---|
-| FlowSynth | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
-| FxmeSampler | `FxmeFX` | `FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
-| Mechanodd | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
+| project | FxmeFX at | reaches FxmeTools as | state | last built against the split |
+|---|---|---|---|---|
+| FlowSynth | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
+| FxmeSampler | `FxmeFX` | `FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
+| Mechanodd | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
+
+All three are through. What each actually cost, because the spread is the
+interesting part:
+
+- **FxmeSampler**: one submodule pointer. No source edit, no CMake edit. All
+  four of its targets (three kits plus the `FxmeSamplerDev` host) already called
+  `fxmetools_attach()`, so `FxmeCore` arrived on its own.
+- **Mechanodd**: one pointer plus two lines. Its `ModEngine` wrapped
+  `Lfo::shapeChoices()` and `syncRateChoices()` behind its own accessors, so
+  fixing the two forwarders fixed all five call sites.
+- **FlowSynth**: one pointer, four source edits and a CMake change. Its
+  `ModEngine` has the same two forwarders, but two further call sites bypass the
+  wrapper and reach `fxme::Lfo::syncRateChoices()` directly
+  (`Analysis/AnalysisBank.cpp`, `UI/AnalysisPanelComponent.cpp`). Its
+  `FlowSynthVideoTest` console target also compiles a FxmeTools source by path
+  with only the module include root, so it gained `${FXMETOOLS_CORE_DIR}` and
+  `FxmeCore` — preventative, since nothing it compiles reaches core today.
+
+**Two traps specific to the transitive layout.** A grep for `shapeChoices` in
+FlowSynth returns sixteen hits, but eleven belong to its own
+`params::shapeChoices()`, which names terrain shapes and has nothing to do with
+the LFO: match on `fxme::Lfo::` rather than the bare name. And because these
+projects compile FxmeFX's effect sources by path, a bump brings effect
+*behaviour* changes as well as library ones (IR loading moved off the audio
+thread, the shared biquad, the look-and-feel retrofit), which no compiler
+checks. Load one in a DAW after bumping.
 
 Two things follow that do not apply to the direct consumers:
 
@@ -246,7 +277,8 @@ project includes `cmake/FxmeTools.cmake` and so gets core with no edit. It says
 nothing about whether a renamed API breaks a call site, and that is the failure
 mode that actually bites: the `Lfo` rename went through five consumers cleanly
 and then broke this repository's own test suite, which only TeAr builds. Treat
-all seven never-built projects as unverified.
+the four never-built projects (AmbiProbe, AmbiRR2, Bloom, Localizer) as
+unverified.
 
 "Safe" means the project does `include(.../cmake/FxmeTools.cmake)`, which adds
 the core subdirectory and hangs it off the module, so linking `FxmeTools` pulls
