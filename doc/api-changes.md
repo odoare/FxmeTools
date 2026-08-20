@@ -183,10 +183,15 @@ order, forward unscaled, inverse scaled by 1/N; no size ceiling, unlike WDL's
 
 ## Per-project checklist
 
-Eleven projects on this machine embed FxmeTools. **Nothing breaks in any of them
-until its submodule pointer moves forward** — the split is only visible once a
-project bumps. So the breakage arrives one project at a time, months apart,
-which is what this file is for.
+**Fourteen** projects on this machine embed FxmeTools: eleven directly, and
+three that reach it *through FxmeFX*. **Nothing breaks in any of them until its
+submodule pointer moves forward** — the split is only visible once a project
+bumps. So the breakage arrives one project at a time, months apart, which is
+what this file is for.
+
+### Direct consumers
+
+Their own `.gitmodules` names FxmeTools.
 
 | project | submodule path | state | last built against the split |
 |---|---|---|---|
@@ -202,12 +207,46 @@ which is what this file is for.
 | SuperMoTo | `lib/FxmeTools` | done | 2026-08-20 |
 | TeAr | `Source/libs/FxmeTools` | done | 2026-08-20 |
 
+### Transitive consumers, through FxmeFX
+
+**These do not appear in any search for a FxmeTools submodule.** They embed
+FxmeFX and use the FxmeTools nested inside it, reaching it as
+`<FxmeFX path>/lib/FxmeTools`. They also compile FxmeFX's effect sources
+straight into their own target by path, so they inherit its source changes too.
+
+| project | FxmeFX at | reaches FxmeTools as | state |
+|---|---|---|---|
+| FlowSynth | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
+| FxmeSampler | `FxmeFX` | `FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
+| Mechanodd | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | CMake safe, **never built** |
+
+Two things follow that do not apply to the direct consumers:
+
+- **The bump is two levels deep, and it is ordered.** They pin FxmeFX, which
+  pins FxmeTools. FxmeFX has to commit and push its own FxmeTools pointer
+  before any of them can pick the split up at all — so FxmeFX is a hard
+  prerequisite, not merely "one of the fourteen".
+- **Their wiring is already right.** All three
+  `include(.../lib/FxmeTools/cmake/FxmeTools.cmake)` and call
+  `fxmetools_attach()`, so `FxmeCore` arrives with no CMake edit. That makes
+  them *less* work than AmbiProbe and friends, not more — what remains is the
+  renamed-API sweep and a build.
+
+To find every consumer, search `.gitmodules` for FxmeTools **and** FxmeFX. A
+search for FxmeTools alone finds eleven of the fourteen, which is how these
+three were missed on the first pass.
+
+Not consumers, despite using the `fxme::` namespace: MoTo, Vibe, MapSynth,
+Mercator, PictOSC, VanDerPol, 3body-problem and Gloubiboulga. Those are
+Projucer-era projects on the predecessor library FxmeJuceTools, and are
+untouched by any of this.
+
 **"CMake safe" is a claim about wiring, not about sources.** It means the
 project includes `cmake/FxmeTools.cmake` and so gets core with no edit. It says
 nothing about whether a renamed API breaks a call site, and that is the failure
 mode that actually bites: the `Lfo` rename went through five consumers cleanly
 and then broke this repository's own test suite, which only TeAr builds. Treat
-the four never-built projects as unverified.
+all seven never-built projects as unverified.
 
 "Safe" means the project does `include(.../cmake/FxmeTools.cmake)`, which adds
 the core subdirectory and hangs it off the module, so linking `FxmeTools` pulls
