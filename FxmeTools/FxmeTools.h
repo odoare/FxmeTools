@@ -36,6 +36,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "lookandfeels/FxmeLookAndFeel.h"
 #include "lookandfeels/PanelBackground.h"
 #include "components/FxmeSlider.h"
+#include "components/FxmeNumberBox.h"
 #include "components/FxmeButton.h"
 #include "components/FxmeMeters.h"
 

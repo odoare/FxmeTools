@@ -11,6 +11,35 @@ project after a break.
 
 ---
 
+## `components/FxmeNumberBox.h` — a new control, not a change
+
+Purely additive: a new `fxme::FxmeNumberBox` component, registered in the
+module manifest. No existing symbol touched, so **no consumer needs to do
+anything** to keep building.
+
+**Why.** Mango's denser effect panels (Grain, Gater, AuxSend and others
+picked up several new knobs each in the recent std-deviation work) started
+running into knobs too small to keep their name and value legible. A
+`FxmeSlider` subclass — a bordered box with the parameter's name and value as
+text and a thin fill strip along the bottom, dragged like a rotary knob
+(`RotaryVerticalDrag`'s relative delta mapping, not a linear track's absolute
+position, which would make a box this small unusably twitchy) and right-click
+editable exactly like `FxmeSlider` already is. `paint()` is the only thing
+it overrides; attachments, ranges, `setCentralValue()`, `setShowLabel()`
+are all inherited.
+
+**Drop-in for an existing knob.** It reads the same `Slider` ColourIds a
+knob already has themed — `rotarySliderFillColourId` (body),
+`rotarySliderOutlineColourId` (border), `trackColourId` (fill strip),
+`thumbColourId` (value text) — so swapping `fxme::FxmeSlider` for
+`fxme::FxmeNumberBox` in a consumer is a type change, not a re-theming; any
+existing per-control accent-colouring helper keeps working unchanged.
+
+**Per project:** Mango is the first (only, so far) consumer. Nothing else
+uses it yet.
+
+---
+
 ## `GrainLooper::triggerForPeriod()` — exact-period loops
 
 Purely additive: `trigger()` and `setCrossfade()` are unchanged, so **no
