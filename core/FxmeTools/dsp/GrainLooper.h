@@ -15,6 +15,12 @@
     every seam is sin^2 + cos^2 = 1 and the content is at unity gain for the
     rest of the grain — no audible per-grain pumping.
 
+    Because of that overlap, trigger()'s own instance *period* is the
+    recorded length minus the crossfade, not the recorded length itself — a
+    caller that wants the loop to land exactly on a beat or a pitch (rather
+    than "close, minus one fade") wants triggerForPeriod() instead, which
+    compensates for the offset.
+
     setPlayFraction (1 by default) shortens what each instance *plays* of the
     grain without changing the instance rate: below 1 the loop becomes a
     train of short grains separated by silence, at the same period as the
@@ -133,6 +139,23 @@ public:
         recordBuffer   = playing ? 1 - currentBuffer : 0;
         recordPosition = 0;
         recording      = true;
+    }
+
+    // Like trigger(), but for a caller that wants the *loop period* to land
+    // on `periodSeconds` exactly rather than the recorded grain length:
+    // trigger()'s own instance period is `recorded length - crossfade` (see
+    // the class comment), so this records `periodSeconds + fadeSeconds` and
+    // sets the crossfade to match, which cancels the offset. `fadeSeconds`
+    // is capped to `periodSeconds` first: setCrossfade() clamps to at most
+    // half the *recorded* length on its own, and letting that clamp fire
+    // here would silently widen the period again for a short period against
+    // a disproportionately long fade. The tradeoff lands on the fade instead
+    // — a short, quiet crossfade rather than a wrong period. Realtime-safe.
+    void triggerForPeriod (float periodSeconds, float fadeSeconds)
+    {
+        const float fade = std::min (fadeSeconds, std::max (periodSeconds, 0.0f));
+        setCrossfade (fade);
+        trigger (periodSeconds + fade);
     }
 
     // Back to normal mode: the grain fades out, the live input fades back in.

@@ -11,6 +11,49 @@ project after a break.
 
 ---
 
+## `GrainLooper::triggerForPeriod()` — exact-period loops
+
+Purely additive: `trigger()` and `setCrossfade()` are unchanged, so **no
+consumer needs to do anything.** New method only, on `dsp/GrainLooper.h`
+(core).
+
+**Why.** `trigger()`'s instance *period* is the recorded length minus the
+crossfade (see the class comment), not the recorded length itself — by
+design, for the overlap that keeps the grain train at unity gain through the
+seams. A caller that wants the loop to land exactly on a beat, or exactly on
+a pitch, gets one fade's worth of drift instead. This was found auditing
+Mango's block-duration sync, and confirmed worse than expected in Bloom:
+Bloom's MIDI-tracking grain mode (`grainStep[k] = 1/hz`, `BloomEngine.cpp`)
+sets the recorded length to a note's exact period with no crossfade
+compensation (it runs on the class's 30 ms default). For any note above
+~16.7 Hz — i.e. the entire practical range, including the bottom of an
+88-key keyboard — `setCrossfade`'s own half-grain clamp collapses the fade to
+exactly half the recorded length, so the loop period is exactly half the
+requested one and the effect plays **one octave sharp** of the note held, not
+a few cents off.
+
+**`triggerForPeriod (periodSeconds, fadeSeconds)`** records
+`periodSeconds + fadeSeconds` and sets the crossfade to match, cancelling the
+offset; the fade is capped to `periodSeconds` first so a disproportionately
+long fade against a short period shortens the fade rather than reintroducing
+a wrong period. Callers that want the current "close, minus one fade"
+behaviour keep calling `trigger()` — this is a new option, not a replacement.
+
+**Per project:**
+
+- **Mango** — `GrainDupEffect` switches to it (see the per-project table).
+- **Bloom** — **not touched.** Its MIDI-tracking mode is a full octave sharp
+  today, confirmed as an existing bug, but its output is still musically "in
+  tune" (an octave is a consonant interval), and the fix wasn't applied
+  because it's a live, presumably-in-use parameter and this needed thinking
+  through first (Bloom's own multi-take staggered scheduling, keyed off the
+  *current* period-shortening behaviour in ways not fully understood from
+  outside the project, made a blind fix risky). Revisit deliberately, as its
+  own piece of work, when picking Bloom back up — don't fix it as a side
+  effect of something else.
+
+---
+
 ## The core/shell split (branch `fxme-core-split`)
 
 FxmeTools is now two halves: `core/`, which has no JUCE at all, and
