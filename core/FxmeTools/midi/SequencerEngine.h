@@ -14,6 +14,9 @@
         external lock while calling.
       - Callbacks fire synchronously from advance() / start() / setPositionBeats().
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

@@ -19,6 +19,9 @@
         NW = +3 SE = -3   (minor third)
     and any three mutually-adjacent hexes form a major or minor triad.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

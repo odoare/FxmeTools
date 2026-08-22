@@ -29,6 +29,9 @@
     A TransformRule guards a transform on the current level and/or slot parity;
     a KeyBinding is an ordered rule list — the first matching rule applies.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

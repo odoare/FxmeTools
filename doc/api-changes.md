@@ -83,6 +83,41 @@ behaviour keep calling `trigger()` — this is a new option, not a replacement.
 
 ---
 
+## Licensing split (2026-08-22)
+
+**The most consumer-visible change in this file, and the only one with legal
+rather than technical consequences.** The two halves now carry different terms:
+
+| half | SPDX |
+|---|---|
+| `core/` | `LGPL-3.0-or-later` (unchanged) |
+| `FxmeTools/` | `AGPL-3.0-or-later OR LicenseRef-FXME-Commercial` (was LGPL) |
+
+`core/` is framework-free and enforced to stay that way, so it is not a JUCE
+derivative and its licence is independent of the framework's. `FxmeTools/` only
+builds against JUCE, so it mirrors JUCE 8's own dual licence rather than
+fighting it. Full reasoning in `LICENSE.md` at the repository root.
+
+**Nothing breaks at compile time, and no code changed.** What changed is what a
+consuming plugin may be distributed under:
+
+- A plugin links the JUCE half, so distributing it means either releasing it
+  under the AGPLv3 with sources, or holding both a commercial JUCE licence and
+  commercial terms for this module.
+- **The plugins in this family currently declare LGPL-3.0 in their own LICENSE
+  files and READMEs.** That is now inconsistent with the module they link, and
+  each project needs its own decision. This repository cannot make it for them,
+  and none of them was edited.
+- A target that links **only** `FxmeCore` takes on no JUCE obligation at all and
+  needs only the LGPL. Headless tests, offline renderers, Pure Data externals
+  and console tools are all in that category. This is the case the split was
+  built to make possible, and it is the reason the auxiliary targets were worth
+  wiring to `FxmeCore` rather than to the whole module.
+
+A file promoted from `FxmeTools/` into `core/` is re-licensed from
+AGPL/commercial to LGPL as part of the move; the header must be changed to
+match. See the submodule's `CLAUDE.md`.
+
 ## The core/shell split (branch `fxme-core-split`)
 
 FxmeTools is now two halves: `core/`, which has no JUCE at all, and

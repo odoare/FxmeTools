@@ -31,6 +31,10 @@
     current window, e.g. after a grid shrink) are not drawn and cannot be
     grabbed; an amber arrow at the pattern's right edge shows they are there.
 
+    Author: Olivier Doaré, github.com/odoare
+    Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
+    AGPL Version 3.0, or under commercial terms available from the author.
+    SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FXME-Commercial
   ==============================================================================
 */
 

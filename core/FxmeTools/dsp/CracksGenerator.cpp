@@ -5,6 +5,8 @@
     Created: 18 Jan 2024 3:43:48pm
     Author:  od
 
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

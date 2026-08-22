@@ -13,10 +13,25 @@ BEGIN_JUCE_MODULE_DECLARATION
                     (FFmpeg) backends are enabled per consumer by
                     fxmetools_attach_video().
   website:          http://www.github.com/odoare/FxmeTools
-  license:          LGPL-3.0-or-later
+  license:          AGPL-3.0-or-later OR LicenseRef-FXME-Commercial
   dependencies:     juce_audio_basics, juce_audio_processors, juce_audio_utils, juce_core, juce_data_structures, juce_dsp, juce_events, juce_graphics, juce_gui_basics
  END_JUCE_MODULE_DECLARATION
  */
+
+/*
+  ------------------------------------------------------------------------------
+    FxmeTools.h
+
+    Umbrella header for the JUCE half of FxmeTools. It also includes the
+    framework-free headers under core/, which reach consumers by the same
+    <FxmeTools/...> spelling and stay under the LGPL.
+
+    Author: Olivier Doaré, github.com/odoare
+    Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
+    AGPL Version 3.0, or under commercial terms available from the author.
+    SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FXME-Commercial
+  ------------------------------------------------------------------------------
+*/
 
 #pragma once
 

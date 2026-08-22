@@ -31,6 +31,9 @@
     Phase offsets are in cycles, matching fxme::Lfo and fxme::ModLfo, so a
     voice's modulation is lfo.valueAt (UnisonSpread::phaseOffset (voice)).
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

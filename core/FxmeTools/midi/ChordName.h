@@ -16,6 +16,9 @@
     Like Scale.h this lives in the `fxme` namespace and depends only on the
     standard library so a project can rely on FxmeTools alone.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

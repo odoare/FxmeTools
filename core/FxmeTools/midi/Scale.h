@@ -13,6 +13,9 @@
     chord tools need, in the `fxme` namespace so consumers depend on FxmeTools
     alone.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

@@ -21,6 +21,9 @@
     (addBlockWithId), which accepts any range so saved state round-trips
     verbatim.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

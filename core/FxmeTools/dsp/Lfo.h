@@ -8,6 +8,9 @@
     and parameter wiring stay with the consumer (e.g. a modulation engine); this
     only provides the pure maths so the same shapes/sync rates are reused.
 
+    Author: Olivier Doaré, github.com/odoare
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

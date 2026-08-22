@@ -141,14 +141,29 @@ Stop and ask rather than choosing:
   `Math.h`. The abstract-interface rule is for things with a system behind
   them, not for value types — but say which you think it is before writing.
 
-## Licensing — in flux, do not mass-edit
+## Licensing — settled 2026-08-22, and it differs per half
 
-Source headers currently carry `SPDX-License-Identifier: LGPL-3.0-or-later`,
-which is being reconsidered (JUCE 8 is dual AGPLv3 / commercial, and the code
-under `core/` is not a JUCE derivative at all, so the two halves may end up
-under different licences). **Do not rewrite licence headers, add LICENSE files,
-or change the `license:` field in `FxmeTools/FxmeTools.h`** unless explicitly
-asked. Preserve the existing header block verbatim when moving a file.
+The two halves carry different terms. `LICENSE.md` at the root is the
+explanation; these are the identifiers:
+
+| half | SPDX |
+|---|---|
+| `core/` | `LGPL-3.0-or-later` |
+| `FxmeTools/` | `AGPL-3.0-or-later OR LicenseRef-FXME-Commercial` |
+
+Every `.h` and `.cpp` in the repository carries one of the two in its banner,
+and `FxmeTools/FxmeTools.h`'s module declaration carries the second in its
+`license:` field.
+
+**A file that moves between halves must have its licence header changed to
+match its destination.** This is the one case where the "preserve the header
+block verbatim when moving a file" rule does not apply: promoting a file into
+`core/` re-licenses it from AGPL/commercial to LGPL, and that is a deliberate
+act, not a formatting detail. Everything else in the banner (title,
+description, author) is still preserved verbatim.
+
+Do not change the terms themselves, add or remove LICENSE files, or introduce a
+third identifier without being asked.
 
 ## Style
 

@@ -8,8 +8,9 @@
     Depends on juce_core and juce_audio_basics.
 
     Author: Olivier Doaré, github.com/odoare
-    Licenced under the GNU LGPL Version 3.0
-    SPDX-License-Identifier: LGPL-3.0-or-later
+    Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
+    AGPL Version 3.0, or under commercial terms available from the author.
+    SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FXME-Commercial
   ------------------------------------------------------------------------------
 */
 

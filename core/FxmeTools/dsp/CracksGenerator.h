@@ -8,6 +8,8 @@
     Random click / crackle generator. Emits a sparse stream of bipolar impulses
     whose average rate is set by setDensity() (clicks per minute).
 
+    Licenced under the GNU LGPL Version 3.0
+    SPDX-License-Identifier: LGPL-3.0-or-later
   ==============================================================================
 */
 

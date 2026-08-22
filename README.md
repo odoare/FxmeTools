@@ -134,9 +134,25 @@ work rather than substitution, and worth doing only where the reuse is real.
 
 ## Licensing
 
-Source headers currently carry `LGPL-3.0-or-later`. This is under review, and
-the two halves may end up under different terms — see the note above on why the
-`core/` half is unencumbered by the framework's licence.
+The two halves carry different terms, which is the practical payoff of the
+separation. Every file states its own in an SPDX header; `LICENSE.md` has the
+full explanation.
+
+| half | licence |
+|---|---|
+| `core/` | `LGPL-3.0-or-later` |
+| `FxmeTools/` | `AGPL-3.0-or-later OR LicenseRef-FXME-Commercial` |
+
+`core/` is framework-free and enforced to stay that way, so it is not a
+derivative of JUCE and its licence is independent of the framework's. A tool
+that links only `FxmeCore` — a headless test, an offline renderer, a Pure Data
+external — takes on no JUCE obligation and needs only the LGPL.
+
+`FxmeTools/` is a JUCE module and only builds against JUCE, so it mirrors JUCE's
+own dual licence: use it under the AGPLv3, or under commercial terms from the
+author. A commercial grant here covers this code only and is not a substitute
+for a JUCE licence, which must be obtained separately from Raw Material
+Software.
 
 `WDL/` is a separate submodule from Cockos under the zlib licence.
 
