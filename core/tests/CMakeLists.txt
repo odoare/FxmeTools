@@ -8,7 +8,12 @@ add_executable(FxmeCoreTests CoreUtilTests.cpp)
 target_link_libraries(FxmeCoreTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreTests COMMAND FxmeCoreTests)
 
-# ── 2. Every core header is self-contained without JUCE ────────────────────
+# ── 2. The math layer: storage, ordering, factorisation, eigensolver ───────
+add_executable(FxmeCoreMathTests CoreMathTests.cpp)
+target_link_libraries(FxmeCoreMathTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreMathTests COMMAND FxmeCoreMathTests)
+
+# ── 3. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
 add_test(NAME FxmeCoreHeaderTest COMMAND FxmeCoreHeaderTest)
@@ -35,7 +40,7 @@ else()
     message(STATUS "FxmeCore: SpectralFreeze.h excluded from the header test (no WDL)")
 endif()
 
-foreach(_t FxmeCoreTests FxmeCoreHeaderTest)
+foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

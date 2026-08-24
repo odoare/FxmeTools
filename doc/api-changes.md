@@ -11,6 +11,79 @@ project after a break.
 
 ---
 
+## `math/BandwidthOrdering.h`, `math/SkylineCholesky.h` — the factorisation goes sparse too
+
+Additive: two new headers, and `computePlateModes` now renumbers and
+factorises inside an envelope on its sparse path. **No consumer API change** —
+the same call returns the same modes, considerably faster and far smaller.
+
+**Why.** The previous change made the assembled matrices sparse but left the
+shifted operator `A + sigma M` factorised densely, which capped the win at
+about 3x. That was not for want of a sparse Cholesky: Cholesky *fills in*, and
+the factor of a sparse matrix numbered as a mesh generator happens to produce
+it is a dense matrix. The fix is a better numbering, not a cleverer
+factorisation.
+
+| Header | Contents |
+|---|---|
+| `math/BandwidthOrdering.h` | `reverseCuthillMcKee`, `invertPermutation`, `profileSize`, `firstStoredColumn` |
+| `math/SkylineCholesky.h` | `SkylineCholesky` — profile (envelope) Cholesky, an `SpdSolver` like the dense one |
+
+Also on `SparseSymmetricMatrix`: `addScaled` (fast path when two matrices share
+a pattern) and `values()`.
+
+**Two things to know if you use these directly.**
+
+`reverseCuthillMcKee` returns a permutation and stops. `SkylineCholesky`
+factorises whatever numbering it is given and its envelope is only narrow if
+someone made it so — handing it an unordered matrix is not wrong, merely
+pointless. Where to apply the permutation is a real decision: for a
+finite-element assembly it belongs in the degree-of-freedom map, before
+anything is assembled, so that every matrix, every eigenvector and every
+exported nodal value is in the new numbering already and nothing is permuted
+back. `PlateModes.cpp` does exactly that, in four lines. Applying it closer to
+the solver means threading it through each of those steps, which is how one
+gets plausible-looking wrong eigenvectors.
+
+`SkylineCholesky::solveInPlace` is `const` and uses no scratch, so any number
+of threads may solve different right-hand sides against one factor at once —
+which is what a block eigensolver wants, and why the permutation is not applied
+there.
+
+**What it measures.** Same machine, same meshes, dense against the current path:
+
+| n | modes | dense | sparse + profile | |
+|---:|---:|---|---|---|
+| 2149 | 64 | 13.1 s / 125 MB | 0.45 s / 7 MB | 29x / 17x |
+| 3841 | 128 | 114.8 s / 419 MB | 3.6 s / 25 MB | 32x / 17x |
+| 6029 | 128 | 335.5 s / 1.0 GB | 5.5 s / 39 MB | 61x / 26x |
+| 15381 | 256 | (7.6 GB, would not run) | 48.4 s / 196 MB | |
+| 23865 | 256 | (18.2 GB, would not run) | 83.8 s / 309 MB | |
+
+The gain is bigger than the `O(n^3/3)` factorisation alone explains, because
+the factorisation was never the expensive part: the `p` triangular solves *per
+iteration* were, and they drop from `O(n^2)` to `O(n^1.5)` with it. Nothing in
+the solve is quadratic in `n` any longer, and the leading term is now the
+iteration block, `4 p n` doubles — so cost is set by the number of modes asked
+for, not by the mesh.
+
+**One behavioural note.** Changing the elimination order changes the rounding,
+so sparse and dense no longer agree bit for bit end to end. They agree to
+whatever the iteration was asked to converge to, and the split is sharp: on a
+24-mode solve the first twelve (held to 1e-6) agree to 1e-14 in the eigenvalue
+and 4e-6 in shape, while the last few (entitled to 1e-4) differ by 1e-5. The
+storage layer is still bit-identical — that claim was about `multiply`, and
+still holds.
+
+**New test target:** `FxmeCoreMathTests` in `core/tests/`, covering the math
+layer against closed-form answers with no acoustics involved.
+
+**Per project:** FemPlate needs no source change. Its Grid knob stops at 48 for
+a reason that no longer exists (the dense solver needed 737 MB there), so that
+cap is now a product decision rather than a numerical one.
+
+---
+
 ## New `core/FxmeTools/math/` — linear algebra split out of the plate solver, and sparse matrix storage
 
 Additive, with one behavioural default changed inside `computePlateModes`.

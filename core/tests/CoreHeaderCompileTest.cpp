@@ -170,6 +170,12 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/math/SparseMatrix.h>)
  #include <FxmeTools/math/SparseMatrix.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/BandwidthOrdering.h>)
+ #include <FxmeTools/math/BandwidthOrdering.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/SkylineCholesky.h>)
+ #include <FxmeTools/math/SkylineCholesky.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/math/SubspaceEigensolver.h>)
  #include <FxmeTools/math/SubspaceEigensolver.h>
 #endif

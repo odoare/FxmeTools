@@ -48,27 +48,28 @@
     Storage and cost
     ----------------
     The linear algebra lives in FxmeTools/math: compressed-sparse-row and dense
-    storage behind a common operator interface, and one shift-invert subspace
-    iteration that runs on either (SparseMatrix.h, DenseLinearAlgebra.h,
-    SubspaceEigensolver.h). ModalOptions::storage picks which.
+    storage behind a common operator interface, a bandwidth-reducing ordering,
+    a profile factorisation and a dense one, and one shift-invert subspace
+    iteration that runs on any of it. ModalOptions::storage picks the path.
 
     A Morley plate couples each degree of freedom to about eleven others
     whatever the mesh density, so the assembled matrices are far emptier than
     dense storage assumes: at n = 5000 free DOFs the three of them together are
-    5 MB sparse against 590 MB dense. What the sparse path does not yet avoid
-    is the dense factorisation of the shifted operator A + sigma M, still n^2
-    doubles and n^3/3 flops, so the working set is currently
+    5 MB sparse against 590 MB dense. The factorisation of A + sigma M would be
+    dense whatever the matrices look like -- Cholesky fills in -- were the
+    unknowns not first renumbered (reverse Cuthill-McKee) so that the fill is
+    trapped in a narrow envelope around the diagonal. Nothing is left quadratic
+    after that, and the working set becomes
 
-        sparse   n^2 doubles (the factor) + O(n) + the iteration block
+        sparse   ~1.1 n^1.5 doubles (the factor) + O(n) + the iteration block
         dense    4 n^2 doubles
 
-    a factor of three or four in practice. Making the factorisation sparse as
-    well (bandwidth-reducing ordering plus a profile Cholesky) is the step that
-    turns that into two orders of magnitude; the operator interface is where it
-    will plug in, with no change here.
+    which at n = 6029 measured 39 MB against 1040 MB, and 5.5 s against 336 s
+    for 128 modes. The dominant term is now the iteration block itself, 4 p n
+    doubles for a block of p = m + max(8, m/2) vectors, so what a solve costs
+    is set by how many modes are asked for rather than by how fine the mesh is.
 
-    Fine up to a few thousand DOFs either way; call it from a background thread
-    (it reports progress).
+    Call it from a background thread (it reports progress).
 
     Author: Olivier Doaré, github.com/odoare
     SPDX-License-Identifier: LGPL-3.0-or-later

@@ -201,11 +201,33 @@ public:
         return k < 0 ? 0.0 : value[(std::size_t) k];
     }
 
+    /** this += scale * other. The fast path needs the two to share a pattern,
+        which is the usual case here (one assembly, several matrices); anything
+        else goes through addEntry and so requires this matrix's pattern to
+        cover the other's. */
+    void addScaled (const SparseSymmetricMatrix& other, double scale)
+    {
+        if (other.pattern == pattern)
+        {
+            for (std::size_t k = 0; k < value.size(); ++k)
+                value[k] += scale * other.value[k];
+            return;
+        }
+
+        const SparsityPattern& q = *other.pattern;
+        for (int i = 0; i < q.n; ++i)
+            for (int k = q.rowStart[(std::size_t) i], e = q.rowStart[(std::size_t) i + 1]; k < e; ++k)
+                addEntry (i, q.colIndex[(std::size_t) k], scale * other.value[(std::size_t) k]);
+    }
+
     /** Values only: the pattern is shared, so counting it here would count it
         once per matrix. Add pattern->byteSize() separately. */
     std::size_t byteSize() const noexcept override { return value.size() * sizeof (double); }
 
     const SparsityPattern& sparsity() const noexcept { return *pattern; }
+
+    /** Raw values, indexed exactly as the pattern's colIndex is. */
+    const double* values() const noexcept { return value.data(); }
 
 private:
     std::shared_ptr<const SparsityPattern> pattern;

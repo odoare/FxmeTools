@@ -37,8 +37,9 @@ header moving between the halves is invisible from the outside.
 
 `math/` holds the numerics that have nothing to do with acoustics: dense and
 compressed-sparse-row matrix storage behind one small operator interface, a
-Cholesky factorisation, a Jacobi eigensolver for small dense blocks, and a
-shift-invert subspace iteration for the lowest eigenpairs of `A x = lambda M x`.
+dense and a profile Cholesky, a bandwidth-reducing renumbering, a Jacobi
+eigensolver for small dense blocks, and a shift-invert subspace iteration for
+the lowest eigenpairs of `A x = lambda M x`.
 
 The split is worth stating explicitly because it is easy to lose. `acoustics/`
 knows about plates — boundary conditions, Morley elements, mode shapes sampled
@@ -53,14 +54,30 @@ matrix-free operator, chosen at the call site with no change to either half.
 | `math/LinearOperator.h` | `SymmetricOperator`, `AssemblableMatrix`, `SpdSolver` — the whole interface between an algorithm and a storage format |
 | `math/DenseLinearAlgebra.h` | `DenseSymmetricMatrix`, `DenseCholesky`, Jacobi eigensolver, fixed-size inverse |
 | `math/SparseMatrix.h` | `SparsityPattern`, `SparsityBuilder`, `SparseSymmetricMatrix` (compressed rows, both triangles, sorted columns) |
+| `math/BandwidthOrdering.h` | reverse Cuthill-McKee renumbering, and the profile it produces |
+| `math/SkylineCholesky.h` | profile (envelope) Cholesky, thread-safe solves |
 | `math/SubspaceEigensolver.h` | lowest eigenpairs of `A x = lambda M x` by shift-invert subspace iteration |
 | `math/ParallelFor.h` | small dynamic index-range splitter |
 
-Compressed rows keep their column indices sorted, so a sparse row walk visits
-non-zeros in the same ascending order a dense row walk would. The two storage
-paths therefore agree bit for bit rather than merely to round-off, which makes
-"dense and sparse give the same answer" a test sharp enough to catch an
-indexing slip (`FemTests`, in the FemPlate repository, asserts it).
+Two things are worth knowing before using any of it.
+
+**Storage is exact, ordering is not free.** Compressed rows keep their column
+indices sorted, so a sparse row walk visits non-zeros in the same ascending
+order a dense row walk would, and the two matrix-vector products are the same
+floating-point number — `CoreMathTests` asserts bit-for-bit equality, which is
+sharp enough to catch a mis-set index rather than only a mis-set value. A
+*factorisation* is different: changing the elimination order changes the
+rounding, so a profile factorisation of a renumbered matrix agrees with a dense
+one to round-off (measured at 1e-15), not to the bit.
+
+**The renumbering is the caller's to apply.** `reverseCuthillMcKee` returns a
+permutation and stops there; `SkylineCholesky` factorises whatever numbering it
+is handed, and its envelope is only narrow if someone made it so. For a
+finite-element assembly the right place to apply it is the degree-of-freedom
+map, before anything is assembled — then every matrix, every eigenvector and
+every exported nodal value is in the new numbering already and nothing is ever
+permuted back. Applying it closer to the solver means threading it through each
+of those steps, which is how one gets plausible-looking wrong eigenvectors.
 
 ## The util layer
 
@@ -90,9 +107,14 @@ cmake --build build-core
 ctest --test-dir build-core --output-on-failure
 ```
 
-That is the whole loop: seconds, no plugin host, no JUCE checkout needed. Two
+That is the whole loop: seconds, no plugin host, no JUCE checkout needed. Three
 tests run:
 
+- **`FxmeCoreMathTests`** — the math layer against closed-form answers: storage
+  formats multiplying identically, the renumbering being a valid permutation
+  that shrinks the profile, the profile factorisation agreeing with the dense
+  one under a renumbering round trip, and the eigensolver reproducing the
+  known spectrum of a 1D Laplacian.
 - **`FxmeCoreTests`** — behaviour of the util layer against JUCE's documented
   semantics (the −100 dB `Decibels` floor, `roundToInt`'s round-half-away-from-zero,
   `jlimit`'s argument order, `Random`'s ranges, the implicit conversions).

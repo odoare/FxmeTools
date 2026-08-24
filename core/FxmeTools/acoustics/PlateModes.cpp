@@ -35,9 +35,17 @@
       what the assembly scatters — and an element the value pass skips as
       degenerate costs a stored zero, nothing worse.
 
-    * Eigensolver: dense Cholesky of (A + sigma*M) with A = K + T0*G, then
-      shift-invert subspace iteration with Rayleigh-Ritz. The factorisation is
-      still the dense one; the assembled operators are not.
+    * Renumbering happens in the DOF map, before anything is assembled. That is
+      the whole of it: no matrix is permuted, no eigenvector is permuted back,
+      and the vertex values exported at the end read through the same
+      renumbered map they were assembled through. Putting the permutation
+      anywhere else would mean threading it through every one of those steps,
+      which is the kind of change that produces plausible-looking wrong mode
+      shapes.
+
+    * Eigensolver: shift-invert subspace iteration with Rayleigh-Ritz on
+      (A + sigma*M) with A = K + T0*G. Sparse storage factorises inside the
+      envelope the renumbering leaves; dense storage forms the full matrix.
 
     Author: Olivier Doaré, github.com/odoare
     SPDX-License-Identifier: LGPL-3.0-or-later
@@ -46,7 +54,9 @@
 
 #include "PlateModes.h"
 
+#include <FxmeTools/math/BandwidthOrdering.h>
 #include <FxmeTools/math/DenseLinearAlgebra.h>
+#include <FxmeTools/math/SkylineCholesky.h>
 #include <FxmeTools/math/SparseMatrix.h>
 #include <FxmeTools/math/SubspaceEigensolver.h>
 
@@ -159,10 +169,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
     // per-mode tension coefficient, M for the eigenproblem). All three share
     // one sparsity pattern: same mesh, same DOF map, same couplings.
     // ------------------------------------------------------------------
-    std::shared_ptr<const math::SparsityPattern> pattern;
-    std::unique_ptr<math::AssemblableMatrix> A, G, M;
-
-    if (options.storage == MatrixStorage::sparse)
+    const auto buildPattern = [&]
     {
         math::SparsityBuilder builder (n);
         builder.reserveElements (nt, 6);
@@ -172,11 +179,42 @@ ModalResult computePlateModes (const FemMesh& mesh,
             elementDofs (ti, dof);
             builder.addClique (dof, 6);
         }
-        pattern = builder.build();
+        return builder.build();
+    };
 
-        A = std::make_unique<math::SparseSymmetricMatrix> (pattern);
+    std::shared_ptr<const math::SparsityPattern> pattern;
+    std::unique_ptr<math::AssemblableMatrix> A, G, M;
+    math::SparseSymmetricMatrix* sparseA = nullptr;   // non-null on the sparse
+    math::SparseSymmetricMatrix* sparseM = nullptr;   // path only
+
+    if (options.storage == MatrixStorage::sparse)
+    {
+        // Renumber the degrees of freedom for a narrow factorisation envelope
+        // before anything is assembled. Doing it here rather than around the
+        // solver is what keeps the change invisible: the DOF map is the single
+        // place the numbering is decided, so every matrix, every eigenvector
+        // and every exported nodal value below is in the new numbering
+        // already, and nothing is ever permuted back. The first pattern exists
+        // only to give the ordering the coupling graph.
+        const auto perm = math::reverseCuthillMcKee (*buildPattern());
+        const auto toNew = math::invertPermutation (perm);
+
+        for (int& d : vertexDof)
+            if (d >= 0)
+                d = toNew[(size_t) d];
+        for (int& d : edgeDof)
+            if (d >= 0)
+                d = toNew[(size_t) d];
+
+        pattern = buildPattern();
+
+        auto as = std::make_unique<math::SparseSymmetricMatrix> (pattern);
+        auto ms = std::make_unique<math::SparseSymmetricMatrix> (pattern);
+        sparseA = as.get();
+        sparseM = ms.get();
+        A = std::move (as);
+        M = std::move (ms);
         G = std::make_unique<math::SparseSymmetricMatrix> (pattern);
-        M = std::make_unique<math::SparseSymmetricMatrix> (pattern);
     }
     else
     {
@@ -331,17 +369,35 @@ ModalResult computePlateModes (const FemMesh& mesh,
     // Shifted operator P = A + sigma M, Cholesky-factored once. The shift
     // keeps P positive definite when rigid-body modes make A singular.
     //
-    // This is the one dense n x n allocation left on the sparse path, and the
-    // reason its footprint is a few times smaller than the dense path's rather
-    // than a hundred times.
+    // Sparse storage factorises within the envelope left by the renumbering
+    // above (a few percent of a dense factor); dense storage forms the full
+    // n x n matrix. Either way it happens once, and the factor is then solved
+    // against from several threads at a time.
     // ------------------------------------------------------------------
     const double traceA = A->trace();
     const double traceM = M->trace();
     const double sigma = std::max (1.0e-8, 1.0e-5 * traceA / std::max (traceM, 1.0e-30));
 
-    const math::DenseCholesky shifted (math::denseShiftedSum (*A, sigma, *M), n);
-    if (! shifted.ok())
-        return result;
+    std::unique_ptr<math::SpdSolver> shifted;
+
+    if (sparseA != nullptr)
+    {
+        math::SparseSymmetricMatrix P = *sparseA;    // shares the pattern
+        P.addScaled (*sparseM, sigma);
+
+        auto factor = std::make_unique<math::SkylineCholesky> (P);
+        if (! factor->ok())
+            return result;
+        shifted = std::move (factor);
+    }
+    else
+    {
+        auto factor = std::make_unique<math::DenseCholesky> (
+            math::denseShiftedSum (*A, sigma, *M), n);
+        if (! factor->ok())
+            return result;
+        shifted = std::move (factor);
+    }
     report (0.25f);
 
     // ------------------------------------------------------------------
@@ -353,13 +409,13 @@ ModalResult computePlateModes (const FemMesh& mesh,
     if (options.progress)
         so.progress = [&report] (float f) { report (0.25f + 0.70f * f); };
 
-    const auto sub = math::subspaceEigenSolve (*A, *M, shifted, so);
+    const auto sub = math::subspaceEigenSolve (*A, *M, *shifted, so);
     if (! sub.valid())
         return result;
 
     result.solverBytes = A->byteSize() + G->byteSize() + M->byteSize()
                          + (pattern != nullptr ? pattern->byteSize() : 0)
-                         + shifted.byteSize()
+                         + shifted->byteSize()
                          + sub.blockBytes;
 
     // ------------------------------------------------------------------
