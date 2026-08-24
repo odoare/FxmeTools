@@ -22,6 +22,7 @@ core/
 └── FxmeTools/
     ├── util/                   the framework-free replacements (see below)
     ├── dsp/                    JUCE-free DSP kernels
+    ├── math/                   linear algebra, sparse storage, eigensolver
     ├── midi/                   music theory, sequencing
     ├── acoustics/              FEM plate modes
     └── image/                  geometry (homography, camera pose)
@@ -31,6 +32,35 @@ The include spelling is deliberately unchanged: core headers are still reached
 as `<FxmeTools/dsp/Ambisonics.h>`, because `core/` becomes a second include
 root alongside the repository root. **No consumer include needs editing** — a
 header moving between the halves is invisible from the outside.
+
+## The math layer
+
+`math/` holds the numerics that have nothing to do with acoustics: dense and
+compressed-sparse-row matrix storage behind one small operator interface, a
+Cholesky factorisation, a Jacobi eigensolver for small dense blocks, and a
+shift-invert subspace iteration for the lowest eigenpairs of `A x = lambda M x`.
+
+The split is worth stating explicitly because it is easy to lose. `acoustics/`
+knows about plates — boundary conditions, Morley elements, mode shapes sampled
+at mesh vertices. `math/` knows about matrices and nothing else: it has never
+heard of a plate, and the eigensolver never sees a matrix at all, only
+`SymmetricOperator::multiply` and `SpdSolver::solveInPlace`. That is what lets
+the same iteration run on dense storage, on sparse storage, or later on a
+matrix-free operator, chosen at the call site with no change to either half.
+
+| Header | What it is |
+|---|---|
+| `math/LinearOperator.h` | `SymmetricOperator`, `AssemblableMatrix`, `SpdSolver` — the whole interface between an algorithm and a storage format |
+| `math/DenseLinearAlgebra.h` | `DenseSymmetricMatrix`, `DenseCholesky`, Jacobi eigensolver, fixed-size inverse |
+| `math/SparseMatrix.h` | `SparsityPattern`, `SparsityBuilder`, `SparseSymmetricMatrix` (compressed rows, both triangles, sorted columns) |
+| `math/SubspaceEigensolver.h` | lowest eigenpairs of `A x = lambda M x` by shift-invert subspace iteration |
+| `math/ParallelFor.h` | small dynamic index-range splitter |
+
+Compressed rows keep their column indices sorted, so a sparse row walk visits
+non-zeros in the same ascending order a dense row walk would. The two storage
+paths therefore agree bit for bit rather than merely to round-off, which makes
+"dense and sparse give the same answer" a test sharp enough to catch an
+indexing slip (`FemTests`, in the FemPlate repository, asserts it).
 
 ## The util layer
 

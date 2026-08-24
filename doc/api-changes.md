@@ -11,6 +11,68 @@ project after a break.
 
 ---
 
+## New `core/FxmeTools/math/` — linear algebra split out of the plate solver, and sparse matrix storage
+
+Additive, with one behavioural default changed inside `computePlateModes`.
+**No consumer API breaks**, but the plate solver now stores its matrices
+sparsely by default, which changes its memory footprint (down) and its speed
+(up) without changing a single returned number.
+
+**Why.** `acoustics/PlateModes.cpp` had grown a private dense linear algebra
+library inside its anonymous namespace: Cholesky, symmetric matrix-vector
+product, Jacobi eigensolver, a 6x6 inverse, a thread splitter, and a subspace
+iteration. None of that is about plates, all of it is generally useful, and
+keeping it hidden meant it could not be tested, reused or replaced
+independently of the physics.
+
+It now lives in `core/FxmeTools/math/`:
+
+| Header | Contents |
+|---|---|
+| `math/LinearOperator.h` | `SymmetricOperator`, `AssemblableMatrix`, `SpdSolver` |
+| `math/DenseLinearAlgebra.h` | `DenseSymmetricMatrix`, `DenseCholesky`, `choleskyFactorInPlace`, `jacobiEigenSymmetric`, `invertMatrix<N>` |
+| `math/SparseMatrix.h` | `SparsityPattern`, `SparsityBuilder`, `SparseSymmetricMatrix` |
+| `math/SubspaceEigensolver.h` | `subspaceEigenSolve (A, M, shiftedSolver, options)` |
+| `math/ParallelFor.h` | `parallelFor`, `defaultWorkerCount` |
+
+The eigensolver never sees a matrix: it multiplies through
+`SymmetricOperator` and solves through `SpdSolver`. That is what makes the
+storage a call-site choice rather than a rewrite.
+
+**What changed behaviourally.** A Morley plate element couples each degree of
+freedom to about eleven others whatever the mesh density, so the assembled
+matrices were mostly zeros in dense storage. `ModalOptions::storage` now
+selects `MatrixStorage::sparse` (the default) or `MatrixStorage::dense`, and
+`ModalResult` reports `solverBytes` (measured, not estimated) and
+`storageUsed`.
+
+The shifted operator `A + sigma M` is still factorised densely, so the working
+set went from `4 n^2` doubles to `n^2` plus the iteration block, rather than
+the two orders of magnitude a sparse factorisation would give. Measured back
+to back, same mesh both ways:
+
+| n | modes | dense | sparse |
+|---:|---:|---|---|
+| 2149 | 64 | 13.1 s / 125 MB | 7.3 s / 36 MB |
+| 3841 | 128 | 114.8 s / 419 MB | 59.9 s / 122 MB |
+| 6029 | 128 | 335.5 s / 1.0 GB | 171.0 s / 287 MB | Making the factorisation
+sparse as well (bandwidth-reducing ordering plus a profile Cholesky) is the
+next step, and it plugs in as another `SpdSolver` with nothing else moving.
+
+Both paths produce **bit-identical** results, not merely equal-to-round-off
+ones: compressed rows keep their column indices sorted, so a sparse row walk
+sums the non-zeros in the same order a dense row walk does. FemPlate's
+`FemTests` asserts this, which turns "the two storage paths agree" into a test
+sharp enough to catch an indexing slip.
+
+**Per project:** FemPlate is the only consumer of `acoustics/` so far and needs
+no source change — the default simply got cheaper. A consumer wanting the old
+behaviour exactly sets `options.storage = MatrixStorage::dense`. Anything that
+needs a symmetric generalized eigenproblem solved can now use `math/` directly
+without pulling in the plate code.
+
+---
+
 ## `acoustics/FemViewComponent.h` — `setFieldScale()`, and a field that can animate
 
 Purely additive: one new method, and an internal rewrite of the rasteriser.

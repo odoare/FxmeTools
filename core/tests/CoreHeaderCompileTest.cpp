@@ -157,6 +157,23 @@
  #include <FxmeTools/midi/StringSequencer.h>
 #endif
 
+// -- math -----------------------------------------------------------------
+#if FXME_TRY_INCLUDE(<FxmeTools/math/ParallelFor.h>)
+ #include <FxmeTools/math/ParallelFor.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/LinearOperator.h>)
+ #include <FxmeTools/math/LinearOperator.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/DenseLinearAlgebra.h>)
+ #include <FxmeTools/math/DenseLinearAlgebra.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/SparseMatrix.h>)
+ #include <FxmeTools/math/SparseMatrix.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/math/SubspaceEigensolver.h>)
+ #include <FxmeTools/math/SubspaceEigensolver.h>
+#endif
+
 // -- acoustics ------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/acoustics/FemMesh.h>)
  #include <FxmeTools/acoustics/FemMesh.h>
