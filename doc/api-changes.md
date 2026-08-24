@@ -11,6 +11,35 @@ project after a break.
 
 ---
 
+## `acoustics/FemViewComponent.h` — `setFieldScale()`, and a field that can animate
+
+Purely additive: one new method, and an internal rewrite of the rasteriser.
+The default behaviour is unchanged, so **no consumer needs to do anything.**
+
+**Why.** FemPlate now draws the live plate displacement in the same contour
+view it draws mode shapes in, refreshed from a 30 Hz timer. Two things in
+`renderFieldImage()` made that impossible:
+
+- it normalised every field on its own maximum, which is right for a still
+  picture (a mode shape has no natural scale) and wrong for an animation:
+  a decaying ring would look eternal and silence would come up as amplified
+  noise. `setFieldScale (maxAbsValue)` lets the caller hold the reference
+  across frames; `0`, the default, keeps the old self-normalisation.
+- it cost a `std::round`, a `std::pow` and a `Colour` interpolation per
+  *pixel*, plus a fresh `juce::Image` allocation per update. The colour map
+  is quantised into `2*levels-1` bands, so those colours are now built once
+  per render into a `PixelARGB` table and looked up, written straight through
+  `BitmapData::getPixelPointer`, into an image that is reused whenever the
+  size has not changed.
+
+The visible output is identical band for band; only the cost and the
+normalisation control changed.
+
+**Per project:** FemPlate is the only consumer of `acoustics/` so far. Any
+future one gets the speed-up for free and can ignore `setFieldScale()`.
+
+---
+
 ## `components/FxmeNumberBox.h` — a new control, not a change
 
 Purely additive: a new `fxme::FxmeNumberBox` component, registered in the

@@ -23,6 +23,12 @@
     with the plate y axis pointing up. The field image is cached and only
     re-rasterised when the mesh, field or size changes.
 
+    The field may be animated (setField from a timer): the rasteriser holds
+    its image across updates and resolves each pixel through a per-band
+    colour table, so a re-render costs a scanline fill rather than a
+    transcendental per pixel. Pair it with setFieldScale() so successive
+    frames share one amplitude reference.
+
     Author: Olivier Doaré, github.com/odoare
     Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
     AGPL Version 3.0, or under commercial terms available from the author.
@@ -40,6 +46,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace fxme::acoustics
 {
@@ -66,6 +73,19 @@ public:
     void setField (std::vector<float> vertexValues)
     {
         field = std::move (vertexValues);
+        fieldDirty = true;
+        repaint();
+    }
+
+    /** Value mapped to full colour. 0 (the default) normalises every field
+        on its own maximum, which is what a still picture such as a mode
+        shape wants; an *animated* field needs a reference that outlives the
+        frame, or self-normalisation hides the very amplitude changes the
+        animation is about (a decaying ring would look eternal, and silence
+        would come up as amplified noise). */
+    void setFieldScale (float maxAbsValue)
+    {
+        fieldScale = maxAbsValue;
         fieldDirty = true;
         repaint();
     }
@@ -212,10 +232,31 @@ private:
         }
 
         float maxAbs = 1.0e-30f;
-        for (float v : field)
-            maxAbs = std::max (maxAbs, std::abs (v));
+        if (fieldScale > 0.0f)
+            maxAbs = fieldScale;                      // caller-held reference
+        else
+            for (float v : field)
+                maxAbs = std::max (maxAbs, std::abs (v));
 
-        fieldImage = juce::Image (juce::Image::ARGB, w, h, true);
+        // The colour map is quantised into bands, so there are only
+        // 2*levels-1 distinct colours in the whole image: build them once and
+        // look them up, instead of a round, a pow and a colour interpolation
+        // per pixel. With the direct pixel writes below this is what makes
+        // the difference between a still picture and a field that can be
+        // re-rendered at frame rate.
+        const int numBands = 2 * levels - 1;
+        lut.resize ((size_t) numBands);
+        for (int i = 0; i < numBands; ++i)
+            lut[(size_t) i] = colourForValue ((float) (i - (levels - 1))
+                                              / (float) (levels - 1)).getPixelARGB();
+
+        // Reuse the image when the size has not changed: at frame rate this
+        // is a megabyte of allocation per update otherwise.
+        if (! fieldImage.isValid() || fieldImage.getWidth() != w || fieldImage.getHeight() != h)
+            fieldImage = juce::Image (juce::Image::ARGB, w, h, true);
+        else
+            fieldImage.clear (fieldImage.getBounds());
+
         juce::Image::BitmapData bits (fieldImage, juce::Image::BitmapData::writeOnly);
 
         const auto& m = *mesh_;
@@ -250,7 +291,10 @@ private:
                     if (l0 < -0.02f || l1 < -0.02f || l2 < -0.02f)
                         continue;
                     const float v = juce::jlimit (-1.0f, 1.0f, l0 * v0 + l1 * v1 + l2 * v2);
-                    bits.setPixelColour (px, py, colourForValue (v));
+                    const int band = juce::jlimit (0, numBands - 1,
+                        (int) std::lround (v * (float) (levels - 1)) + levels - 1);
+                    *reinterpret_cast<juce::PixelARGB*> (bits.getPixelPointer (px, py))
+                        = lut[(size_t) band];
                 }
             }
         }
@@ -259,6 +303,8 @@ private:
     std::shared_ptr<const FemMesh> mesh_;
     std::vector<float> field;
     juce::Image fieldImage;
+    std::vector<juce::PixelARGB> lut;
+    float fieldScale = 0.0f;         // 0 = normalise each field on its own max
     bool fieldDirty = true;
     bool showGrid = true;
     int levels = 13;
