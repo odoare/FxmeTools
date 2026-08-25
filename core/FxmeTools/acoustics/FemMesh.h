@@ -81,11 +81,21 @@ double polygonArea (const std::vector<Point2>& polygon);
 /** Point-in-polygon test (even-odd rule). */
 bool pointInPolygon (const std::vector<Point2>& polygon, double x, double y);
 
-/** Generates a triangular mesh filling `polygon` (closed, arbitrary
-    orientation, coordinates expected O(1), e.g. inside the unit square).
-    `targetH` is the desired element edge length in the same units.
-    Returns an empty mesh when the polygon is degenerate (fewer than 3
-    points or ~zero area). */
+/** Generates a triangular mesh filling `polygon` (closed, coordinates
+    expected O(1), e.g. inside the unit square). `targetH` is the desired
+    element edge length in the same units. Returns an empty mesh when the
+    polygon is degenerate (fewer than 3 points or ~zero area).
+
+    ORIENTATION MATTERS, even though any winding is accepted. A clockwise
+    polygon is reversed internally so that the boundary parameter always
+    walks counter-clockwise — which also moves where t = 0 sits, since the
+    reversed walk starts from what was the last point. So the parameter a
+    caller computes along its own copy of the polygon agrees with
+    vertexParam/edgeParam only if that copy is counter-clockwise: measured on
+    an ellipse, a clockwise outline puts t = 0.25 at the opposite end of the
+    plate. Anything that attaches data to arc position — boundary conditions
+    above all — should hold its polygon counter-clockwise (polygonArea() > 0)
+    and hand the same one to this function. */
 FemMesh generateMesh (const std::vector<Point2>& polygon, double targetH);
 
 /** Locates the triangle containing (x, y); fills bary[3] with its barycentric
