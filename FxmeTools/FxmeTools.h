@@ -152,6 +152,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/acoustics/FemMesh.h>
 #include <FxmeTools/acoustics/PlateModes.h>
 #include "acoustics/FemViewComponent.h"
+#include "acoustics/FemView3DComponent.h"
 
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.

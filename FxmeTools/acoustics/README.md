@@ -7,13 +7,14 @@ filled contours.
 
 The numerical core (`FemMesh`, `PlateModes`) is **pure C++17 with no JUCE
 dependency**, so it can be unit-tested from a console target and reused
-outside JUCE projects. Only `FemViewComponent.h` requires JUCE.
+outside JUCE projects. Only the two display components require JUCE.
 
 | File | Contents | Deps |
 | --- | --- | --- |
 | `FemMesh.h/.cpp` | `Point2`, polygon utilities, `FemMesh`, Delaunay mesh generation, point location, nodal interpolation | std only |
 | `PlateModes.h/.cpp` | `BoundaryCondition`, `BoundarySpec`, Morley-element assembly, dense subspace eigensolver, `ModalResult` | std only |
 | `FemViewComponent.h` | mesh / filled-contour display component | JUCE |
+| `FemView3DComponent.h` | the same mesh and field as an orbited deformed surface | JUCE |
 
 ## Physics
 
@@ -93,6 +94,14 @@ run it from a background thread (`fxme::BackgroundTaskRunner` fits well)
 and keep meshes below a few thousand DOFs.
 
 ## Display
+
+`FemView3DComponent` draws the same mesh and field as a heightfield, turned
+by click-and-drag and zoomed with the wheel, with the field as relief, flat
+Lambert shading on each facet and the mesh stroked over it. Use it to watch the plate *move*; use the flat view to compare mode
+shapes or to point at a position, which the 3D one deliberately does not
+support — a screen point there is not a plate point, since the surface folds
+over itself. Its setters mirror the flat view's, so one refresh path can feed
+either.
 
 `FemViewComponent` fits the mesh into its bounds (plate y axis up),
 draws the grid and/or a per-vertex field as banded filled contours

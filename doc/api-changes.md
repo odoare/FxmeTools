@@ -11,6 +11,69 @@ project after a break.
 
 ---
 
+## New `acoustics/FemView3DComponent.h` — the plate mesh as a deformed surface
+
+Purely additive: one new component, one new header in the module umbrella.
+**No consumer needs to do anything.**
+
+**Why.** `FemViewComponent` draws a mesh and a nodal field flat, as banded
+contours. That is the right picture for comparing mode shapes and for pointing
+at a position on the plate, and the wrong one for seeing a plate *move*: from
+directly above, a bump and a dip differ only in colour. The new component draws
+the same mesh and the same field as a heightfield, orbited with click-and-drag.
+
+| Type | What it is |
+|---|---|
+| `fxme::acoustics::HeightFieldProjection` | orthographic orbit camera over a heightfield — `setViewport`, `setOrientation`, `project(x, y, z, &depth)` |
+| `fxme::acoustics::FemView3DComponent` | the component: `setMesh`, `setField`, `setFieldScale`, `setHeightScale`, `setColours`, `setSurfaceColour`, `setShowGrid`, `setOrientation`, `setZoom`, `paintOverlay` |
+
+The setter names deliberately mirror `FemViewComponent`, so a caller already
+animating one can feed the other from the same code — FemPlate switches between
+them from a combo box and shares its whole field-refresh path.
+
+**Two things worth knowing before using it.**
+
+The mesh is stroked over each facet as it is filled (`setShowGrid`, on by
+default). Stroking inside the depth-sorted loop rather than in a pass of its
+own is what removes the wireframe's own hidden lines — a nearer facet drawn
+later covers the edges behind it, where one pass over all edges at the end
+would draw the whole mesh through the plate. Shared edges are stroked twice,
+once per adjacent triangle, and that is the mechanism rather than waste: the
+stroke that survives belongs to the nearer facet.
+
+Drag orbits, the wheel zooms about the centre of the view. There is no pan:
+zooming well in leaves the plate's edges off screen, and turning it is the
+gesture that stands in for one. `setZoom` is public so a caller can offer its
+own control.
+
+It has **no `onPlateClick`**, and that is not an omission. The drag gesture is
+the camera, and more importantly a screen point in a deformed view is not a
+plate point: the surface folds over itself, so the mapping is neither
+single-valued nor invertible. Anything that needs pointing at belongs in the
+flat view. `projection()` is exposed for callers that want to draw *into* the
+scene, which is the well-defined direction.
+
+The projection is **orthographic on purpose**. A perspective divide makes the
+near edge of a flat plate larger than the far one, which the eye reads as the
+plate being wedge-shaped rather than as depth.
+
+`setColours` takes the flat view's four colours so one call themes both, but
+the undeflected surface is drawn in a neutral *derived* from the background
+rather than in the background itself — a diverging map centred on the
+background makes a flat or quiet plate invisible, leaving only its silhouette.
+`setSurfaceColour` overrides that neutral.
+
+**Cost** is one `fillPath` per triangle per repaint, software-rendered with a
+painter's-algorithm depth sort — exact here, since a heightfield cannot
+self-intersect, and it needs nothing but `juce::Graphics`. It scales with the
+mesh rather than the window; a few thousand triangles at 30 Hz is comfortable,
+and a very fine mesh is better viewed flat.
+
+**Per project:** FemPlate adds two view-selector entries. Any other consumer
+gets a new component and can ignore it.
+
+---
+
 ## `math/BandwidthOrdering.h`, `math/SkylineCholesky.h` — the factorisation goes sparse too
 
 Additive: two new headers, and `computePlateModes` now renumbers and
