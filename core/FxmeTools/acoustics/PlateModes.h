@@ -86,12 +86,20 @@
 namespace fxme::acoustics
 {
 
+/** Ordered from the stiffest edge to the least stiff, which is the order
+    `strength()` scores them in and the order the UI presents and cycles
+    them in. Clamped constrains deflection and rotation, simple support
+    only deflection, sliding only rotation, free neither.
+
+    The numeric values are serialised by consumers, so a reordering is a
+    file-format change: ModalDish carries a `bcOrder` migration for state
+    written before this order. */
 enum class BoundaryCondition
 {
-    Free = 0,
+    Clamped = 0,
     SimplySupported,
-    Clamped,
-    Sliding
+    Sliding,
+    Free
 };
 
 /** Per-segment boundary conditions over the outline arc parameter.
