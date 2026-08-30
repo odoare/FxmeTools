@@ -81,6 +81,31 @@ double polygonArea (const std::vector<Point2>& polygon);
 /** Point-in-polygon test (even-odd rule). */
 bool pointInPolygon (const std::vector<Point2>& polygon, double x, double y);
 
+/** Douglas-Peucker simplification of a *closed* polygon: drops the vertices
+    that can be removed while every original vertex stays within `tolerance`
+    of the resulting outline.
+
+    Closed rather than open, so there are no endpoints to anchor on; vertex 0
+    and the vertex furthest from it are kept and the two chains between them
+    simplified, which is why a feature on the far side of the ring survives.
+    Never returns fewer than three vertices, and returns the input unchanged
+    when it already has three or fewer.
+
+    The budget goes to corners rather than being spread evenly, which is what
+    makes it the right reduction for an outline someone drew: a densely
+    sampled rectangle comes back as its four corners exactly. */
+std::vector<Point2> simplifyPolygon (const std::vector<Point2>& polygon,
+                                     double tolerance);
+
+/** simplifyPolygon with the tolerance chosen for you: the smallest that gets
+    the count down to `maxVertices`, so the result is as faithful as it can be
+    at that size. A polygon already within the budget is returned untouched.
+
+    This is the form an editor wants when adopting a dense outline (a spline
+    sampled at 128 points, say) into something a person can drag by hand. */
+std::vector<Point2> simplifyPolygonTo (const std::vector<Point2>& polygon,
+                                       int maxVertices);
+
 /** Generates a triangular mesh filling `polygon` (closed, coordinates
     expected O(1), e.g. inside the unit square). `targetH` is the desired
     element edge length in the same units. Returns an empty mesh when the

@@ -28,7 +28,7 @@ the same mesh and the same field as a heightfield, orbited with click-and-drag.
 | `fxme::acoustics::FemView3DComponent` | the component: `setMesh`, `setField`, `setFieldScale`, `setHeightScale`, `setColours`, `setSurfaceColour`, `setShowGrid`, `setOrientation`, `setZoom`, `paintOverlay` |
 
 The setter names deliberately mirror `FemViewComponent`, so a caller already
-animating one can feed the other from the same code — FemPlate switches between
+animating one can feed the other from the same code — ModalDish switches between
 them from a combo box and shares its whole field-refresh path.
 
 **Two things worth knowing before using it.**
@@ -69,7 +69,7 @@ self-intersect, and it needs nothing but `juce::Graphics`. It scales with the
 mesh rather than the window; a few thousand triangles at 30 Hz is comfortable,
 and a very fine mesh is better viewed flat.
 
-**Per project:** FemPlate adds two view-selector entries. Any other consumer
+**Per project:** ModalDish adds two view-selector entries. Any other consumer
 gets a new component and can ignore it.
 
 ---
@@ -141,7 +141,7 @@ still holds.
 **New test target:** `FxmeCoreMathTests` in `core/tests/`, covering the math
 layer against closed-form answers with no acoustics involved.
 
-**Per project:** FemPlate needs no source change. Its Grid knob stops at 48 for
+**Per project:** ModalDish needs no source change. Its Grid knob stops at 48 for
 a reason that no longer exists (the dense solver needed 737 MB there), so that
 cap is now a product decision rather than a numerical one.
 
@@ -197,11 +197,11 @@ next step, and it plugs in as another `SpdSolver` with nothing else moving.
 
 Both paths produce **bit-identical** results, not merely equal-to-round-off
 ones: compressed rows keep their column indices sorted, so a sparse row walk
-sums the non-zeros in the same order a dense row walk does. FemPlate's
+sums the non-zeros in the same order a dense row walk does. ModalDish's
 `FemTests` asserts this, which turns "the two storage paths agree" into a test
 sharp enough to catch an indexing slip.
 
-**Per project:** FemPlate is the only consumer of `acoustics/` so far and needs
+**Per project:** ModalDish is the only consumer of `acoustics/` so far and needs
 no source change — the default simply got cheaper. A consumer wanting the old
 behaviour exactly sets `options.storage = MatrixStorage::dense`. Anything that
 needs a symmetric generalized eigenproblem solved can now use `math/` directly
@@ -214,7 +214,7 @@ without pulling in the plate code.
 Purely additive: one new method, and an internal rewrite of the rasteriser.
 The default behaviour is unchanged, so **no consumer needs to do anything.**
 
-**Why.** FemPlate now draws the live plate displacement in the same contour
+**Why.** ModalDish now draws the live plate displacement in the same contour
 view it draws mode shapes in, refreshed from a 30 Hz timer. Two things in
 `renderFieldImage()` made that impossible:
 
@@ -233,7 +233,7 @@ view it draws mode shapes in, refreshed from a 30 Hz timer. Two things in
 The visible output is identical band for band; only the cost and the
 normalisation control changed.
 
-**Per project:** FemPlate is the only consumer of `acoustics/` so far. Any
+**Per project:** ModalDish is the only consumer of `acoustics/` so far. Any
 future one gets the speed-up for free and can ignore `setFieldScale()`.
 
 ---
@@ -538,7 +538,7 @@ Their own `.gitmodules` names FxmeTools.
 | AmbiRR2 | `lib/FxmeTools` | CMake safe, **never built** | — |
 | Bloom | `lib/FxmeTools` | CMake safe, **never built** | — |
 | Dede | `lib/FxmeTools` | done (wired by hand) | 2026-08 |
-| FemPlate | `lib/FxmeTools` | done | 2026-08 |
+| ModalDish (was FemPlate) | `lib/FxmeTools` | done | 2026-08 |
 | FxmeFX | `lib/FxmeTools` | done (Pd externals needed core) | 2026-08 |
 | Localizer | `lib/FxmeTools` | CMake safe, **never built** | — |
 | Mango | `lib/FxmeTools` | done | 2026-08 |
@@ -630,8 +630,8 @@ an offline render check — has its own include roots and stops finding whatever
 moved. Linking `FxmeCore` fixes it, or add the second root by hand.
 
 Known instances: SuperMoTo had three (fixed). FxmeFX had thirteen — every one
-of its Pure Data externals (fixed). Mango has two. FemPlate has one, and its
-case is worse than a missing header — see below.
+of its Pure Data externals (fixed). Mango has two. ModalDish had one, whose
+case was worse than a missing header (fixed) — see below.
 
 The FxmeFX case is the one worth internalising, because the target was *right*
 to avoid the JUCE module and still broke. A Pd external is headless DSP: it
@@ -673,18 +673,26 @@ makes it the strongest evidence the split is sound — but it is a compile, not 
 listen. Chorus, Flanger and Phaser drive `ModLfo`/`Lfo`, and Freeze drives
 `SpectralFreeze`; those are worth hearing before the branch merges.
 
-**FemPlate** — the worst-affected. Needs the CMake wiring, *and* its `FemTests`
-target compiles two FxmeTools sources by path:
+**ModalDish** (renamed from FemPlate in 2026-08) — done. It was the
+worst-affected: it needed the CMake wiring, *and* its `FemTests` target
+compiled two FxmeTools sources by path:
 
 ```cmake
 lib/FxmeTools/FxmeTools/acoustics/FemMesh.cpp
 lib/FxmeTools/FxmeTools/acoustics/PlateModes.cpp
 ```
 
-Both moved to `core/FxmeTools/acoustics/`. This fails as a missing *file* at
-configure time, not as a missing header — a louder failure than the rest, at
-least. Fix by linking `FxmeCore`, which already compiles both, and deleting the
-two lines rather than repointing them.
+Both had moved to `core/FxmeTools/acoustics/`, which failed as a missing *file*
+at configure time rather than as a missing header — a louder failure than the
+rest, at least. Fixed by linking `FxmeCore`, which already compiles both, and
+deleting the two lines rather than repointing them. All four of its test
+targets now link `FxmeCore` on their own line.
+
+It is still the only consumer of `acoustics/`, and it has since contributed
+back to it: `simplifyPolygon` / `simplifyPolygonTo` in `FemMesh` (closed-polygon
+Douglas-Peucker, used to take a 128-point spline outline down to something a
+person can drag by hand) came out of its shape editor, with
+`tests/CoreGeometryTests.cpp` alongside.
 
 **Mango** — done. Plugin, Standalone and VST3 all link (0 undefined symbols,
 core archive members verifiably pulled into the bundle), and both test suites

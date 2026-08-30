@@ -17,6 +17,120 @@
 namespace fxme::acoustics
 {
 
+namespace
+{
+    /** Douglas-Peucker over the open chain p[first..last], flagging the
+        vertices that have to stay for the chain to stay within `tol`. */
+    void simplifyChain (const std::vector<Point2>& p, size_t first, size_t last,
+                        double tol, std::vector<char>& keep)
+    {
+        if (last <= first + 1)
+            return;
+
+        const auto& a = p[first];
+        const auto& b = p[last];
+        const double dx = b.x - a.x, dy = b.y - a.y;
+        const double len2 = dx * dx + dy * dy;
+
+        double worst = -1.0;
+        size_t worstAt = first;
+        for (size_t i = first + 1; i < last; ++i)
+        {
+            double d2;
+            if (len2 <= 0.0)
+            {
+                const double ex = p[i].x - a.x, ey = p[i].y - a.y;
+                d2 = ex * ex + ey * ey;
+            }
+            else
+            {
+                // Squared distance to the segment's infinite line: the cross
+                // product over the segment length.
+                const double cross = (p[i].x - a.x) * dy - (p[i].y - a.y) * dx;
+                d2 = cross * cross / len2;
+            }
+            if (d2 > worst)
+            {
+                worst = d2;
+                worstAt = i;
+            }
+        }
+
+        if (worst > tol * tol)
+        {
+            keep[worstAt] = 1;
+            simplifyChain (p, first, worstAt, tol, keep);
+            simplifyChain (p, worstAt, last, tol, keep);
+        }
+    }
+}
+
+std::vector<Point2> simplifyPolygon (const std::vector<Point2>& polygon, double tolerance)
+{
+    const size_t n = polygon.size();
+    if (n < 4)
+        return polygon;
+
+    // A closed ring has no endpoints, so anchor it on vertex 0 and the vertex
+    // furthest from it, and simplify the two chains between them.
+    size_t far = 0;
+    double best = -1.0;
+    for (size_t i = 1; i < n; ++i)
+    {
+        const double ex = polygon[i].x - polygon[0].x;
+        const double ey = polygon[i].y - polygon[0].y;
+        const double d2 = ex * ex + ey * ey;
+        if (d2 > best) { best = d2; far = i; }
+    }
+
+    std::vector<char> keep (n, 0);
+    keep[0] = 1;
+    keep[far] = 1;
+    simplifyChain (polygon, 0, far, tolerance, keep);
+
+    // The second chain wraps past the end, so walk it in a rotated copy.
+    std::vector<Point2> tail;
+    tail.reserve (n - far + 1);
+    for (size_t i = far; i < n; ++i)
+        tail.push_back (polygon[i]);
+    tail.push_back (polygon[0]);
+
+    std::vector<char> tailKeep (tail.size(), 0);
+    tailKeep.front() = 1;
+    tailKeep.back() = 1;
+    simplifyChain (tail, 0, tail.size() - 1, tolerance, tailKeep);
+    for (size_t i = 1; i + 1 < tail.size(); ++i)
+        if (tailKeep[i])
+            keep[far + i] = 1;
+
+    std::vector<Point2> out;
+    for (size_t i = 0; i < n; ++i)
+        if (keep[i])
+            out.push_back (polygon[i]);
+    return out.size() >= 3 ? out : polygon;
+}
+
+std::vector<Point2> simplifyPolygonTo (const std::vector<Point2>& polygon, int maxVertices)
+{
+    if (maxVertices < 3 || (int) polygon.size() <= maxVertices)
+        return polygon;
+
+    // Start small and grow: the first tolerance that fits the budget is the
+    // most faithful one that does. The cap on the loop is what stops a
+    // pathological polygon (every vertex a corner) spinning forever; it
+    // returns the closest it got, which is still a valid outline.
+    double tol = 0.002;
+    std::vector<Point2> reduced = polygon;
+    for (int pass = 0; pass < 32; ++pass)
+    {
+        reduced = simplifyPolygon (polygon, tol);
+        if ((int) reduced.size() <= maxVertices)
+            break;
+        tol *= 1.4;
+    }
+    return reduced;
+}
+
 double polygonArea (const std::vector<Point2>& polygon)
 {
     const size_t n = polygon.size();
