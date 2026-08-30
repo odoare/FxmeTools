@@ -91,9 +91,8 @@ namespace fxme::acoustics
     them in. Clamped constrains deflection and rotation, simple support
     only deflection, sliding only rotation, free neither.
 
-    The numeric values are serialised by consumers, so a reordering is a
-    file-format change: ModalDish carries a `bcOrder` migration for state
-    written before this order. */
+    Consumers serialise the numeric values, so reordering these is a
+    file-format change for them. */
 enum class BoundaryCondition
 {
     Clamped = 0,
