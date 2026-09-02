@@ -80,6 +80,53 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
     int iter = 0;
     bool converged = false;
 
+    // Progress. Subspace iteration converges linearly, so the distance to the
+    // tolerance falls by a roughly constant factor per sweep and its logarithm
+    // walks to zero in something close to a straight line. Reporting the
+    // fraction of that walk which has been made is what makes the number an
+    // estimate of the work rather than a count of the worst case: a solve
+    // typically stops after seven of the sixty sweeps it is allowed, so
+    // (iter + 1) / maxIters never reached an eighth of its range, and a caller
+    // showing it stood still through nearly all of the running time.
+    //
+    // The iteration count stays underneath as a floor, for the case where the
+    // distance refuses to fall, and the value is held monotone: an estimate
+    // may be wrong, but a progress report that goes backwards is a bug in the
+    // eye of whoever is watching it.
+    // What a solve is expected to cost, in sweeps, used for the first one
+    // only: until two iterates have been compared there is no convergence
+    // history to estimate from, and the first sweep is a fifth of the running
+    // time on a large mesh. Six to eight is the measured range. Guessing high
+    // costs a pause, never a jump backwards, because the report is clamped
+    // monotone below.
+    constexpr int nominalIters = 8;
+
+    double logStart = 0.0;
+    float reported = 0.0f;
+
+    const auto progressFor = [&] (int i, double distance)
+    {
+        float f = (float) (i + 1) / (float) maxIters;
+        if (i == 0)
+            f = std::max (f, 1.0f / (float) nominalIters);
+
+        if (distance > 0.0)
+        {
+            const double lg = std::log (distance);
+
+            // Set the scale from the first real sweep-to-sweep change: the one
+            // before it is measured against the seed, which is random.
+            if (logStart <= 0.0)
+                logStart = lg;
+
+            if (logStart > 0.0)
+                f = std::max (f, (float) std::clamp ((logStart - lg) / logStart, 0.0, 1.0));
+        }
+
+        reported = std::max (reported, std::min (f, 0.99f));
+        return reported;
+    };
+
     for (; iter < maxIters; ++iter)
     {
         // Inverse-power step X -> Z towards the low modes, normalising each
@@ -215,15 +262,25 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
 
         std::sort (theta.begin(), theta.end());
 
-        converged = iter > 2;
-        for (int k = 0; k < wanted && converged; ++k)
+        // How far the block still is from its tolerance, as the largest
+        // shortfall over the requested modes: the distance crosses 1 exactly
+        // when the last of them settles. Every mode is measured, where the
+        // test used to stop at the first failure, because the estimate above
+        // needs the worst one rather than the first bad one. That is `wanted`
+        // subtractions against a sweep that has just solved p systems of order
+        // n, so it costs nothing worth counting.
+        double distance = 0.0;
+        for (int k = 0; k < wanted; ++k)
         {
             const double denom = std::max (std::abs (theta[(std::size_t) k]), 1.0e-12);
             const double rel = std::abs (theta[(std::size_t) k] - thetaPrev[(std::size_t) k]) / denom;
-            converged = rel < (k < wanted / 2 ? options.toleranceLow : options.toleranceHigh);
+            const double tol = k < wanted / 2 ? options.toleranceLow : options.toleranceHigh;
+            distance = std::max (distance, rel / std::max (tol, 1.0e-300));
         }
+
+        converged = iter > 2 && distance < 1.0;
         thetaPrev = theta;
-        report ((float) (iter + 1) / (float) maxIters);
+        report (progressFor (iter, distance));
         if (converged)
             break;
     }

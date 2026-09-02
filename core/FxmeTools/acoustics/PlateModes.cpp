@@ -99,6 +99,12 @@ ModalResult computePlateModes (const FemMesh& mesh,
     if (mesh.empty() || options.numModes < 1)
         return result;
 
+    // Progress. The stages before the eigensolve are given almost none of the
+    // range because that is almost exactly what they cost: numbering, assembly
+    // and the profile factorisation together run in single-digit milliseconds
+    // on a mesh whose eigensolve takes seconds, and a bar that spent a quarter
+    // of itself on them arrived at a quarter in the first frame and then
+    // appeared to stop for the rest of the computation.
     const auto report = [&] (float p)
     {
         if (options.progress)
@@ -222,7 +228,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
         G = std::make_unique<math::DenseSymmetricMatrix> (n);
         M = std::make_unique<math::DenseSymmetricMatrix> (n);
     }
-    report (0.05f);
+    report (0.01f);
 
     const double nu = options.poissonRatio;
     const double T0 = std::max (0.0, options.tension);
@@ -363,7 +369,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
     // while both go through elementDofs, so treat it as the bug it would be.
     if (A->droppedEntries() != 0 || G->droppedEntries() != 0 || M->droppedEntries() != 0)
         return result;
-    report (0.1f);
+    report (0.02f);
 
     // ------------------------------------------------------------------
     // Shifted operator P = A + sigma M, Cholesky-factored once. The shift
@@ -398,7 +404,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
             return result;
         shifted = std::move (factor);
     }
-    report (0.25f);
+    report (0.04f);
 
     // ------------------------------------------------------------------
     // Subspace iteration with Rayleigh-Ritz on (A, M).
@@ -407,7 +413,7 @@ ModalResult computePlateModes (const FemMesh& mesh,
     so.numModes = std::min (options.numModes, n);
     so.numThreads = options.numThreads;
     if (options.progress)
-        so.progress = [&report] (float f) { report (0.25f + 0.70f * f); };
+        so.progress = [&report] (float f) { report (0.04f + 0.94f * f); };
 
     const auto sub = math::subspaceEigenSolve (*A, *M, *shifted, so);
     if (! sub.valid())
