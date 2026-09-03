@@ -9,7 +9,8 @@
          factorisation profile.
       3. The profile Cholesky agrees with the dense one, in the natural order
          and under a renumbering.
-      4. The subspace eigensolver reproduces analytically known eigenvalues.
+      4. The two dense symmetric eigensolvers agree with each other.
+      5. The subspace eigensolver reproduces analytically known eigenvalues.
 
     The test problem throughout is the 5-point Laplacian on a square grid: it
     is sparse the way a finite-element matrix is sparse, its graph is a genuine
@@ -29,7 +30,9 @@
 #include <FxmeTools/math/SparseMatrix.h>
 #include <FxmeTools/math/SubspaceEigensolver.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -368,6 +371,91 @@ static void testSkylineCholesky()
 // ---------------------------------------------------------------------------
 // The 1D Laplacian tridiag(-1, 2, -1) of order n has eigenvalues
 // 4 sin^2(k pi / 2(n+1)), k = 1..n, with M the identity.
+// ---------------------------------------------------------------------------
+// The tridiagonal-QL eigensolver against cyclic Jacobi, which it replaced
+// inside the subspace iteration and which stays as its reference. A dense
+// matrix with no structure to it, because the projected problems this solves
+// have none either.
+// ---------------------------------------------------------------------------
+static void testDenseEigensolvers()
+{
+    std::printf ("\n== Tridiagonal QL vs cyclic Jacobi ==\n");
+
+    constexpr int p = 96;
+    const std::size_t pp = (std::size_t) p * (std::size_t) p;
+
+    // A deterministic pseudo-random symmetric matrix, diagonally weighted so
+    // the spectrum spans a few decades the way a Ritz block does.
+    std::vector<double> A (pp);
+    std::uint64_t seed = 0x9e3779b97f4a7c15ull;
+    const auto next = [&seed]
+    {
+        seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+        return 2.0 * (double) (seed >> 11) / 9007199254740992.0 - 1.0;
+    };
+    for (int i = 0; i < p; ++i)
+        for (int j = i; j < p; ++j)
+        {
+            const double v = next() * (i == j ? 100.0 : 1.0);
+            A[(std::size_t) i * (std::size_t) p + (std::size_t) j] = v;
+            A[(std::size_t) j * (std::size_t) p + (std::size_t) i] = v;
+        }
+
+    const auto solve = [&] (bool jacobi, std::vector<double>& lambda, std::vector<double>& V)
+    {
+        std::vector<double> B = A;
+        V.assign (pp, 0.0);
+        if (jacobi)
+            jacobiEigenSymmetric (B.data(), V.data(), p);
+        else
+            symmetricEigenSolve (B.data(), V.data(), p);
+        lambda.resize ((std::size_t) p);
+        for (int i = 0; i < p; ++i)
+            lambda[(std::size_t) i] = B[(std::size_t) i * (std::size_t) p + (std::size_t) i];
+    };
+
+    std::vector<double> lj, Vj, lq, Vq;
+    solve (true, lj, Vj);
+    solve (false, lq, Vq);
+
+    check ((int) lq.size() == p, "QL returned p eigenvalues");
+
+    // Neither routine orders its output, so compare the spectra.
+    auto sj = lj, sq = lq;
+    std::sort (sj.begin(), sj.end());
+    std::sort (sq.begin(), sq.end());
+    const double spectrum = std::max (std::abs (sj.front()), std::abs (sj.back()));
+    double worstValue = 0.0;
+    for (int i = 0; i < p; ++i)
+        worstValue = std::max (worstValue,
+                               std::abs (sj[(std::size_t) i] - sq[(std::size_t) i]) / spectrum);
+    checkBelow (worstValue, 1e-11, "the two spectra agree");
+
+    // Independent of Jacobi: the eigenpairs satisfy the problem they claim to.
+    double worstResidual = 0.0, worstNorm = 0.0;
+    std::vector<double> v ((std::size_t) p), av ((std::size_t) p);
+    for (int k = 0; k < p; ++k)
+    {
+        for (int i = 0; i < p; ++i)
+            v[(std::size_t) i] = Vq[(std::size_t) i * (std::size_t) p + (std::size_t) k];
+
+        symmetricMultiply (A.data(), p, v.data(), av.data());
+
+        double norm = 0.0;
+        for (int i = 0; i < p; ++i)
+        {
+            worstResidual = std::max (worstResidual,
+                                      std::abs (av[(std::size_t) i]
+                                                 - lq[(std::size_t) k] * v[(std::size_t) i])
+                                        / spectrum);
+            norm += v[(std::size_t) i] * v[(std::size_t) i];
+        }
+        worstNorm = std::max (worstNorm, std::abs (norm - 1.0));
+    }
+    checkBelow (worstResidual, 1e-13, "worst residual |A v - lambda v|");
+    checkBelow (worstNorm, 1e-13, "worst departure from unit eigenvector norm");
+}
+
 static void testSubspaceEigensolver()
 {
     std::printf ("\n== Subspace eigensolver vs closed form ==\n");
@@ -461,6 +549,7 @@ int main()
     testStorageMultiply();
     testOrdering();
     testSkylineCholesky();
+    testDenseEigensolvers();
     testSubspaceEigensolver();
 
     std::printf ("\n%s (%d failure%s)\n",

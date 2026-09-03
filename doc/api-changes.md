@@ -11,6 +11,150 @@ project after a break.
 
 ---
 
+## `math/DenseLinearAlgebra.h` — `symmetricEigenSolve`, and the projected problem stops dominating
+
+Additive: one new function, plus two loops rewritten inside
+`subspaceEigenSolve`, which now calls it in place of `jacobiEigenSymmetric`.
+**No consumer API change.** The same call returns the same modes, three times
+faster on a fine mesh.
+
+**Why.** Profiling the modal computation while fixing a progress bar turned up
+something the architecture did not suggest. At Grid 32 (n = 2195, 256 modes,
+block size p = 384) `jacobiEigenSymmetric` on the projected p-by-p problem was
+**78% of the entire computation**, and the serial dense block containing it 88%.
+Everything the finite-element side does (assembly, the profile factorisation,
+the inverse-power solves, the sparse products) came to under 7% between them.
+All the effort the sparse path spends was going into feeding a small dense
+problem that then cost seven times as much as everything else put together.
+
+Cyclic Jacobi costs `O(p^3)` per sweep and needs of the order of ten sweeps.
+Householder tridiagonalisation followed by implicit-shift QL is a single pass of
+that order.
+
+| New function | What it is |
+|---|---|
+| `fxme::math::symmetricEigenSolve (double* a, double* V, int p)` | the same contract as `jacobiEigenSymmetric`: eigenvalues on the diagonal of `a`, eigenvectors as the columns of `V`, unordered |
+
+`jacobiEigenSymmetric` is **not** deprecated and is not going anywhere. It is
+the reference the new routine is tested against, and it is its fallback: the
+reduction runs on the output buffer, so the input matrix is still intact, and a
+QL that fails to converge falls back to Jacobi rather than returning an error
+for the caller to handle. The new routine therefore always returns the
+decomposition.
+
+**What it measures.** Same machine, same meshes, the default ellipse:
+
+| Grid | n | modes | before | after | |
+|---:|---:|---:|---|---|---|
+| 16 | 554 | 92 | 196 ms | 132 ms | 1.5x |
+| 24 | 1243 | 207 | 3.26 s | 1.34 s | 2.4x |
+| 32 | 2195 | 256 | 10.9 s | 3.21 s | 3.4x |
+
+The routine on its own, against Jacobi on the same matrix: 5.9x at p = 120,
+**19.6x at p = 384**. The end-to-end figure is smaller because the bottleneck
+moves rather than disappearing.
+
+**A third of that was cache, not arithmetic**, and it is the part worth knowing
+before touching the file. Both cubic loops (unrolling the Householder
+reflections into the accumulated transform, and the QL Givens rotations) walk
+*columns* of the transform in their textbook form, which in row-major storage is
+a stride of p and a cache miss per element. Holding the transform transposed, by
+eigenvector rather than by component, makes both contiguous for two `p^2`
+transposes. That alone was 158 ms to 113 ms at p = 384, and it is the reason the
+reduction is split into `reduceToTridiagonal` and `accumulateReflections`: the
+transpose happens between them, and neither half is useful without the other.
+
+**Two triangular solves in `subspaceEigenSolve` went the same way**, once the
+profile promoted them. Forming `B = L^-1 Ap L^-T` and back-substituting the
+Ritz vectors both solved one column at a time, walking the Cholesky factor with
+a stride of p; both now solve all p columns at once, a row at a time. The
+division by the diagonal is kept as a division rather than a multiplication by a
+reciprocal, which costs `p^2` divisions out of `p^3/2` flops and buys
+**bit-identical output**, verified. Worth about 11%.
+
+**One behavioural note.** A different algorithm rounds differently, so the modal
+eigenvalues are no longer bit-identical to the Jacobi ones. They agree to
+**4.8e-13** relative across all 141 modes of a Grid 20 solve, six orders below
+the 1e-6 the iteration is asked to converge to, and `FxmeCoreMathTests` still
+converges in the same 13 iterations to the same 8e-14 against the closed form.
+Eigenvector signs are arbitrary in both routines and some do differ; that is a
+gauge choice, and mode shapes enter a synthesis as products of pairs.
+
+**Where the time goes now**, same solve, as a share of the sweep:
+
+| | share of the sweep |
+|---|---|
+| before | Jacobi 78%, `B = L^-1 Ap L^-T` 7%, projection 5%, recombination 5%, rest 5% |
+| after | eigensolve 39%, `B = L^-1 Ap L^-T` 20%, projection 16%, recombination 14%, rest 11% |
+
+Balanced, where it used to be one function. The two serial blocks (the
+eigensolve and the construction of `B`) are the obvious next target at 59%
+between them, while the projection and the recombination are already parallel.
+Cutting the block size `p` would reduce all four at once, since every one of
+them is `O(p^3)` or `O(p^2 n)`; it is currently `wanted + max(8, wanted / 2)`,
+which is generous.
+
+**New test:** `testDenseEigensolvers` in `FxmeCoreMathTests` runs both routines
+on the same unstructured matrix and checks that the spectra agree (2e-14), and,
+independently of Jacobi, that the QL eigenpairs satisfy `A v = lambda v` (2e-15)
+with unit norm (4e-15).
+
+**Per project:** ModalDish is the only consumer of `math/` today and needs no
+source change, only a rebuild of `FxmeCore`. Everyone else gains one function
+they can ignore.
+
+---
+
+## `progress` callbacks report an estimate rather than an iteration count
+
+Behavioural, no signature change. `ModalOptions::progress` and
+`SubspaceOptions::progress` still take a `float` in 0..1 and are still called
+from the worker thread. What the number means has changed, and a consumer
+displaying it needs no edit.
+
+**Why.** ModalDish's progress bar crept a little and then stood still until the
+computation ended. It was reporting faithfully; the trouble was that it reported
+two things that had nothing to do with elapsed time.
+
+`computePlateModes` gave the first quarter of its range to degree-of-freedom
+numbering, assembly and the factorisation, which together take **0.04%** of a
+Grid 32 run (8 ms of 18.5 s). And `subspaceEigenSolve` reported
+`(iter + 1) / maxIterations` with `maxIterations` at 60, while solves converge
+in six to eight sweeps, so the solver only ever walked an eighth of its own
+range. Between them the bar arrived at a quarter in the first frame and then
+crossed nine percentage points over the remaining eighteen seconds.
+
+**What changed.** The pre-solve phases now carry 1, 2 and 4% of the range,
+which is roughly what they cost. The eigensolver reports the fraction of the
+walk to convergence it has made: subspace iteration converges linearly, so the
+distance to tolerance falls by a roughly constant factor per sweep and its
+logarithm approaches zero in close to a straight line, which self-calibrates to
+whatever convergence rate the mesh in hand actually has. The iteration count
+stays underneath as a floor for a solve whose distance refuses to fall, the
+first sweep (which has no history to estimate from, and is a fifth of the
+running time on a large mesh) uses a nominal sweep count, and the reported value
+is clamped monotone. An estimate may be wrong; a progress report that goes
+backwards is a bug in the eye of whoever is watching it.
+
+The convergence test itself was rewritten as a maximum over the requested modes
+rather than a loop short-circuiting on the first failure, because the estimate
+needs the worst mode rather than the first bad one. It is the same predicate and
+the eigenvalues are unchanged, bit for bit.
+
+**What it measures.** Grid 32, the bar's reading against the fraction of the
+run actually elapsed:
+
+| | bar reading / fraction of the run elapsed |
+|---|---|
+| before | 25% at 0.04% elapsed, then 26% to 34% over the remaining 99.96% |
+| after | 16/13, 28/26, 50/39, 68/51, 75/63, 83/76, 90/88, 97/99 |
+
+**Per project:** ModalDish needs no source change (it stores the value in an
+atomic and polls it from the editor's timer). Any other consumer of
+`computePlateModes` or `subspaceEigenSolve` gets a better estimate for free.
+
+---
+
 ## New `acoustics/FemView3DComponent.h` — the plate mesh as a deformed surface
 
 Purely additive: one new component, one new header in the module umbrella.

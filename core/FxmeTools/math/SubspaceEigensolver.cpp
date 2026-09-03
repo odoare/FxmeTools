@@ -176,7 +176,8 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
             }
         });
 
-        // Small generalized problem Ap v = theta Mp v via Cholesky + Jacobi.
+        // Small generalized problem Ap v = theta Mp v via Cholesky, then a
+        // symmetric eigen-decomposition of the congruent standard problem.
         std::vector<double> Lp = Mp;
         if (! choleskyFactorInPlace (Lp.data(), p))
             break;   // subspace degenerated; keep the previous iterate
@@ -184,18 +185,26 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
         // B = L^-1 Ap L^-T
         std::vector<double> B ((std::size_t) p * (std::size_t) p);
         {
-            // First L Y = Ap column-wise, giving Y = L^-1 Ap.
+            // First L Y = Ap, giving Y = L^-1 Ap. Written as a row of Y at a
+            // time, updated by the rows above it, rather than as p separate
+            // column solves: the arithmetic and its order are the same to the
+            // last bit, but every access is along a row instead of down a
+            // column, and this is one of the cubic loops of the sweep.
             std::vector<double> Y = Ap;
-            for (int j = 0; j < p; ++j)
-                for (int i = 0; i < p; ++i)
+            for (int i = 0; i < p; ++i)
+            {
+                double* yi = &Y[(std::size_t) i * (std::size_t) p];
+                for (int k = 0; k < i; ++k)
                 {
-                    double s = Y[(std::size_t) i * (std::size_t) p + (std::size_t) j];
-                    for (int k = 0; k < i; ++k)
-                        s -= Lp[(std::size_t) i * (std::size_t) p + (std::size_t) k]
-                           * Y[(std::size_t) k * (std::size_t) p + (std::size_t) j];
-                    Y[(std::size_t) i * (std::size_t) p + (std::size_t) j]
-                        = s / Lp[(std::size_t) i * (std::size_t) p + (std::size_t) i];
+                    const double lik = Lp[(std::size_t) i * (std::size_t) p + (std::size_t) k];
+                    const double* yk = &Y[(std::size_t) k * (std::size_t) p];
+                    for (int j = 0; j < p; ++j)
+                        yi[j] -= lik * yk[j];
                 }
+                const double lii = Lp[(std::size_t) i * (std::size_t) p + (std::size_t) i];
+                for (int j = 0; j < p; ++j)
+                    yi[j] /= lii;
+            }
             // Then B L' = Y, row-wise forward solves.
             for (int i = 0; i < p; ++i)
                 for (int j = 0; j < p; ++j)
@@ -210,7 +219,7 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
         }
 
         std::vector<double> V ((std::size_t) p * (std::size_t) p);
-        jacobiEigenSymmetric (B.data(), V.data(), p);
+        symmetricEigenSolve (B.data(), V.data(), p);
 
         // Eigenvalues on B's diagonal; sort ascending.
         std::vector<int> order ((std::size_t) p);
@@ -222,25 +231,30 @@ SubspaceResult subspaceEigenSolve (const SymmetricOperator& A,
         std::sort (order.begin(), order.end(),
                    [&] (int a2, int b2) { return theta[(std::size_t) a2] < theta[(std::size_t) b2]; });
 
-        // Back-substitute the small eigenvectors: u = L^-T v, then Ritz
-        // vectors X = Z U (columns ordered ascending).
+        // Back-substitute the small eigenvectors: U = L^-T V, then Ritz
+        // vectors X = Z U (columns ordered ascending). Gathered into the
+        // sorted order first, then solved for all p columns at once and a row
+        // at a time, for the same reason the forward solve above is: one
+        // column at a time walks the factor with a stride of p.
         std::vector<double> U ((std::size_t) p * (std::size_t) p);
-        std::vector<double> uvec ((std::size_t) p);
-        for (int jj = 0; jj < p; ++jj)
+        for (int i = 0; i < p; ++i)
+            for (int jj = 0; jj < p; ++jj)
+                U[(std::size_t) i * (std::size_t) p + (std::size_t) jj]
+                    = V[(std::size_t) i * (std::size_t) p + (std::size_t) order[(std::size_t) jj]];
+
+        for (int i = p - 1; i >= 0; --i)
         {
-            const int src = order[(std::size_t) jj];
-            double* u = uvec.data();
-            for (int i = 0; i < p; ++i)
-                u[i] = V[(std::size_t) i * (std::size_t) p + (std::size_t) src];
-            for (int i = p - 1; i >= 0; --i)
+            double* ui = &U[(std::size_t) i * (std::size_t) p];
+            for (int k = i + 1; k < p; ++k)
             {
-                double s = u[i];
-                for (int k = i + 1; k < p; ++k)
-                    s -= Lp[(std::size_t) k * (std::size_t) p + (std::size_t) i] * u[k];
-                u[i] = s / Lp[(std::size_t) i * (std::size_t) p + (std::size_t) i];
+                const double lki = Lp[(std::size_t) k * (std::size_t) p + (std::size_t) i];
+                const double* uk = &U[(std::size_t) k * (std::size_t) p];
+                for (int j = 0; j < p; ++j)
+                    ui[j] -= lki * uk[j];
             }
-            for (int i = 0; i < p; ++i)
-                U[(std::size_t) i * (std::size_t) p + (std::size_t) jj] = u[i];
+            const double lii = Lp[(std::size_t) i * (std::size_t) p + (std::size_t) i];
+            for (int j = 0; j < p; ++j)
+                ui[j] /= lii;
         }
 
         // Row j of the new X is sum_k U[k][j] * Z_k.

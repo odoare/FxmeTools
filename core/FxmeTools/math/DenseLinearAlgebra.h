@@ -3,7 +3,7 @@
     math/DenseLinearAlgebra.h
 
     Dense symmetric linear algebra: Cholesky factorisation and solve, symmetric
-    matrix-vector product, cyclic Jacobi eigensolver, and a fixed-size inverse
+    matrix-vector product, two symmetric eigensolvers, and a fixed-size inverse
     for element-level work.
 
     All storage is row-major double. Nothing here is a general BLAS: these are
@@ -53,8 +53,26 @@ void symmetricMultiply (const double* A, int n, const double* x, double* y);
 
 /** Cyclic Jacobi eigensolver for a small symmetric p x p matrix. On return
     `a` is ~diagonal with the eigenvalues on it and V (p x p, row-major) holds
-    the eigenvectors as columns. Both buffers hold p * p doubles. */
+    the eigenvectors as columns. Both buffers hold p * p doubles.
+
+    Kept as the reference the routine below is checked against, and as its
+    fallback. Prefer symmetricEigenSolve for anything of a size worth timing. */
 void jacobiEigenSymmetric (double* a, double* V, int p, int maxSweeps = 60);
+
+/** The same problem and the same contract, by Householder tridiagonalisation
+    followed by implicit-shift QL: on return `a` holds the eigenvalues on its
+    diagonal and zeros elsewhere, and V holds the eigenvectors as columns,
+    unordered, as Jacobi leaves them.
+
+    Jacobi costs O(p^3) per sweep and needs of the order of ten sweeps to
+    converge; this is a single pass of that order. At p = 384, the block size
+    the subspace iteration reaches on a plate mesh, that is a factor of twenty
+    on this routine, and the small dense problem stops being four fifths of
+    the modal computation that contains it.
+
+    Falls back to Jacobi in the case QL fails to converge, so the result is
+    always the eigen-decomposition and never an error to handle. */
+void symmetricEigenSolve (double* a, double* V, int p);
 
 // ---------------------------------------------------------------------------
 // Storage
