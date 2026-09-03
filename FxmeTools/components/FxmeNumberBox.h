@@ -102,8 +102,14 @@ public:
 
         const float nameH = juce::jlimit (9.0f, 15.0f, bounds.getHeight() * 0.18f);
         auto nameArea = bounds.removeFromTop (nameH * 1.3f);
+        // Same 0.85 the rotary look-and-feel gives a knob's label, rather than
+        // the 0.6 this started with: on a body this dark, 0.6 of a light grey
+        // lands at mid grey and the name is the part that has to be readable
+        // at a glance. The value keeps its own colour and its bold weight, so
+        // the two are still told apart by hue and size rather than by dimming
+        // one of them.
         g.setColour (findColour (juce::Slider::textBoxTextColourId)
-                          .withMultipliedAlpha (FxmeLookAndFeel::textAlpha (0.6f, enabled)));
+                          .withMultipliedAlpha (FxmeLookAndFeel::textAlpha (0.85f, enabled)));
         g.setFont (juce::Font (juce::FontOptions (nameH)));
         g.drawFittedText (getName().toUpperCase(), nameArea.toNearestInt(),
                           juce::Justification::centred, 1);
