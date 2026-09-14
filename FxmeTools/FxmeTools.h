@@ -119,6 +119,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/InfoButton.h"
+#include "components/ChecklistPopup.h"
 #include "components/TextEntryFocusFixer.h"
 #include "components/SequencerRubber.h"
 #include "components/TopBar.h"

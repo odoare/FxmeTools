@@ -11,6 +11,36 @@ project after a break.
 
 ---
 
+## `components/ChecklistPopup.h` — a new component, not a change
+
+Purely additive: a new header-only `fxme::ChecklistPopup`, included by the
+module umbrella. No existing symbol touched, so **no consumer needs to do
+anything** to keep building.
+
+**What it is.** A title, an optional wrapped description, a list of rows
+(a few text columns each, with a checkbox in front) and All / None / Cancel /
+OK. `onOk` receives the checked state of every row; Cancel, Escape and a click
+outside the callout call nothing, so a host never has to undo anything. An
+optional `validate` callback returns the reason a selection is refused, which
+disables OK and is shown in place of the "n of m checked" summary. A click
+toggles a row, shift/cmd-click selects a range for Space to toggle, Return
+presses OK, and each row's tooltip shows all its columns in full.
+
+**Launching.** `ChecklistPopup::showAsCallOut (std::move (popup), anchor)`
+puts it in a `juce::CallOutBox` inside the anchor's top-level component, so
+it stays within a plugin editor. It also closes itself inside a
+`juce::DialogWindow` launched with `LaunchOptions::launchAsync`. There is no
+synchronous variant, deliberately: a plugin must not run a modal loop.
+
+**Colours** come through `setColours()`, with the same dark defaults as
+`InfoButton` plus a `warning` colour for the refusal reason. The buttons take
+the host's look-and-feel by inheritance, like any child component.
+
+**Per project:** SuperMoTo is the first consumer (Group analysis, choosing
+which measurement runs of a loaded folder feed the analysis).
+
+---
+
 ## `math/DenseLinearAlgebra.h` — `symmetricEigenSolve`, and the projected problem stops dominating
 
 Additive: one new function, plus two loops rewritten inside
