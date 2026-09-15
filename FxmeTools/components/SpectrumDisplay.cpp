@@ -52,6 +52,38 @@ void SpectrumDisplay::setFftOrder (int order)
     repaint();
 }
 
+SpectrumDisplay::ViewState SpectrumDisplay::getViewState() const
+{
+    ViewState s;
+    s.mode = mode;
+    s.fftOrder = fftOrder;
+    s.averaging = avgOn;
+    s.numAveraged = nAvg;
+    s.minDb = minDb;
+    s.maxDb = maxDb;
+    s.lowHz = viewFMin;
+    s.highHz = viewFMax;
+    s.hiddenTraces.reserve (traces.size());
+    for (const auto& tr : traces)
+        s.hiddenTraces.push_back (! tr.userVisible);
+    return s;
+}
+
+void SpectrumDisplay::setViewState (const ViewState& s)
+{
+    mode = s.mode;
+    if (! fftLocked)
+        setFftOrder (s.fftOrder);
+    avgOn = s.averaging;
+    nAvg = juce::jlimit (1, 32, s.numAveraged);
+    setDbWindow (s.minDb, s.maxDb - s.minDb);
+    setFreqWindow (s.lowHz, s.highHz);
+    for (size_t i = 0; i < traces.size() && i < s.hiddenTraces.size(); ++i)
+        traces[i].userVisible = ! s.hiddenTraces[i];
+    restartAveraging();
+    repaint();
+}
+
 void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
 {
     const auto p = e.getPosition();

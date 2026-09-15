@@ -11,6 +11,31 @@ project after a break.
 
 ---
 
+## `components/SpectrumDisplay.h` — `ViewState`, `getViewState()`, `setViewState()`
+
+Purely additive: a nested struct and two member functions. No existing symbol
+changed, so **no consumer needs to do anything** to keep building. Subclasses
+(`SpectrumRegionEditor`) inherit both and need nothing either.
+
+**What it is.** Everything a user changes on the display with the mouse, as a
+value: the avg/peak detector, the window size, the temporal averaging and its
+frame count, the dB and frequency windows, and which traces the legend hides.
+The traces, the colours and the SPL calibration are not part of it: the host
+sets those up itself.
+
+**Why.** A display lives as long as its editor, so closing a plugin editor used
+to reset all of it. The host keeps what `getViewState()` returns (typically in
+its destructor, since the display has no change callback) and hands it to
+`setViewState()` once the traces are added. Restore only a state taken from a
+display: a default-constructed `ViewState` carries the class defaults, which
+`setDbRange()` may have moved. `setViewState()` leaves a locked window size
+alone and ignores hidden flags beyond the current trace count.
+
+**Per project:** SuperMoTo is the first consumer (the matrix view's analyzer
+and the calibration pane's spectrum keep their view when the editor closes).
+
+---
+
 ## `components/ChecklistPopup.h` — a new component, not a change
 
 Purely additive: a new header-only `fxme::ChecklistPopup`, included by the

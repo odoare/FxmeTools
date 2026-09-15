@@ -111,6 +111,34 @@ public:
     void setFftSizeLocked (bool shouldBeLocked) { fftLocked = shouldBeLocked; repaint(); }
     bool isFftSizeLocked() const noexcept       { return fftLocked; }
 
+    /** Everything a user can change on the display with the mouse: the
+        detector, the window size, the temporal averaging, the dB and frequency
+        windows, and the traces hidden from the legend. The traces themselves
+        and the colours are not part of it.
+
+        For a host that rebuilds the display and wants it to come back as it
+        was left (a plugin editor closed and reopened, say): keep what
+        getViewState() returns and hand it to setViewState() once the traces
+        are added. A default-constructed ViewState is not the display's
+        defaults (setDbRange() moves those), so only restore one taken from a
+        display. */
+    struct ViewState
+    {
+        Mode mode = Mode::average;
+        int fftOrder = spectrumFftOrder;
+        bool averaging = true;
+        int numAveraged = 4;
+        float minDb = -100.0f, maxDb = 10.0f;
+        float lowHz = SpectrumAnalyzer::fMin, highHz = SpectrumAnalyzer::fMax;
+        std::vector<bool> hiddenTraces;         // by addTrace() order
+    };
+
+    ViewState getViewState() const;
+
+    /** Restores a state from getViewState(). A locked window size is left
+        alone; hidden flags beyond the current trace count are ignored. */
+    void setViewState (const ViewState& state);
+
     /** When calibrated, the vertical axis is labelled in dB SPL = dBFS + offset
         (the plotted curves do not move, only the numbers). */
     void setSplCalibration (bool calibrated, float offsetDb)
