@@ -11,6 +11,46 @@ project after a break.
 
 ---
 
+## `presets/EmbeddedAudio.*` — a versioned storage format, and new writes are float WAV rather than FLAC
+
+**Additive and backward compatible.** No signature changed and no consumer has
+to do anything. Entries now carry a `version` attribute, `embedFile()` writes
+version 1 (a deflated 32-bit float WAV), and `createReader()` reads both
+version 1 and version 0, the original un-versioned FLAC. Every preset and
+session already in the field, factory presets compiled into binary data
+included, keeps loading exactly as before.
+
+**Why the format changed.** FLAC is integer-only and clamps anything beyond
+full scale. Correction impulse responses go beyond it as a matter of course — a
+minimum-phase filter concentrates its energy in its first samples, and the two
+measured in SuperMoTo peaked at +4.5 and +6.0 dBFS — so a state round trip
+returned a *different filter* than the one designed, with no error anywhere.
+Measured in a room, a minimum-phase correction came back about 4 dB low with
+2 dB of ripple, and it took a three-way A/B against an uncorrected run to find.
+Float32 holds the samples exactly, and is exact for 16- and 24-bit sources too.
+
+**Size, which matters for long audio.** Float PCM deflates by only a few
+percent, where FLAC reached roughly 60% on the same impulse responses. A 2048-
+tap filter grows from about 4 KiB to 10 KiB of Base64 per slot, which is
+nothing. **Seconds-long embedded audio is a different matter**: a plugin
+embedding samples rather than impulse responses (FxmeSampler) will see its
+presets roughly double once it bumps the submodule. If that is unwelcome, the
+fix is a per-file choice of container — FLAC when the source is integer or
+peaks at or below full scale, float otherwise — recorded as a new version
+value. Say so and it can be added; nothing in version 1 forecloses it.
+
+**Reading a version 0 entry does not repair it.** The clamping happened when
+the data was stored. Re-embedding the source file is what fixes an affected
+slot, and any new write is at version 1.
+
+**Per project:** SuperMoTo is the only consumer of embedded FIRs (`outFirN`
+slots); its presets and sessions saved before this change carry clamped
+minimum-phase filters and should be re-applied from the group analysis or
+re-imported from the exported wavs. FxmeSampler and FxmeFX read their existing
+embedded audio unchanged — see the size note above before bumping FxmeSampler.
+
+---
+
 ## `components/SpectrumDisplay.h` — `ViewState`, `getViewState()`, `setViewState()`
 
 Purely additive: a nested struct and two member functions. No existing symbol
