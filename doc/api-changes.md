@@ -11,6 +11,26 @@ project after a break.
 
 ---
 
+## `components/SpectrumDisplay.h` — `setBadgesVisible()`
+
+Purely additive: one member function and one flag, default `true`, so **no
+consumer needs to do anything**.
+
+**What it is.** `setBadgesVisible (false)` hides the four read-out badges (the
+window size, the averaging switch, its frame count and the avg/peak detector)
+and, with them, their click handling: `overBadge()` reports false, so the plot
+area they sat on pans and zooms like the rest.
+
+**Why.** The display is also useful with no taps at all, as a log-frequency
+grid a subclass draws a static curve over through `paintOverTraces()`. There is
+then no analysis behind the badges: they describe an FFT that never runs, and
+invite clicks that change nothing visible.
+
+**Per project:** SuperMoTo's target-curve pane is the first consumer. Nothing
+else is affected.
+
+---
+
 ## `presets/EmbeddedAudio.*` — a versioned storage format, and new writes are float WAV rather than FLAC
 
 **Additive and backward compatible.** No signature changed and no consumer has

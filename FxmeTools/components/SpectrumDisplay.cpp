@@ -99,39 +99,43 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
             return;
         }
 
-    // Badges first; each click restarts the averaging.
-    if (detectorBadgeBounds().contains (p))
+    // Badges first; each click restarts the averaging. Hidden badges are not
+    // there to be clicked, and the pan below takes their area back.
+    if (badgesVisible)
     {
-        mode = mode == Mode::peak ? Mode::average : Mode::peak;
-        restartAveraging();
-        repaint();
-        return;
-    }
-    if (fftBadgeBounds().contains (p))
-    {
-        // Cycle the window size through the supported orders, unless the host
-        // has pinned it.
-        if (! fftLocked)
-            setFftOrder (fftOrder >= spectrumMaxFftOrder ? spectrumMinFftOrder : fftOrder + 1);
-        return;
-    }
-    if (avgBadgeBounds().contains (p))
-    {
-        avgOn = ! avgOn;
-        restartAveraging();
-        repaint();
-        return;
-    }
-    if (nBadgeBounds().contains (p))
-    {
-        static const int opts[] = { 2, 4, 8, 16, 32 };
-        int i = 0;
-        while (i < 4 && opts[i] < nAvg) ++i;        // index of current (or next) value
-        nAvg = opts[(i + 1) % 5];
-        avgOn = true;                                // choosing N implies averaging on
-        restartAveraging();
-        repaint();
-        return;
+        if (detectorBadgeBounds().contains (p))
+        {
+            mode = mode == Mode::peak ? Mode::average : Mode::peak;
+            restartAveraging();
+            repaint();
+            return;
+        }
+        if (fftBadgeBounds().contains (p))
+        {
+            // Cycle the window size through the supported orders, unless the
+            // host has pinned it.
+            if (! fftLocked)
+                setFftOrder (fftOrder >= spectrumMaxFftOrder ? spectrumMinFftOrder : fftOrder + 1);
+            return;
+        }
+        if (avgBadgeBounds().contains (p))
+        {
+            avgOn = ! avgOn;
+            restartAveraging();
+            repaint();
+            return;
+        }
+        if (nBadgeBounds().contains (p))
+        {
+            static const int opts[] = { 2, 4, 8, 16, 32 };
+            int i = 0;
+            while (i < 4 && opts[i] < nAvg) ++i;    // index of current (or next) value
+            nAvg = opts[(i + 1) % 5];
+            avgOn = true;                            // choosing N implies averaging on
+            restartAveraging();
+            repaint();
+            return;
+        }
     }
 
     // Otherwise begin a pan (both axes) if the press is inside the plot.
@@ -383,11 +387,15 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     }
 
     // Clickable badges: window size + temporal averaging (bottom-left),
-    // per-point detector avg/peak (bottom-right).
-    drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), ! fftLocked);
-    drawBadge (g, avgBadgeBounds(), "avg", avgOn);
-    drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn);
-    drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", true);
+    // per-point detector avg/peak (bottom-right). A display with no taps of
+    // its own turns them off (setBadgesVisible).
+    if (badgesVisible)
+    {
+        drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), ! fftLocked);
+        drawBadge (g, avgBadgeBounds(), "avg", avgOn);
+        drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn);
+        drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", true);
+    }
 
     // Cursor frequency / level read-out (top-right), drawn over the SPL tag.
     drawCursorReadout (g, plot);

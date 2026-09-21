@@ -106,6 +106,16 @@ public:
     void setFftOrder (int order);
     int  getFftOrder() const noexcept       { return fftOrder; }
 
+    /** Hides the four read-out badges (window size, averaging, detector). A
+        display with no taps of its own -- a static curve drawn by a subclass
+        through paintOverTraces() -- has nothing they can describe, and they
+        would only invite clicks that do nothing. */
+    void setBadgesVisible (bool shouldBeVisible)
+    {
+        badgesVisible = shouldBeVisible;
+        repaint();
+    }
+
     /** Stops the window-size badge responding to clicks (it draws dimmed), so
         a pinned size cannot be changed from the GUI. */
     void setFftSizeLocked (bool shouldBeLocked) { fftLocked = shouldBeLocked; repaint(); }
@@ -208,8 +218,9 @@ protected:
         subclass must leave to the base class. */
     bool overBadge (juce::Point<int> p) const
     {
-        return detectorBadgeBounds().contains (p) || fftBadgeBounds().contains (p)
-            || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p);
+        return badgesVisible
+            && (detectorBadgeBounds().contains (p) || fftBadgeBounds().contains (p)
+                || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p));
     }
 
     /** True when the point is over a legend entry (same reasoning). Only valid
@@ -288,7 +299,8 @@ private:
     Mode  mode = Mode::average;
 
     int  fftOrder = spectrumFftOrder;           // window size = 1 << fftOrder
-    bool fftLocked = false;                     // badge ignores clicks
+    bool fftLocked = false;
+    bool badgesVisible = true;                     // badge ignores clicks
     bool avgOn = true;                          // temporal averaging
     int  nAvg  = 4;                             // averaged over ~nAvg frames
 
