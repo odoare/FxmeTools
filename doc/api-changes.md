@@ -11,6 +11,39 @@ project after a break.
 
 ---
 
+## `components/WaveformDisplay.h` — a decibel amplitude axis
+
+Purely additive: one enum, one setter and two getters, default `linear`, so
+**no consumer needs to do anything**.
+
+**What it is.** `setAmplitudeScale (AmplitudeScale::decibels, floorDb)` swaps
+the signed linear vertical axis for the magnitude in dB below the amplitude
+range, with the floor where the axis bottoms out (default -80 dB, clamped to
+-160..-10). `getAmplitudeScale()` and `getFloorDb()` read it back.
+
+Three things follow the mode rather than needing their own switches: the
+horizontal grid becomes dB steps, the vertical mouse-wheel zoom moves the floor
+instead of the reference (so zooming out digs further into the tail), and the
+cursor read-out prints dB.
+
+**How it draws.** Every pixel column is a bar from the floor up to the largest
+magnitude in it, so the trace reads as its own envelope. Drawing the dB of the
+individual samples instead would plunge towards minus infinity at every zero
+crossing, which is a hairy blob rather than a decay; that is also why the
+zoomed-in polyline branch is skipped in this mode.
+
+**Why.** The last 40 dB of anything — a room's reverberant tail, a filter's
+ringing, the noise floor under a measurement — is a flat line against zero on a
+linear axis. Reading a decay, or judging where a measurement stops being signal,
+needs a log axis, and that is what every acoustics tool shows an impulse
+response on.
+
+**Per project:** SuperMoTo's Analysis pane is the first consumer, for the raw
+impulse-response view its reverberation-time estimate is read from. Nothing
+else is affected.
+
+---
+
 ## `components/SpectrumDisplay.h` — `setBadgesVisible()`
 
 Purely additive: one member function and one flag, default `true`, so **no

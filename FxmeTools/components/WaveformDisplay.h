@@ -217,12 +217,39 @@ public:
         repaint();
     }
 
-    /** Vertical range: the plot spans ±maxAbs. */
+    /** Vertical range: the plot spans ±maxAbs, or, on a decibel axis, 0 dB
+        sits at maxAbs and the axis runs down to the floor. */
     void setAmplitudeRange (float maxAbs)
     {
         ampRange = juce::jlimit (minAmp, maxAmp, maxAbs);
         repaint();
     }
+
+    /** Vertical axis: a signed linear one, or the magnitude in decibels below
+        the amplitude range.
+
+        The decibel axis is what makes a decay readable — the last 40 dB of a
+        room's tail, or of a filter's ringing, is a flat line on a linear one.
+        It draws each column as a bar from the floor up to the largest
+        magnitude in it, so the trace reads as its own envelope rather than as
+        the dB of individual samples, which plunges towards minus infinity at
+        every zero crossing.
+
+        The floor is where the axis bottoms out, and the vertical zoom moves
+        it rather than the reference. */
+    enum class AmplitudeScale { linear, decibels };
+
+    void setAmplitudeScale (AmplitudeScale s, float floorDb = -80.0f)
+    {
+        ampScale = s;
+        dbFloor = juce::jlimit (-160.0f, -10.0f, floorDb);
+        if (tap == nullptr)
+            ampRange = juce::jlimit (minAmp, maxAmp, dataPeak * (s == AmplitudeScale::decibels ? 1.0f : 1.05f));
+        repaint();
+    }
+
+    AmplitudeScale getAmplitudeScale() const noexcept   { return ampScale; }
+    float getFloorDb() const noexcept                   { return dbFloor; }
 
     /** Full-signal view; buffer sources also fit the amplitude to the data
         peak. Same as a double-click. */
@@ -231,7 +258,8 @@ public:
         viewStartS = fullStartS();
         viewLengthS = fullLengthS();
         if (tap == nullptr)
-            ampRange = juce::jlimit (minAmp, maxAmp, dataPeak * 1.05f);
+            ampRange = juce::jlimit (minAmp, maxAmp,
+                                     dataPeak * (ampScale == AmplitudeScale::decibels ? 1.0f : 1.05f));
         repaint();
     }
 
@@ -261,6 +289,12 @@ public:
                 setTimeWindow (tAtX - frac * newLen, newLen);
                 return;
             }
+        }
+        else if (ampScale == AmplitudeScale::decibels)
+        {
+            // Vertical zoom on a dB axis: the reference stays on the peak and
+            // the floor moves, so zooming out digs further into the tail.
+            dbFloor = juce::jlimit (-160.0f, -10.0f, dbFloor * factor);
         }
         else
         {
@@ -407,8 +441,18 @@ private:
 
     float ampToY (float v, juce::Rectangle<float> r) const
     {
+        if (ampScale == AmplitudeScale::decibels)
+            return dbToY (juce::Decibels::gainToDecibels (std::abs (v) / juce::jmax (1.0e-12f, ampRange),
+                                                          dbFloor), r);
+
         return juce::jmap (juce::jlimit (-ampRange, ampRange, v),
                            -ampRange, ampRange, r.getBottom(), r.getY());
+    }
+
+    float dbToY (float db, juce::Rectangle<float> r) const
+    {
+        return juce::jmap (juce::jlimit (dbFloor, 0.0f, db), dbFloor, 0.0f,
+                           r.getBottom(), r.getY());
     }
 
     //==========================================================================
@@ -450,6 +494,21 @@ private:
         }
 
         // Horizontal amplitude lines; zero highlighted.
+        if (ampScale == AmplitudeScale::decibels)
+        {
+            const double dStep = niceStep (-(double) dbFloor, 6);
+            for (double db = 0.0; db >= (double) dbFloor - 1.0e-9; db -= dStep)
+            {
+                const float y = dbToY ((float) db, r);
+                g.setColour (db >= -1.0e-9 ? colours.gridZero : colours.grid);
+                g.drawHorizontalLine ((int) y, r.getX(), r.getRight());
+                g.setColour (colours.dimText);
+                g.drawText (juce::String ((int) db), 2, (int) y - 6, 30, 12,
+                            juce::Justification::centredRight);
+            }
+            return;
+        }
+
         const double aStep = niceStep (2.0 * (double) ampRange, 6);
         for (double a = -std::floor ((double) ampRange / aStep) * aStep;
              a <= (double) ampRange + 1.0e-9; a += aStep)
@@ -481,7 +540,7 @@ private:
         const double sppx = viewLengthS * sampleRate / juce::jmax (1.0, (double) r.getWidth());
         g.setColour (colour);
 
-        if (sppx <= 2.0)
+        if (sppx <= 2.0 && ampScale == AmplitudeScale::linear)
         {
             // Zoomed in: connected polyline through the samples.
             juce::Path p;
@@ -541,8 +600,14 @@ private:
             }
 
             const float x = r.getX() + (float) px;
-            const float yTop = ampToY (hi, r);
-            const float yBot = ampToY (lo, r);
+
+            // On a dB axis the bar runs from the floor up to the largest
+            // magnitude in the column, so the trace reads as its own envelope.
+            const float yTop = ampScale == AmplitudeScale::decibels
+                                 ? ampToY (juce::jmax (std::abs (lo), std::abs (hi)), r)
+                                 : ampToY (hi, r);
+            const float yBot = ampScale == AmplitudeScale::decibels ? r.getBottom()
+                                                                    : ampToY (lo, r);
             g.drawVerticalLine ((int) x, yTop, juce::jmax (yBot, yTop + 1.0f));
         }
     }
@@ -653,9 +718,12 @@ private:
     {
         const double t = xToTime (juce::jlimit (r.getX(), r.getRight(), cursorPos.x), r);
         const float cy = juce::jlimit (r.getY(), r.getBottom(), cursorPos.y);
-        const float a = juce::jmap (cy, r.getBottom(), r.getY(), -ampRange, ampRange);
+        const juce::String value =
+            ampScale == AmplitudeScale::decibels
+              ? juce::String (juce::jmap (cy, r.getBottom(), r.getY(), dbFloor, 0.0f), 1) + " dB"
+              : juce::String (juce::jmap (cy, r.getBottom(), r.getY(), -ampRange, ampRange), 3);
 
-        const juce::String txt = timeLabel (t, viewLengthS / 1000.0) + "   " + juce::String (a, 3);
+        const juce::String txt = timeLabel (t, viewLengthS / 1000.0) + "   " + value;
 
         g.setFont (11.0f);
         const int tw = (int) juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (11.0f)), txt) + 12;
@@ -723,6 +791,8 @@ private:
 
     double viewStartS = 0.0, viewLengthS = 1.0;         // display-time window
     float ampRange = 1.0f;                              // plot spans +/- this
+    AmplitudeScale ampScale = AmplitudeScale::linear;
+    float dbFloor = -80.0f;                             // bottom of the dB axis
 
     Colours colours;
     std::vector<juce::Colour> channelColours;
