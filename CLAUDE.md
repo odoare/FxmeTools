@@ -143,7 +143,8 @@ Follow the surrounding code, which is JUCE house style:
 ## Repository facts
 
 - `WDL/` is a submodule (zlib-licensed, Cockos). It provides the convolution
-  engine for `dsp/FirFilter.h` and the real FFT used by `dsp/SpectralFreeze.h`.
+  engine for `dsp/FirFilter.h` and the real FFT used by `dsp/SpectralFreeze.h`
+  and by `fxme::RealFft` (orders 2..15, see `util/Fft.cpp`).
   It is the JUCE-free FFT of choice for anything promoted into core.
 - This repo is itself consumed as a submodule. Commits here need pushing to the
   FxmeTools remote **and** a submodule pointer bump in the consuming plugin.
