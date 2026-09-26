@@ -41,6 +41,10 @@ set_property(SOURCE CoreHeaderCompileTest.cpp
 if(TARGET FxmeCoreWdlFft)
     target_compile_definitions(FxmeCoreHeaderTest PRIVATE FXME_CORE_HAS_WDL=1)
     target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCoreWdlFft)
+
+    # Lets the RealFft tests insist the WDL backend is really in use, rather
+    # than passing on the scalar fallback without anyone noticing.
+    target_compile_definitions(FxmeCoreTests PRIVATE FXME_CORE_HAS_WDL=1)
 else()
     message(STATUS "FxmeCore: SpectralFreeze.h excluded from the header test (no WDL)")
 endif()

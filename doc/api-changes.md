@@ -11,6 +11,53 @@ project after a break.
 
 ---
 
+## `fxme::RealFft` runs on WDL's real FFT (2026-09-26)
+
+Found while profiling Dede's spectral band splitter: `RealFft` was feeding N
+real samples to the scalar complex `Fft`, so every analyser, the band splitter
+and the spectrum display paid for a slow kernel doing twice the necessary work.
+
+### What changed
+
+- For orders 2 to 15 (4 to 32768 points), `RealFft` now calls `WDL_real_fft`,
+  about 10x faster than before for a forward + inverse pair at 2048 and 8192
+  points. Orders 0, 1 and 16 upward, and builds without the WDL submodule
+  checked out, stay on the scalar path. `isWdlBacked()` says which one an
+  instance got.
+- The bins are unchanged: natural order, forward unscaled, all N written (the
+  upper half by conjugate symmetry), inverse scaled by 1/N. The core tests pin
+  every order from 0 to 16 against the scalar `Fft`, so the analyser/splitter
+  level match noted under the split below still holds.
+- `fxme::Fft` (complex) is untouched; `SynchronizedSweep` keeps its unlimited
+  size.
+
+### Silent, but worth knowing
+
+- **`RealFft` now has out-of-line code** (`core/FxmeTools/util/Fft.cpp`). A
+  target that used `<FxmeTools/util/Fft.h>` from its include path alone must
+  now link `FxmeCore`. Everything going through `fxmetools_attach()` or the
+  module already does.
+- **`FxmeCore` links WDL's `fft.c`** (target `FxmeCoreWdlFft`, privately) when
+  the submodule is present, so a consumer's link line gains that static library
+  automatically. Consumers that also compile `fft.c` themselves
+  (`fxmetools_attach()` does, for the convolution engine) are fine: the
+  linker takes their copy and skips the archive's.
+- **WDL must stay single precision.** Defining `WDL_FFT_REALSIZE=8` for a target
+  that compiles its own `fft.c` would silently hand `RealFft` a double-precision
+  transform. `Fft.cpp` asserts on this at compile time for its own translation
+  unit, but cannot see a consumer's copy.
+- After `performRealOnlyInverseTransform`, the second N floats of the buffer
+  are zero on the WDL path instead of the (near-zero) imaginary parts. They
+  were never meaningful output.
+
+### Per project
+
+Nothing to do beyond bumping the submodule pointer. Projects that use the band
+splitter, the spectrum analyser or the spectrum display get the speed-up for
+free.
+
+---
+
 ## `components/WaveformDisplay.h` — a decibel amplitude axis
 
 Purely additive: one enum, one setter and two getters, default `linear`, so
@@ -799,7 +846,8 @@ audio thread. The seeded constructor stays audio-thread safe.
 
 `fxme::Fft` / `fxme::RealFft` (radix-2, JUCE's exact semantics — natural bin
 order, forward unscaled, inverse scaled by 1/N; no size ceiling, unlike WDL's
-32768), `fxme::SmoothedValue` (linear, JUCE's ramp arithmetic step for step),
+32768; `RealFft` has since moved onto WDL up to that ceiling, see above),
+`fxme::SmoothedValue` (linear, JUCE's ramp arithmetic step for step),
 `fxme::AudioBuffer` (owning counterpart to `AudioBufferView`), `fxme::StringRef`
 + `StringUtils.h` and `fxme::ArrayView` (see the `MidiTools` section above),
 `fxme::systemRandom()`, and the existing `Math.h` / `Random.h` /

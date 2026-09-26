@@ -60,11 +60,12 @@ target_compile_options(FxmeCore PRIVATE
 # ──────────────────────────────────────────────────────────────────────────
 # Optional: the WDL real FFT, compiled without JUCE.
 #
-# A few core headers (SpectralFreeze, and later SpectrumAnalyzer once it stops
-# using juce::dsp::FFT) need an FFT. WDL is already a submodule of this repo and
-# is zlib-licensed, so it is the natural JUCE-free choice. The target only
-# appears when the submodule is checked out, so `git clone` without
-# --recurse-submodules still configures and builds the rest.
+# SpectralFreeze calls it directly, and fxme::RealFft (and so SpectrumAnalyzer,
+# SpectralBandSplitter and everything else on it) uses it for orders 2..15.
+# WDL is already a submodule of this repo and is zlib-licensed, so it is the
+# natural JUCE-free choice. The target only appears when the submodule is
+# checked out, so `git clone` without --recurse-submodules still configures and
+# builds the rest, with RealFft on its scalar fallback.
 # ──────────────────────────────────────────────────────────────────────────
 set(FXMECORE_WDL_DIR "${FXMECORE_ROOT}/../WDL/WDL")
 
@@ -76,6 +77,13 @@ if(EXISTS "${FXMECORE_WDL_DIR}/fft.c")
     # WDL's headers pull in <windows.h> on MSVC; its min/max macros clobber
     # std::min/std::max in anything that includes them afterwards.
     target_compile_definitions(FxmeCoreWdlFft PUBLIC $<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>)
+
+    # fxme::RealFft (util/Fft.cpp) runs on WDL_real_fft when this is defined.
+    # PRIVATE on purpose: RealFft's layout does not depend on it, and only
+    # Fft.cpp reads it, so consumers get the faster transform with no macro of
+    # their own. CMake still carries the static library onto their link line.
+    target_link_libraries(FxmeCore PRIVATE FxmeCoreWdlFft)
+    target_compile_definitions(FxmeCore PRIVATE FXME_CORE_HAS_WDL=1)
 else()
     message(STATUS "FxmeCore: WDL submodule not checked out — FFT-backed core components disabled")
 endif()

@@ -14,18 +14,27 @@
         inverse reconstructs the negative frequencies from the positive ones
         exactly as JUCE's fallback engine does.
 
-    Why not WDL's FFT, which this repository already vendors: it stops at
-    N = 32768, and the swept-sine deconvolution in dsp/SynchronizedSweep.h sizes
-    its transform from the recording length — a 10 s sweep at 48 kHz already
-    needs 2^19, and 30 s at 96 kHz needs 2^22. WDL is still the right tool for
-    the convolution engine, which never exceeds its limit.
+    Two backends sit behind that interface:
 
-    This is a plain scalar implementation chosen for clarity and for having no
-    dependencies. It is in the same performance class as JUCE's own fallback
-    engine (what Linux and Windows builds already use), and slower than the
-    vDSP path JUCE takes on macOS. If that ever matters, a SIMD backend can be
-    dropped in behind this interface without touching a single call site —
-    which is the point of matching JUCE's semantics so exactly.
+      - Fft (complex) is a plain scalar radix-2 implementation, chosen for
+        clarity and for having no dependencies. It is in the same performance
+        class as JUCE's own fallback engine. It has no size limit, which the
+        swept-sine deconvolution in dsp/SynchronizedSweep.h needs: it sizes its
+        transform from the recording length (a 10 s sweep at 48 kHz already
+        needs 2^19, and 30 s at 96 kHz needs 2^22).
+
+      - RealFft runs on WDL's real FFT (WDL_real_fft, from the WDL submodule)
+        for orders 2 to 15, which is every analysis and spectral-processing
+        size in practice. It is a true real-input transform (half the work of
+        feeding N real samples to a complex FFT) and a much faster kernel than
+        the scalar one. WDL stops at N = 32768, so larger orders, the
+        degenerate orders 0 and 1, and builds without the WDL submodule fall
+        back to the scalar path. Both produce the same bins, and the
+        choice is made inside Fft.cpp, so the class layout never depends on it.
+
+    RealFft therefore has out-of-line definitions: use it through the FxmeCore
+    library target (the JUCE module and fxmetools_attach already link it), not
+    from the header alone.
 
     Allocation happens in the constructor only; the transforms allocate
     nothing, take no locks and throw nothing, so they are safe on the audio
@@ -42,6 +51,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace fxme
@@ -159,64 +169,32 @@ private:
 class RealFft
 {
 public:
-    explicit RealFft (int fftOrder)
-        : fft (fftOrder),
-          scratch (static_cast<std::size_t> (fft.getSize()))
-    {
-    }
+    /** Picks the backend (see the file comment) and allocates everything the
+        transforms will need. */
+    explicit RealFft (int fftOrder);
 
-    int getSize()  const noexcept { return fft.getSize(); }
-    int getOrder() const noexcept { return fft.getOrder(); }
+    int getSize()  const noexcept { return size; }
+    int getOrder() const noexcept { return order; }
+
+    /** True when this instance runs on WDL's real FFT rather than the scalar
+        fallback. Informational: both give the same bins. */
+    bool isWdlBacked() const noexcept { return ! fallback.has_value(); }
 
     /** Real forward transform, in place over 2N floats.
 
         `onlyCalculateNonNegativeFrequencies` is a hint and is ignored, exactly
-        as JUCE's fallback engine ignores it: all N bins are always written, so
-        the result satisfies callers passing either value. */
+        as JUCE's fallback engine ignores it: all N bins are always written
+        (the upper half by conjugate symmetry), so the result satisfies callers
+        passing either value. */
     void performRealOnlyForwardTransform (float* inputOutputData,
-                                          bool onlyCalculateNonNegativeFrequencies = false) const noexcept
-    {
-        (void) onlyCalculateNonNegativeFrequencies;
-
-        const int size = getSize();
-
-        if (size == 1)
-            return;
-
-        for (int i = 0; i < size; ++i)
-            scratch[static_cast<std::size_t> (i)] = { inputOutputData[i], 0.0f };
-
-        fft.perform (scratch.data(),
-                     reinterpret_cast<std::complex<float>*> (inputOutputData),
-                     false);
-    }
+                                          bool onlyCalculateNonNegativeFrequencies = false) const noexcept;
 
     /** Inverse of the above. Only the first (N/2 + 1) bins are read — the rest
-        are rebuilt by conjugate symmetry — but the buffer must still be 2N
-        floats. On return the first N floats are the reconstituted samples. */
-    void performRealOnlyInverseTransform (float* inputOutputData) const noexcept
-    {
-        const int size = getSize();
-
-        if (size == 1)
-            return;
-
-        auto* spectrum = reinterpret_cast<std::complex<float>*> (inputOutputData);
-
-        // Mirrors the positive half onto the negative one. At i == size/2 this
-        // conjugates the Nyquist bin with itself, forcing it real — which is
-        // what makes the reconstruction come out real.
-        for (int i = size >> 1; i < size; ++i)
-            spectrum[i] = std::conj (spectrum[size - i]);
-
-        fft.perform (spectrum, scratch.data(), true);
-
-        for (int i = 0; i < size; ++i)
-        {
-            inputOutputData[i]        = scratch[static_cast<std::size_t> (i)].real();
-            inputOutputData[i + size] = scratch[static_cast<std::size_t> (i)].imag();
-        }
-    }
+        are implied by conjugate symmetry, and the imaginary parts of the DC and
+        Nyquist bins are ignored — but the buffer must still be 2N floats. On
+        return the first N floats are the reconstituted samples, scaled by 1/N.
+        The second N floats are scratch and should not be relied on. */
+    void performRealOnlyInverseTransform (float* inputOutputData) const noexcept;
 
     /** Forward transform reduced to a magnitude spectrum, for displays and
         analysis. Writes `limit` magnitudes to the start of the buffer and
@@ -246,7 +224,15 @@ public:
     }
 
 private:
-    Fft fft;
+    int order;
+    int size;
+
+    /** The scalar complex transform, present only when WDL cannot serve this
+        order (or is not compiled in). */
+    std::optional<Fft> fallback;
+
+    /** N complex values for the scalar path; the WDL path uses its first N
+        floats as the in-place real-FFT buffer. */
     mutable std::vector<std::complex<float>> scratch;
 };
 

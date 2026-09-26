@@ -499,6 +499,73 @@ int main()
             CHECK (worst < 1.0e-4);
         }
 
+        // --- RealFft, every order either backend serves ----------------------
+        //
+        // Orders 2..15 run on WDL (permuted, 2x-scaled half spectrum decoded
+        // in Fft.cpp); 0, 1 and 16 on the scalar fallback. Both must agree
+        // with the scalar complex Fft on all N bins, and the inverse must read
+        // only bins 0..N/2: the upper half and the imaginary parts of DC and
+        // Nyquist are filled with junk to prove it.
+        for (int order = 0; order <= 16; ++order)
+        {
+            const int n = 1 << order;
+            fxme::Random rng (777 + order);
+            std::vector<float> real ((std::size_t) (2 * n), 0.0f);
+            std::vector<std::complex<float>> in ((std::size_t) n), want ((std::size_t) n);
+
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = rng.nextBipolar();
+                real[(std::size_t) i] = s;
+                in[(std::size_t) i]   = { s, 0.0f };
+            }
+
+            const std::vector<float> original (real.begin(), real.begin() + n);
+
+            fxme::RealFft fft (order);
+            CHECK (fft.getSize() == n && fft.getOrder() == order);
+           #if FXME_CORE_HAS_WDL
+            CHECK (fft.isWdlBacked() == (order >= 2 && order <= 15));
+           #else
+            CHECK (! fft.isWdlBacked());
+           #endif
+
+            fft.performRealOnlyForwardTransform (real.data());
+            fxme::Fft (order).perform (in.data(), want.data(), false);
+
+            const auto* got = reinterpret_cast<std::complex<float>*> (real.data());
+            double worst = 0.0, peak = 1.0;
+            for (int k = 0; k < n; ++k)
+            {
+                worst = std::fmax (worst, (double) std::abs (got[k] - want[(std::size_t) k]));
+                peak  = std::fmax (peak,  (double) std::abs (want[(std::size_t) k]));
+            }
+
+            if (worst > 1.0e-5 * peak * order + 1.0e-6)
+                std::printf ("        RealFft forward, order %d: error %g (peak %g)\n", order, worst, peak);
+            CHECK (worst <= 1.0e-5 * peak * order + 1.0e-6);
+
+            if (n >= 2)
+            {
+                auto* spectrum = reinterpret_cast<std::complex<float>*> (real.data());
+                spectrum[0] = { spectrum[0].real(), 123.0f };
+                spectrum[n / 2] = { spectrum[n / 2].real(), -45.0f };
+                for (int k = n / 2 + 1; k < n; ++k)
+                    spectrum[k] = { 1.0e3f, -1.0e3f };
+            }
+
+            fft.performRealOnlyInverseTransform (real.data());
+
+            worst = 0.0;
+            for (int i = 0; i < n; ++i)
+                worst = std::fmax (worst, std::fabs ((double) (real[(std::size_t) i]
+                                                               - original[(std::size_t) i])));
+
+            if (worst > 1.0e-5)
+                std::printf ("        RealFft round trip, order %d: error %g\n", order, worst);
+            CHECK (worst <= 1.0e-5);
+        }
+
         // --- magnitude spectrum, and how far it zeroes behind itself ---------
         {
             const int order = 6, n = 1 << order;
