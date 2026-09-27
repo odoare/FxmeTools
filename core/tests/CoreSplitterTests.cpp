@@ -13,6 +13,8 @@
       5. A ceiling under the gate leaves nothing to pass.
       6. A knee turns an outright switch into a partial gain, for both lines,
          and going back to a zero knee restores the hard switch exactly.
+      7. With the pan turned off, both channels carry the same band at unity
+         (gain only), whatever the band's pan; with it on, the pan applies.
 
     The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
     kHz), so through the Hann window it occupies three bins only: the centre
@@ -31,6 +33,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <vector>
 
 static int failures = 0;
@@ -101,6 +104,40 @@ namespace
         }
 
         return kept;
+    }
+
+    /** Like run(), with the pan switched on or off, returning both channels
+        over the same last quarter second. */
+    std::pair<std::vector<float>, std::vector<float>>
+    runStereo (const fxme::SpectralBand& band, bool applyPan)
+    {
+        fxme::SpectralBandSplitter splitter;
+        splitter.prepare (sampleRate, blockSize, 1, order);
+        splitter.setApplyPan (applyPan);
+        splitter.setBand (0, band);
+
+        const int total = (int) sampleRate;
+        const int keepFrom = total - total / 4;
+        const double w = 2.0 * 3.141592653589793238 * toneBin / (double) fftSize;
+
+        std::vector<float> in ((size_t) blockSize), left, right;
+
+        for (int start = 0; start < total; start += blockSize)
+        {
+            for (int i = 0; i < blockSize; ++i)
+                in[(size_t) i] = amplitude * (float) std::sin (w * (double) (start + i));
+
+            splitter.process (in.data(), blockSize);
+
+            for (int i = 0; i < blockSize; ++i)
+                if (start + i >= keepFrom)
+                {
+                    left.push_back (splitter.getBandOutput (0, 0)[i]);
+                    right.push_back (splitter.getBandOutput (0, 1)[i]);
+                }
+        }
+
+        return { left, right };
     }
 
     double rms (const std::vector<float>& x)
@@ -200,6 +237,24 @@ int main()
         d.gateDb = toneDb - 6.0f;
         check (run (d, 0.0f, 12.0f) == run (d, -1.0f),
                "a knee set then taken back to zero is exactly the untouched hard switch");
+    }
+
+    // ---- 7. pan on or off --------------------------------------------------
+    {
+        auto b = fullBand();
+        b.pan = -1.0f;
+
+        const auto panned = runStereo (b, true);
+        check (rms (panned.second) < 0.01 * rms (panned.first),
+               "with the pan on, a hard-left band leaves the right channel silent");
+
+        const auto mono = runStereo (b, false);
+        check (mono.first == mono.second,
+               "with the pan off, both channels carry the same band, sample for sample");
+
+        const double unity = amplitude / std::sqrt (2.0);
+        check (std::abs (rms (mono.first) - unity) < 0.05 * unity,
+               "with the pan off, the band comes out at its own gain (unity here)");
     }
 
     std::printf ("\n%s (%d failures)\n",

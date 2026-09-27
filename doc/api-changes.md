@@ -11,6 +11,22 @@ project after a break.
 
 ---
 
+## `SpectralBandSplitter::setApplyPan`, `Saturator::setDriveGain` (2026-09-27)
+
+Additive, **no consumer action**; defaults unchanged.
+
+- `fxme::SpectralBandSplitter::setApplyPan (bool)` (default `true`, the old
+  behaviour). Off, both output channels of a band carry the same mono signal
+  with only its gain applied, and `SpectralBand::pan` is left for the consumer
+  to apply, typically after processing the band further (a saturator after the
+  pan would drive the louder side harder). Realtime-safe; the switch glides
+  like a gain change. Tested in `core/tests/CoreSplitterTests.cpp`.
+- `fxme::Saturator::setDriveGain (float)`: the drive as a linear gain, for
+  callers smoothing it per sample without a `pow` each time. Same effect as
+  `setDriveDb`.
+
+---
+
 ## `dsp/Reverb.h` builds on Windows without `NOMINMAX` (2026-09-27)
 
 Fix, **no consumer action**. `Reverb.h` includes WDL's `verbengine.h`, which

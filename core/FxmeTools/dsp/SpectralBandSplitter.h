@@ -34,7 +34,10 @@
     Gain and pan are deliberately not part of the spectral stage: they are
     applied to the band's time-domain output through smoothed values, so
     moving them is click-free and costs no extra transform. Only the band
-    edges and the gate touch the spectrum.
+    edges and the gate touch the spectrum. A consumer that processes each
+    band further before panning it (a saturator, say, which should not drive
+    the louder side harder) can turn the pan off with setApplyPan (false):
+    both output channels then carry the same mono band, gain applied.
 
     Threading: prepare() allocates — message thread / prepareToPlay only.
     setBand(), setGateTimes(), setGateKnee(), setEdgeTaperBins() and process()
@@ -199,18 +202,26 @@ public:
             return;
 
         bands[(size_t) index] = b;
-        auto& s = state[(size_t) index];
-
         updateThresholds (index);
-
-        // Constant-power pan, so sweeping a band across the image keeps its
-        // loudness; folded together with the gain into two smoothed targets.
-        const float g     = fxme::Decibels::decibelsToGain (b.gainDb, -100.0f);
-        const float theta = (fxme::jlimit (-1.0f, 1.0f, b.pan) + 1.0f)
-                                * fxme::MathConstants<float>::pi * 0.25f;
-        s.gainL.setTargetValue (g * std::cos (theta));
-        s.gainR.setTargetValue (g * std::sin (theta));
+        updateGainTargets (index);
     }
+
+    /** Whether the splitter pans each band (the default). Off, both output
+        channels of a band carry the same mono signal with only its gain
+        applied, and the band's `pan` is left for the consumer to apply,
+        typically after processing the band further. Realtime safe; the
+        change glides like any gain change. */
+    void setApplyPan (bool shouldApplyPan) noexcept
+    {
+        if (applyPan == shouldApplyPan)
+            return;
+
+        applyPan = shouldApplyPan;
+        for (int b = 0; b < numBands; ++b)
+            updateGainTargets (b);
+    }
+
+    bool isApplyingPan() const noexcept          { return applyPan; }
 
     SpectralBand getBand (int index) const noexcept
     {
@@ -357,6 +368,28 @@ private:
 
         const float x = std::log (magSq / t.loSq) * t.invLogSpan;
         return x * x * (3.0f - 2.0f * x);
+    }
+
+    /** Sets band `index`'s two smoothed output gains from its gain and pan. */
+    void updateGainTargets (int index) noexcept
+    {
+        const auto& b = bands[(size_t) index];
+        auto& s = state[(size_t) index];
+        const float g = fxme::Decibels::decibelsToGain (b.gainDb, -100.0f);
+
+        if (! applyPan)
+        {
+            s.gainL.setTargetValue (g);
+            s.gainR.setTargetValue (g);
+            return;
+        }
+
+        // Constant-power pan, so sweeping a band across the image keeps its
+        // loudness; folded together with the gain into two smoothed targets.
+        const float theta = (fxme::jlimit (-1.0f, 1.0f, b.pan) + 1.0f)
+                                * fxme::MathConstants<float>::pi * 0.25f;
+        s.gainL.setTargetValue (g * std::cos (theta));
+        s.gainR.setTargetValue (g * std::sin (theta));
     }
 
     /** Recomputes band `index`'s gate and ceiling edges from its settings, the
@@ -533,6 +566,7 @@ private:
     float gateAttackSeconds = 0.005f, gateReleaseSeconds = 0.080f;
     float gateAttackCoef = 0.0f, gateReleaseCoef = 0.0f;
     float gateKneeDb = 0.0f;
+    bool  applyPan = true;
 
     SpectralBandSplitter (const SpectralBandSplitter&) = delete;
     SpectralBandSplitter& operator= (const SpectralBandSplitter&) = delete;

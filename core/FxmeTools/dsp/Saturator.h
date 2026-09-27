@@ -58,6 +58,8 @@ public:
     void setModel (Model m)      { model = m; }
     /** Drive in dB (0..40 is the usual range). */
     void setDriveDb (float dB)   { drive = std::pow (10.0f, dB * 0.05f); }
+    /** Drive as a linear gain, for callers smoothing it per sample (no pow). */
+    void setDriveGain (float g)  { drive = g; }
     /** Operating-point offset (0..0.5). For ClassAB this is the crossover
         overlap instead. */
     void setBias (float b)       { bias = b; }
