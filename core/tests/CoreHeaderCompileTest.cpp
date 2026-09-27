@@ -99,6 +99,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/SpectralBandSplitter.h>)
  #include <FxmeTools/dsp/SpectralBandSplitter.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/SpectralBandEffects.h>)
+ #include <FxmeTools/dsp/SpectralBandEffects.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/SpectrumTap.h>)
  #include <FxmeTools/dsp/SpectrumTap.h>
 #endif

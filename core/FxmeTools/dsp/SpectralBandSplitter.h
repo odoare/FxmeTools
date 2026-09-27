@@ -99,6 +99,28 @@ struct SpectralBand
     float ceilingDb = 1000.0f;
 };
 
+/** Optional per-band processing inside the splitter's frame, after the band
+    mask and the gate and before the inverse transform: where the FFT is
+    already paid for. Installed with SpectralBandSplitter::setBandProcessor().
+
+    Both calls come from the audio thread, from inside process(), and must be
+    realtime safe. The spectrum layout is the one of fxme::RealFft: N
+    interleaved complex bins, of which only the first N/2 + 1 matter (the
+    inverse transform rebuilds the rest). */
+class SpectralBandProcessor
+{
+public:
+    virtual ~SpectralBandProcessor() = default;
+
+    /** Once per hop, with the whole input's spectrum before any band takes
+        its share. `numBins` is N/2 + 1. */
+    virtual void beginFrame (const float* spectrum, int numBins) noexcept = 0;
+
+    /** Once per hop for every enabled band, with that band's spectrum after
+        its mask and gate, to be modified in place (bins 0 to numBins - 1). */
+    virtual void processBand (int band, float* frame, int numBins) noexcept = 0;
+};
+
 class SpectralBandSplitter
 {
 public:
@@ -222,6 +244,15 @@ public:
     }
 
     bool isApplyingPan() const noexcept          { return applyPan; }
+
+    /** Installs a processor called inside each frame (see
+        SpectralBandProcessor), or removes it with nullptr (the default). Not
+        owned: it must outlive its installation. Call it from the thread that
+        calls process(), or before processing starts. */
+    void setBandProcessor (SpectralBandProcessor* newProcessor) noexcept
+    {
+        bandProcessor = newProcessor;
+    }
 
     SpectralBand getBand (int index) const noexcept
     {
@@ -452,6 +483,9 @@ private:
         std::fill (spectrum.begin() + fftSize, spectrum.end(), 0.0f);
         fft->performRealOnlyForwardTransform (spectrum.data(), false);
 
+        if (bandProcessor != nullptr)
+            bandProcessor->beginFrame (spectrum.data(), numBins);
+
         const float binHz = (float) (sampleRate / (double) fftSize);
 
         for (int b = 0; b < numBands; ++b)
@@ -501,6 +535,9 @@ private:
 
                 scaleBin (frame.data(), k, gain);
             }
+
+            if (bandProcessor != nullptr)
+                bandProcessor->processBand (b, frame.data(), numBins);
 
             fft->performRealOnlyInverseTransform (frame.data());
 
@@ -567,6 +604,7 @@ private:
     float gateAttackCoef = 0.0f, gateReleaseCoef = 0.0f;
     float gateKneeDb = 0.0f;
     bool  applyPan = true;
+    SpectralBandProcessor* bandProcessor = nullptr;
 
     SpectralBandSplitter (const SpectralBandSplitter&) = delete;
     SpectralBandSplitter& operator= (const SpectralBandSplitter&) = delete;

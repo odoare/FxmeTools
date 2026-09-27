@@ -11,6 +11,45 @@ project after a break.
 
 ---
 
+## `SpectralBandProcessor` hook and `SpectralBandEffects` (pitch, freeze, blur) (2026-09-27)
+
+Additive, **no consumer action**. A splitter with no processor installed
+behaves exactly as before, and one with `SpectralBandEffects` installed but
+every effect off gives bit-identical output (both pinned by tests).
+
+- **`fxme::SpectralBandProcessor`** (in `dsp/SpectralBandSplitter.h`): an
+  interface the splitter calls inside each frame, where the FFT is already
+  paid for. `beginFrame (spectrum, numBins)` once per hop with the whole input
+  spectrum; `processBand (band, frame, numBins)` per enabled band, after its
+  mask and gate and before the inverse transform, to modify in place. Both on
+  the audio thread, realtime-safe. Installed with
+  `SpectralBandSplitter::setBandProcessor (ptr)` (not owned; `nullptr`, the
+  default, removes it).
+- **`fxme::SpectralBandEffects`** (new, `dsp/SpectralBandEffects.h`, core,
+  header-only, in the module umbrella): the first such processor. A phase
+  vocoder shared by every band (frequency tracking once per hop), and per band
+  pitch shift (fractional semitones), freeze (tonal, or wash with a
+  deterministic `detrand` phase stream) and blur (one-pole smoothing of the
+  magnitudes). `prepare (fftSize, hop, sampleRate, numBands)` from the
+  splitter's getters, `setBand (band, Settings)` per block.
+  - Pitch moves each spectral peak's whole region by an integer number of
+    bins and sets the exact new frequency through the peak's phase advance
+    (Laroche and Dolson). Moving bins one by one instead lost up to 4 dB on
+    upward shifts, because a non-integer ratio tears a partial's lobe apart.
+  - Synthesis uses identity phase locking. Blur holds each bin's last reliable
+    frequency and uses the steady-partial phase pattern (neighbours pi apart)
+    in its tails, where the analysis only sees silence.
+  - A band passes through untouched for the first hop after the effects wake
+    up, until frequencies are tracked (a freeze captured on bin-centre
+    frequencies would be up to half a bin out of tune).
+- Tests: `core/tests/CoreSpectralEffectsTests.cpp` (23 checks: pitch accuracy
+  and level, on-bin and off-bin tones, up and down, fractional; tonal freeze
+  holds level and pitch and ignores new input; wash level and
+  reproducibility; blur neutral on a steady tone and sustaining a stopped
+  one).
+
+---
+
 ## `SpectralBandSplitter::setApplyPan`, `Saturator::setDriveGain` (2026-09-27)
 
 Additive, **no consumer action**; defaults unchanged.
