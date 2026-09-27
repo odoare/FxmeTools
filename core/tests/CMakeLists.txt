@@ -18,7 +18,12 @@ add_executable(FxmeCoreGeometryTests CoreGeometryTests.cpp)
 target_link_libraries(FxmeCoreGeometryTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreGeometryTests COMMAND FxmeCoreGeometryTests)
 
-# ── 4. Every core header is self-contained without JUCE ────────────────────
+# ── 4. The spectral band splitter's level gating (gate, ceiling, knee) ─────
+add_executable(FxmeCoreSplitterTests CoreSplitterTests.cpp)
+target_link_libraries(FxmeCoreSplitterTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreSplitterTests COMMAND FxmeCoreSplitterTests)
+
+# ── 5. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
 add_test(NAME FxmeCoreHeaderTest COMMAND FxmeCoreHeaderTest)
@@ -49,7 +54,8 @@ else()
     message(STATUS "FxmeCore: SpectralFreeze.h excluded from the header test (no WDL)")
 endif()
 
-foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreHeaderTest)
+foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
+           FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

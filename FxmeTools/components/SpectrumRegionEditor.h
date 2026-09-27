@@ -15,7 +15,16 @@
         segment is what the consumer's gate is meant to pass);
       - a gain and a pan, one horizontal segment with a round handle on it:
         dragging the handle up and down sets the gain (on its own range, see
-        setGainRange) and left to right sets the pan across the region's width.
+        setGainRange) and left to right sets the pan across the region's width;
+      - optionally (setCeilingEnabled), a ceiling: a second dashed segment on
+        the same dB axis as the gate, the gate's mirror (what rises above it is
+        what the consumer's ceiling is meant to remove). The top of its range
+        reads as "off". Dragging one of the two lines into the other pushes
+        the other along, keeping them minLineGapPx apart.
+
+    Where handles sit close together, a press grabs the nearest one; between
+    the gate and the ceiling, the midpoint between them decides (above it, the
+    upper line). The handle a press would grab is drawn emphasised.
 
     Empty space is where new regions are drawn: press and drag sideways, and
     onRegionCreate is asked for a free slot. Pressing a region selects it, a
@@ -58,11 +67,18 @@ public:
         float pan    = 0.0f;           // -1 = left edge of the region, +1 = right
         juce::Colour colour { 0xff35d6d0 };
         juce::String label;            // drawn in the rectangle's top-left corner
+
+        /** Only drawn and editable when setCeilingEnabled (true). Anything at
+            or above the top of the ceiling range is shown there, as "off".
+            Last in the struct so older brace-initialisation keeps its meaning. */
+        float ceilingDb = 1000.0f;
     };
 
     /** Which part of a region a press landed on. Reported to the consumer only
-        through the drag callbacks; useful to know when reading them. */
-    enum class Handle { none, leftEdge, rightEdge, gate, gainPan, body };
+        through the drag callbacks; useful to know when reading them. A drag of
+        the gate or the ceiling can push the other line along, so a consumer
+        bracketing gestures should cover both for either handle. */
+    enum class Handle { none, leftEdge, rightEdge, gate, gainPan, body, ceiling };
 
     SpectrumRegionEditor();
 
@@ -84,6 +100,15 @@ public:
     /** Range the gate segment is clamped to while dragging. Defaults to the
         plot's own dB range, which is usually what is wanted. */
     void setGateRange (float newMinDb, float newMaxDb);
+
+    /** Shows the ceiling line on every region and makes it draggable. Off by
+        default, so a consumer with no ceiling in its DSP sees no change. */
+    void setCeilingEnabled (bool shouldBeEnabled);
+    bool isCeilingEnabled() const noexcept       { return ceilingEnabled; }
+
+    /** Range the ceiling segment is clamped to while dragging (default -100 to
+        0 dB, like the gate). Its top reads as "off". */
+    void setCeilingRange (float newMinDb, float newMaxDb);
 
     /** Narrowest region that can be drawn or dragged out, as the ratio between
         its borders (default 1.06, roughly a semitone). */
@@ -193,11 +218,31 @@ private:
 
     float gainMinDb = -60.0f, gainMaxDb = 12.0f;
     float gateMinDb = -100.0f, gateMaxDb = 0.0f;
+    float ceilingMinDb = -100.0f, ceilingMaxDb = 0.0f;
     float minRatio = 1.06f;
+    bool  ceilingEnabled = false;
 
     static constexpr float edgeGrabPx   = 5.0f;
     static constexpr float lineGrabPx   = 5.0f;
     static constexpr float handleRadius = 5.5f;
+
+    /** Gap kept between the gate and the ceiling while either is dragged, so
+        both stay easy to grab. Only a drag enforces it: zooming, automation or
+        a preset can still bring them closer, which the hit test copes with. */
+    static constexpr float minLineGapPx = 10.0f;
+
+    /** Moves the gate or the ceiling of `r` to `db` (clamped to its range) and
+        pushes the other line ahead of it if they come closer than
+        minLineGapPx. `current` is the region as it is now, which the pushed
+        line starts from: a pushed line does not spring back. */
+    void moveLevelLine (Region& r, const Region& current, bool movingGate, float db,
+                        juce::Rectangle<float> plot) const;
+
+    /** The ceiling as drawn: clamped into its range. */
+    float shownCeilingDb (const Region& r) const noexcept
+    {
+        return juce::jlimit (ceilingMinDb, ceilingMaxDb, r.ceilingDb);
+    }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumRegionEditor)
 };

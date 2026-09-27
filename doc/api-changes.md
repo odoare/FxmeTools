@@ -11,6 +11,50 @@ project after a break.
 
 ---
 
+## Spectral ceiling and gate knee: `SpectralBandSplitter` and `SpectrumRegionEditor` (2026-09-27)
+
+Additive and off by default: **no consumer needs to do anything**, and a
+consumer that does nothing gets bit-identical splitter output (pinned by
+`core/tests/CoreSplitterTests.cpp`).
+
+**`fxme::SpectralBandSplitter` (core).**
+
+- `SpectralBand::ceilingDb`: the gate's mirror, bins *louder* than it are
+  muted. Default `1000`, and anything at or above
+  `SpectralBandSplitter::offCeilingDb` (+150) is off and skipped. With a gate
+  and a ceiling, a band keeps only the bins whose level lies between them; a
+  ceiling at or under the gate passes nothing.
+- The field is **last in the struct** on purpose: brace-initialisation such as
+  `{ true, 200.0f, 2000.0f, -60.0f, 0.0f, -0.5f }` keeps meaning gain and pan.
+  Keep it last if the struct grows again.
+- `setGateKnee (float db)`, 0 to `maxGateKneeDb` (48), shared by both lines and
+  every band. 0 (default) is the old hard switch, exactly. Wider, a bin's
+  target gain is a smoothstep over its level in dB across a window `db` wide,
+  centred on the line. Realtime-safe; cheap with an unchanged value, so it can
+  be called every block. The attack and release still apply on top.
+- Internally the per-bin test still compares squared magnitudes; a logarithm is
+  only taken for bins inside a knee.
+
+**`fxme::SpectrumRegionEditor` (module).**
+
+- `setCeilingEnabled (bool)` (default off) shows a dotted ceiling line on every
+  region; `setCeilingRange (min, max)` (default -100 to 0 dB), whose top reads
+  as "ceiling off". `Region::ceilingDb` (last in the struct, default 1000,
+  shown clamped to the range).
+- **`Handle` gained `ceiling`**, at the end. A consumer that `switch`es over
+  `Handle` without a `default` gets a `-Wswitch` warning and should handle it.
+  A drag of the gate or of the ceiling can push the other line (they are kept
+  10 px apart while dragging), so a consumer bracketing host gestures should
+  cover both parameters for either handle (Dede does).
+- **The hit test changed for every consumer**, ceiling or not: the horizontal
+  lines of a region (gate, gain line, ceiling) are now chosen by proximity,
+  where the gate used to win whenever it was in reach. Between the gate and the
+  ceiling, the side of their midpoint decides.
+- With the ceiling enabled, the gate's value label moves *under* its line (the
+  ceiling's is over its own) so they never collide. Without it, nothing moved.
+
+---
+
 ## `SpectrumRegionEditor` highlights the handle under the pointer (2026-09-27)
 
 Visible, but no API change: **no consumer needs to do anything.**

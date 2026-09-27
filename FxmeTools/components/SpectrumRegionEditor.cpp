@@ -61,6 +61,23 @@ void SpectrumRegionEditor::setGateRange (float newMinDb, float newMaxDb)
     repaint();
 }
 
+void SpectrumRegionEditor::setCeilingEnabled (bool shouldBeEnabled)
+{
+    if (ceilingEnabled == shouldBeEnabled)
+        return;
+
+    ceilingEnabled = shouldBeEnabled;
+    hover = {};
+    repaint();
+}
+
+void SpectrumRegionEditor::setCeilingRange (float newMinDb, float newMaxDb)
+{
+    ceilingMinDb = juce::jmin (newMinDb, newMaxDb);
+    ceilingMaxDb = juce::jmax (newMinDb, newMaxDb);
+    repaint();
+}
+
 void SpectrumRegionEditor::setMinimumRegionRatio (float ratio)
 {
     minRatio = juce::jmax (1.0001f, ratio);
@@ -180,10 +197,56 @@ SpectrumRegionEditor::Hit SpectrumRegionEditor::hitTestRegion (juce::Point<float
 
                 if (p.x >= b.getX() && p.x <= b.getRight())
                 {
-                    if (std::abs (p.y - dbToY (r.gateDb, plot)) <= lineGrabPx)
-                        return { i, Handle::gate };
-                    if (std::abs (p.y - gainToY (r.gainDb, plot)) <= lineGrabPx)
-                        return { i, Handle::gainPan };
+                    // The horizontal lines by proximity: the nearest one in
+                    // reach wins. Their spacing is not guaranteed (zoom,
+                    // automation and presets can stack them), so no fixed
+                    // order would let every line be caught.
+                    const float gateY = dbToY (r.gateDb, plot);
+                    const float gainY = gainToY (r.gainDb, plot);
+
+                    Handle best = Handle::none;
+                    float bestDistance = lineGrabPx;
+
+                    const auto consider = [&] (Handle h, float y)
+                    {
+                        const float d = std::abs (p.y - y);
+                        if (d <= bestDistance)
+                        {
+                            best = h;
+                            bestDistance = d;
+                        }
+                    };
+
+                    consider (Handle::gainPan, gainY);
+
+                    // At most one of the two level lines is a candidate. When
+                    // both are in reach, the side of their midpoint decides
+                    // (above it, the upper line), so either can be caught as
+                    // long as they are a couple of pixels apart.
+                    const bool gateInReach = std::abs (p.y - gateY) <= lineGrabPx;
+                    const float ceilY = ceilingEnabled ? dbToY (shownCeilingDb (r), plot) : 0.0f;
+                    const bool ceilInReach = ceilingEnabled && std::abs (p.y - ceilY) <= lineGrabPx;
+
+                    if (gateInReach && ceilInReach)
+                    {
+                        const bool pointerAbove = p.y < 0.5f * (gateY + ceilY);
+                        const bool gateIsUpper  = gateY < ceilY;
+                        if (pointerAbove == gateIsUpper)
+                            consider (Handle::gate, gateY);
+                        else
+                            consider (Handle::ceiling, ceilY);
+                    }
+                    else if (gateInReach)
+                    {
+                        consider (Handle::gate, gateY);
+                    }
+                    else if (ceilInReach)
+                    {
+                        consider (Handle::ceiling, ceilY);
+                    }
+
+                    if (best != Handle::none)
+                        return { i, best };
                 }
             }
             else if (b.contains (p))
@@ -280,7 +343,9 @@ void SpectrumRegionEditor::mouseDrag (const juce::MouseEvent& e)
             break;
 
         case Handle::gate:
-            r.gateDb = juce::jlimit (gateMinDb, gateMaxDb, yToDb (e.position.y, plot));
+        case Handle::ceiling:
+            moveLevelLine (r, regions[(size_t) dragIndex], dragHandle == Handle::gate,
+                           yToDb (e.position.y, plot), plot);
             break;
 
         case Handle::gainPan:
@@ -330,6 +395,56 @@ void SpectrumRegionEditor::mouseDrag (const juce::MouseEvent& e)
         onRegionChanged (dragIndex, r);
 
     repaint();
+}
+
+void SpectrumRegionEditor::moveLevelLine (Region& r, const Region& current, bool movingGate,
+                                          float db, juce::Rectangle<float> plot) const
+{
+    if (! ceilingEnabled)
+    {
+        if (movingGate)
+            r.gateDb = juce::jlimit (gateMinDb, gateMaxDb, db);
+        return;
+    }
+
+    // The gap is kept in pixels, which depend on the current dB zoom, so it is
+    // converted here, at the moment of the drag.
+    const float gapDb = std::abs (yToDb (plot.getY(), plot) - yToDb (plot.getY() + minLineGapPx, plot));
+
+    // The pushed line starts from where it is now, not from where it was when
+    // the drag began: once pushed, it stays pushed.
+    float gate    = current.gateDb;
+    float ceiling = shownCeilingDb (current);
+
+    if (movingGate)
+    {
+        gate = juce::jlimit (gateMinDb, gateMaxDb, db);
+        if (ceiling < gate + gapDb)
+        {
+            // Push the ceiling up; once it is stopped by its range, the gate
+            // stops too.
+            ceiling = juce::jmin (ceilingMaxDb, gate + gapDb);
+            gate = juce::jmax (gateMinDb, juce::jmin (gate, ceiling - gapDb));
+        }
+    }
+    else
+    {
+        ceiling = juce::jlimit (ceilingMinDb, ceilingMaxDb, db);
+        if (gate > ceiling - gapDb)
+        {
+            gate = juce::jmax (gateMinDb, ceiling - gapDb);
+            ceiling = juce::jmin (ceilingMaxDb, juce::jmax (ceiling, gate + gapDb));
+        }
+    }
+
+    r.gateDb = gate;
+
+    // A ceiling that was beyond its range (off, in a consumer's terms) and was
+    // neither dragged nor pushed keeps its value rather than being clamped.
+    if (! movingGate || ! juce::approximatelyEqual (ceiling, shownCeilingDb (current)))
+        r.ceilingDb = ceiling;
+    else
+        r.ceilingDb = current.ceilingDb;
 }
 
 void SpectrumRegionEditor::mouseUp (const juce::MouseEvent& e)
@@ -391,7 +506,8 @@ void SpectrumRegionEditor::mouseMove (const juce::MouseEvent& e)
     {
         case Handle::leftEdge:
         case Handle::rightEdge: setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); break;
-        case Handle::gate:      setMouseCursor (juce::MouseCursor::UpDownResizeCursor);    break;
+        case Handle::gate:
+        case Handle::ceiling:   setMouseCursor (juce::MouseCursor::UpDownResizeCursor);    break;
         case Handle::gainPan:   setMouseCursor (juce::MouseCursor::PointingHandCursor);    break;
         case Handle::body:      setMouseCursor (juce::MouseCursor::DraggingHandCursor);    break;
         case Handle::none:
@@ -501,6 +617,20 @@ void SpectrumRegionEditor::drawRegion (juce::Graphics& g, const Region& r,
                           isEmphasised ? 2.6f : 1.4f);
     }
 
+    // The ceiling, the gate's mirror on the same axis. Short dots rather than
+    // dashes, so the two lines cannot be taken for one another.
+    const float ceilingY = dbToY (shownCeilingDb (r), plot);
+    const bool ceilingVisible = ceilingEnabled && ceilingY >= plot.getY() && ceilingY <= plot.getBottom();
+    if (ceilingVisible)
+    {
+        const bool isEmphasised = emphasis == Handle::ceiling;
+        const float dots[] { 1.5f, 3.0f };
+        g.setColour (isEmphasised ? emphasised
+                                  : r.colour.withAlpha (isSelected ? 0.95f : 0.55f));
+        g.drawDashedLine ({ b.getX(), ceilingY, b.getRight(), ceilingY }, dots, 2,
+                          isEmphasised ? 2.6f : 1.4f);
+    }
+
     // Gain and pan: one segment across the band with the round handle on it.
     const bool gainEmphasised = emphasis == Handle::gainPan;
     const float gainY = gainToY (r.gainDb, plot);
@@ -552,12 +682,24 @@ void SpectrumRegionEditor::drawRegion (juce::Graphics& g, const Region& r,
         return getColours().text.withAlpha (isEmphasised ? 1.0f : 0.85f);
     };
 
+    // With a ceiling, the gate's label goes under its line and the ceiling's
+    // over its own, so the two never collide however close the lines get.
     const bool gateLabel = gateVisible && ((isSelected && roomy) || emphasis == Handle::gate);
     if (gateLabel)
     {
         g.setColour (labelColour (emphasis == Handle::gate));
-        g.drawText ("gate " + dbText (r.gateDb), labelBox (gateY - 13.0f),
+        g.drawText ("gate " + dbText (r.gateDb),
+                    labelBox (ceilingEnabled ? gateY + 2.0f : gateY - 13.0f),
                     juce::Justification::centredRight);
+    }
+
+    const bool ceilingLabel = ceilingVisible && ((isSelected && roomy) || emphasis == Handle::ceiling);
+    if (ceilingLabel)
+    {
+        const bool off = r.ceilingDb >= ceilingMaxDb;
+        g.setColour (labelColour (emphasis == Handle::ceiling));
+        g.drawText (off ? juce::String ("ceiling off") : "ceiling " + dbText (r.ceilingDb),
+                    labelBox (ceilingY - 13.0f), juce::Justification::centredRight);
     }
 
     if ((isSelected && roomy) || gainEmphasised)

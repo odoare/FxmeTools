@@ -13,6 +13,11 @@
     is a horizontal line across the band's spectrum, so a band can be made to
     pass only its peaks (a tonal skeleton) or only its noise floor.
 
+    A band can also have a ceiling, the gate's mirror: bins louder than it are
+    muted. With both, a band keeps only the bins whose level lies between the
+    two lines. Both switch hard by default; setGateKnee() widens each switch
+    into a smooth transition a given number of dB wide, centred on its line.
+
     Levels use the same convention as fxme::SpectrumAnalyzer, so a gate
     threshold in dB can be drawn straight onto a SpectrumDisplay trace and mean
     what it looks like. The two only agree exactly when they run the same
@@ -32,8 +37,8 @@
     edges and the gate touch the spectrum.
 
     Threading: prepare() allocates — message thread / prepareToPlay only.
-    setBand(), setGateTimes(), setEdgeTaperBins() and process() are realtime
-    safe and expect to be called from the same (audio) thread.
+    setBand(), setGateTimes(), setGateKnee(), setEdgeTaperBins() and process()
+    are realtime safe and expect to be called from the same (audio) thread.
 
     Usage:
 
@@ -83,6 +88,12 @@ struct SpectralBand
 
     float gainDb  = 0.0f;
     float pan     = 0.0f;      // -1 = hard left, +1 = hard right, constant power
+
+    /** Per-bin ceiling, in the same convention as the gate: bins louder than
+        it are muted. Anything at or above SpectralBandSplitter::offCeilingDb
+        disables it, which is the default. Last in the struct on purpose, so
+        brace-initialisation written before it existed keeps its meaning. */
+    float ceilingDb = 1000.0f;
 };
 
 class SpectralBandSplitter
@@ -94,6 +105,12 @@ public:
     /** A gate at or below this is treated as fully open, and the gate stage is
         skipped entirely for that band. */
     static constexpr float openGateDb = -150.0f;
+
+    /** A ceiling at or above this is treated as off, and skipped entirely. */
+    static constexpr float offCeilingDb = 150.0f;
+
+    /** Widest transition setGateKnee() accepts, in dB. */
+    static constexpr float maxGateKneeDb = 48.0f;
 
     SpectralBandSplitter() = default;
 
@@ -184,13 +201,7 @@ public:
         bands[(size_t) index] = b;
         auto& s = state[(size_t) index];
 
-        // Compare squared magnitudes so the gate costs no logarithm per bin.
-        // The analyser convention is level = mag * 2 / fftSize, so the raw
-        // magnitude a threshold corresponds to is the inverse of that.
-        const float thresholdMag = fxme::Decibels::decibelsToGain (b.gateDb, -200.0f)
-                                     * (float) fftSize * 0.5f;
-        s.gateThresholdSq = thresholdMag * thresholdMag;
-        s.gateOpen = b.gateDb <= openGateDb;
+        updateThresholds (index);
 
         // Constant-power pan, so sweeping a band across the image keeps its
         // loudness; folded together with the gain into two smoothed targets.
@@ -220,6 +231,24 @@ public:
         const double hopSeconds = (double) hop / sampleRate;
         gateAttackCoef  = coefFor (gateAttackSeconds,  hopSeconds);
         gateReleaseCoef = coefFor (gateReleaseSeconds, hopSeconds);
+    }
+
+    /** Width in dB of the transition around the gate and the ceiling, shared
+        by both and by every band. 0 (the default) is a hard switch: a bin is
+        passed or muted outright. Wider, a bin's target gain rises smoothly
+        (a smoothstep over the level in dB) from 0 at kneeDb/2 below the line
+        to 1 at kneeDb/2 above it, for the gate, and the other way round for
+        the ceiling. The attack and release still smooth the gain over time on
+        top of that. Cheap to call every block with an unchanged value. */
+    void setGateKnee (float kneeDb) noexcept
+    {
+        const float knee = fxme::jlimit (0.0f, maxGateKneeDb, kneeDb);
+        if (knee == gateKneeDb)
+            return;
+
+        gateKneeDb = knee;
+        for (int b = 0; b < numBands; ++b)
+            updateThresholds (b);
     }
 
     /** Width in bins of the raised-cosine taper at each band border (0 gives a
@@ -297,14 +326,78 @@ public:
 
 private:
     //==========================================================================
+    /** One line (the gate or the ceiling) as squared-magnitude edges, so the
+        per-bin test costs no logarithm outside the knee. With a hard knee the
+        two edges coincide. */
+    struct Threshold
+    {
+        float loSq = 0.0f, hiSq = 0.0f;
+        float invLogSpan = 0.0f;          // 1 / ln (hiSq / loSq), 0 when hard
+    };
+
     struct BandState
     {
         std::vector<float> ola;           // overlap-add ring, 2 * fftSize
         std::vector<float> gateGain;      // per-bin gate gain, smoothed across frames
-        float gateThresholdSq = 0.0f;
+        Threshold gate, ceiling;
         bool  gateOpen = true;
+        bool  ceilingOff = true;
         SmoothedValue<float> gainL { 0.0f }, gainR { 0.0f };
     };
+
+    /** 0 below the line's lower edge, 1 above its upper edge, and a smoothstep
+        over the level in dB in between. A hard line (edges equal) switches at
+        the threshold itself, a bin exactly on it counting as above. */
+    static float rise (float magSq, const Threshold& t) noexcept
+    {
+        if (magSq >= t.hiSq)
+            return 1.0f;
+        if (magSq <= t.loSq)
+            return 0.0f;
+
+        const float x = std::log (magSq / t.loSq) * t.invLogSpan;
+        return x * x * (3.0f - 2.0f * x);
+    }
+
+    /** Recomputes band `index`'s gate and ceiling edges from its settings, the
+        window size and the knee. */
+    void updateThresholds (int index) noexcept
+    {
+        const auto& b = bands[(size_t) index];
+        auto& s = state[(size_t) index];
+
+        // Compare squared magnitudes so the gate costs no logarithm per bin.
+        // The analyser convention is level = mag * 2 / fftSize, so the raw
+        // magnitude a threshold corresponds to is the inverse of that.
+        const auto edgesFor = [this] (float db) noexcept
+        {
+            const float mag   = fxme::Decibels::decibelsToGain (db, -200.0f) * (float) fftSize * 0.5f;
+            const float thrSq = mag * mag;
+
+            Threshold t;
+            if (gateKneeDb <= 0.0f)
+            {
+                t.loSq = t.hiSq = thrSq;
+                return t;
+            }
+
+            // Half the knee each side of the line, in dB of level, which is
+            // 10*log10 of the squared magnitude.
+            const float halfRatio = std::pow (10.0f, gateKneeDb * 0.05f);
+            t.loSq = thrSq / halfRatio;
+            t.hiSq = thrSq * halfRatio;
+            t.invLogSpan = 1.0f / std::log (t.hiSq / t.loSq);
+            return t;
+        };
+
+        s.gateOpen   = b.gateDb <= openGateDb;
+        s.ceilingOff = b.ceilingDb >= offCeilingDb;
+
+        if (! s.gateOpen)
+            s.gate = edgesFor (b.gateDb);
+        if (! s.ceilingOff)
+            s.ceiling = edgesFor (b.ceilingDb);
+    }
 
     static float coefFor (float seconds, double stepSeconds)
     {
@@ -342,17 +435,22 @@ private:
 
             std::copy (spectrum.begin(), spectrum.end(), frame.begin());
 
+            const bool levelGated = ! s.gateOpen || ! s.ceilingOff;
+
             for (int k = 0; k < numBins; ++k)
             {
                 float gain = bandMask (k, kLo, kHi);
 
-                if (gain > 0.0f && ! s.gateOpen)
+                if (gain > 0.0f && levelGated)
                 {
                     const float re = frame[(size_t) (2 * k)];
                     const float im = frame[(size_t) (2 * k + 1)];
                     const float magSq = re * re + im * im;
 
-                    const float target = magSq >= s.gateThresholdSq ? 1.0f : 0.0f;
+                    // Pass what is above the gate and below the ceiling; a
+                    // ceiling at or under the gate leaves nothing to pass.
+                    const float target = (s.gateOpen   ? 1.0f : rise (magSq, s.gate))
+                                       * (s.ceilingOff ? 1.0f : 1.0f - rise (magSq, s.ceiling));
                     const float coef   = target > s.gateGain[(size_t) k] ? gateAttackCoef
                                                                          : gateReleaseCoef;
                     auto& g = s.gateGain[(size_t) k];
@@ -434,6 +532,7 @@ private:
 
     float gateAttackSeconds = 0.005f, gateReleaseSeconds = 0.080f;
     float gateAttackCoef = 0.0f, gateReleaseCoef = 0.0f;
+    float gateKneeDb = 0.0f;
 
     SpectralBandSplitter (const SpectralBandSplitter&) = delete;
     SpectralBandSplitter& operator= (const SpectralBandSplitter&) = delete;

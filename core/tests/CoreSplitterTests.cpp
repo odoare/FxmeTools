@@ -1,0 +1,208 @@
+/*
+  ------------------------------------------------------------------------------
+    CoreSplitterTests.cpp
+
+    The level gating of fxme::SpectralBandSplitter, measured on a steady tone:
+
+      1. The test setup itself: an open band passes the tone at the expected
+         level.
+      2. The ceiling is off by default, and an explicit "off" value gives the
+         same output sample for sample.
+      3. The gate passes a tone above its line and removes one below it.
+      4. The ceiling mirrors it: passes below, removes above.
+      5. A ceiling under the gate leaves nothing to pass.
+      6. A knee turns an outright switch into a partial gain, for both lines,
+         and going back to a zero knee restores the hard switch exactly.
+
+    The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
+    kHz), so through the Hann window it occupies three bins only: the centre
+    one at level amplitude/2 (in the analyser convention, level = mag*2/N)
+    and its two neighbours 6 dB lower. The margins below are chosen well
+    clear of those three levels, so the checks do not depend on rounding.
+
+    Exit code 0 when everything passes.
+
+    Author: Olivier Doaré, github.com/odoare
+    SPDX-License-Identifier: LGPL-3.0-or-later
+  ------------------------------------------------------------------------------
+*/
+
+#include <FxmeTools/dsp/SpectralBandSplitter.h>
+
+#include <cmath>
+#include <cstdio>
+#include <vector>
+
+static int failures = 0;
+static void check (bool ok, const char* what)
+{
+    std::printf ("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+    if (! ok)
+        ++failures;
+}
+
+namespace
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int    order      = 11;
+    constexpr int    fftSize    = 1 << order;
+    constexpr int    blockSize  = 512;
+    constexpr int    toneBin    = 64;
+    constexpr float  amplitude  = 0.5f;
+
+    /** Level of the tone's centre bin, in the splitter's dB convention. */
+    const float toneDb = 20.0f * std::log10 (amplitude * 0.5f);
+
+    fxme::SpectralBand fullBand()
+    {
+        fxme::SpectralBand b;
+        b.enabled = true;
+        b.lowHz   = 20.0f;
+        b.highHz  = 20000.0f;
+        return b;
+    }
+
+    /** Runs one second of the tone through a one-band splitter and returns the
+        left output over the last quarter second, well past the latency and
+        the gate's attack and release.
+
+        The knee is set after the band, so the thresholds are recomputed on a
+        band that already exists; `earlierKneeDb`, when not negative, is set
+        before the band. A negative `kneeDb` leaves the knee untouched. */
+    std::vector<float> run (const fxme::SpectralBand& band, float kneeDb,
+                            float earlierKneeDb = -1.0f)
+    {
+        fxme::SpectralBandSplitter splitter;
+        splitter.prepare (sampleRate, blockSize, 1, order);
+        if (earlierKneeDb >= 0.0f)
+            splitter.setGateKnee (earlierKneeDb);
+        splitter.setBand (0, band);
+        if (kneeDb >= 0.0f)
+            splitter.setGateKnee (kneeDb);
+
+        const int total = (int) sampleRate;
+        const int keepFrom = total - total / 4;
+        const double w = 2.0 * 3.141592653589793238 * toneBin / (double) fftSize;
+
+        std::vector<float> in ((size_t) blockSize), kept;
+        kept.reserve ((size_t) (total - keepFrom));
+
+        for (int start = 0; start < total; start += blockSize)
+        {
+            for (int i = 0; i < blockSize; ++i)
+                in[(size_t) i] = amplitude * (float) std::sin (w * (double) (start + i));
+
+            splitter.process (in.data(), blockSize);
+
+            const float* left = splitter.getBandOutput (0, 0);
+            for (int i = 0; i < blockSize; ++i)
+                if (start + i >= keepFrom)
+                    kept.push_back (left[i]);
+        }
+
+        return kept;
+    }
+
+    double rms (const std::vector<float>& x)
+    {
+        double sum = 0.0;
+        for (float v : x)
+            sum += (double) v * v;
+        return x.empty() ? 0.0 : std::sqrt (sum / (double) x.size());
+    }
+}
+
+int main()
+{
+    std::printf ("SpectralBandSplitter level gating\n");
+
+    // ---- 1. setup ----------------------------------------------------------
+    const auto open = run (fullBand(), 0.0f);
+    const double ref = rms (open);
+
+    // A centred pan takes cos (pi/4) off each side of a sine of RMS a/sqrt 2.
+    const double expected = amplitude / std::sqrt (2.0) * std::cos (3.141592653589793238 / 4.0);
+    check (std::abs (ref - expected) < 0.05 * expected,
+           "an open band passes the tone at the expected level");
+
+    const auto passes  = [ref] (double r) { return std::abs (r - ref) < 0.05 * ref; };
+    const auto removed = [ref] (double r) { return r < 0.01 * ref; };
+
+    // ---- 2. ceiling off by default -----------------------------------------
+    {
+        auto b = fullBand();
+        b.ceilingDb = 200.0f;
+        check (run (b, 0.0f) == open, "an explicit 'off' ceiling changes nothing, sample for sample");
+
+        check (fxme::SpectralBand{}.ceilingDb >= fxme::SpectralBandSplitter::offCeilingDb,
+               "the default ceiling is off");
+
+        // Brace-initialisation written before the ceiling existed still means
+        // what it did: the ceiling is last, and stays off.
+        const fxme::SpectralBand legacy { true, 200.0f, 2000.0f, -60.0f, -3.0f, -0.5f };
+        check (legacy.gainDb == -3.0f && legacy.pan == -0.5f
+                   && legacy.ceilingDb >= fxme::SpectralBandSplitter::offCeilingDb,
+               "positional initialisation keeps its meaning");
+    }
+
+    // ---- 3. gate -----------------------------------------------------------
+    {
+        auto b = fullBand();
+        b.gateDb = toneDb - 20.0f;
+        check (passes (rms (run (b, 0.0f))), "a gate 20 dB under the tone passes it");
+
+        b.gateDb = toneDb + 10.0f;
+        check (removed (rms (run (b, 0.0f))), "a gate 10 dB over the tone removes it");
+    }
+
+    // ---- 4. ceiling --------------------------------------------------------
+    {
+        auto b = fullBand();
+        b.ceilingDb = toneDb + 20.0f;
+        check (passes (rms (run (b, 0.0f))), "a ceiling 20 dB over the tone passes it");
+
+        b.ceilingDb = toneDb - 10.0f;
+        check (removed (rms (run (b, 0.0f))), "a ceiling 10 dB under the tone removes it");
+    }
+
+    // ---- 5. empty window ---------------------------------------------------
+    {
+        auto b = fullBand();
+        b.gateDb    = toneDb - 20.0f;
+        b.ceilingDb = toneDb - 30.0f;
+        check (removed (rms (run (b, 0.0f))), "a ceiling under the gate passes nothing");
+    }
+
+    // ---- 6. knee -----------------------------------------------------------
+    {
+        // Gate 3 dB over the centre bin: a hard gate removes all three bins,
+        // a 24 dB knee lets part of each through.
+        auto b = fullBand();
+        b.gateDb = toneDb + 3.0f;
+        check (removed (rms (run (b, 0.0f))), "hard gate just over the tone removes it");
+
+        const double soft = rms (run (b, 24.0f));
+        check (soft > 0.05 * ref && soft < 0.9 * ref, "a 24 dB knee on the gate gives a partial gain");
+
+        // Ceiling 3 dB under the centre bin: the knee attenuates without
+        // removing.
+        auto c = fullBand();
+        c.ceilingDb = toneDb - 3.0f;
+        const double softCeiling = rms (run (c, 24.0f));
+        check (softCeiling > 0.05 * ref && softCeiling < 0.9 * ref,
+               "a 24 dB knee on the ceiling gives a partial gain");
+
+        // Setting a knee and taking it back must leave exactly the hard switch
+        // of a splitter whose knee was never touched. The gate sits 6 dB under
+        // the centre bin, on the neighbours' level, so a leftover knee would
+        // show.
+        auto d = fullBand();
+        d.gateDb = toneDb - 6.0f;
+        check (run (d, 0.0f, 12.0f) == run (d, -1.0f),
+               "a knee set then taken back to zero is exactly the untouched hard switch");
+    }
+
+    std::printf ("\n%s (%d failures)\n",
+                 failures ? "TESTS FAILED" : "ALL TESTS PASSED", failures);
+    return failures ? 1 : 0;
+}
