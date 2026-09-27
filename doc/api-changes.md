@@ -11,6 +11,26 @@ project after a break.
 
 ---
 
+## `SpectrumRegionEditor` highlights the handle under the pointer (2026-09-27)
+
+Visible, but no API change: **no consumer needs to do anything.**
+
+The handle a press would grab (a border, the gate line, the gain line with its
+pan disc) is now drawn thicker and brighter than the rest, in the region's own
+colour, and shows its value: frequency for a border, level for the gate, gain
+and pan for the gain handle. This works on any region, not only the selected
+one, and the label may spill past a narrow region's borders (it stays inside
+the plot). While dragging, the dragged handle keeps the highlight even when the
+pointer leaves it. The region owning a highlighted handle is drawn on top, so
+the handle is never hidden under another region's lines.
+
+The component already tracked the hovered handle but never drew it; it also
+never cleared it when the pointer left the component. Both are fixed
+(`mouseExit` is now overridden and chains to `SpectrumDisplay::mouseExit`).
+A subclass overriding `mouseExit` or `mouseUp` should keep calling the base.
+
+---
+
 ## `fxme::RealFft` runs on WDL's real FFT (2026-09-26)
 
 Found while profiling Dede's spectral band splitter: `RealFft` was feeding N

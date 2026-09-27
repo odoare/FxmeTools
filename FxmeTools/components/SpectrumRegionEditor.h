@@ -127,6 +127,7 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
 protected:
@@ -157,10 +158,17 @@ private:
         whichever border was not the one being dragged. */
     void enforceMinimumWidth (Region& r, bool movingLow) const;
 
+    /** The handle of region `index` to draw emphasised: the one being dragged
+        during a drag (wherever the pointer has wandered), otherwise the one
+        under the pointer. `none` for every other region. */
+    Handle emphasisFor (int index) const noexcept;
+
     void drawRegion (juce::Graphics&, const Region&, juce::Rectangle<float> plot,
-                     bool isSelected, bool fillOnly) const;
+                     bool isSelected, bool fillOnly, Handle emphasis) const;
 
     static juce::String dbText (float db);
+    static juce::String hzText (float hz);
+    static juce::String panText (float pan);
 
     std::vector<Region> regions;
     int selected = -1;
@@ -179,6 +187,8 @@ private:
     bool  creating = false;
     float createFromHz = 0.0f, createToHz = 0.0f;
 
+    // The handle under the pointer, drawn emphasised so a press is predictable
+    // where handles sit close together. Cleared when the pointer leaves.
     Hit hover;
 
     float gainMinDb = -60.0f, gainMaxDb = 12.0f;
