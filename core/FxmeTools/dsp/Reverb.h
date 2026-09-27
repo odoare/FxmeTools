@@ -43,7 +43,24 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+
+// WDL's headers include <windows.h> on Windows, whose min and max macros break
+// every std::min (...) / std::max (...) after them, here and in whatever the
+// consumer includes next. NOMINMAX stops the macros being defined, and is
+// withdrawn afterwards if it was ours. Consumers wired through
+// fxmetools_attach() already get NOMINMAX from CMake; one registering the
+// module directly does not, hence doing it here.
+#if defined (_WIN32) && ! defined (NOMINMAX)
+ #define NOMINMAX
+ #define FXME_REVERB_DEFINED_NOMINMAX 1
+#endif
+
 #include "../../../WDL/WDL/verbengine.h"
+
+#if defined (FXME_REVERB_DEFINED_NOMINMAX)
+ #undef NOMINMAX
+ #undef FXME_REVERB_DEFINED_NOMINMAX
+#endif
 
 namespace fxme
 {
@@ -60,7 +77,7 @@ public:
         Message thread / prepareToPlay only. */
     void prepare (double sampleRate, int maxBlockSize)
     {
-        blockSize = std::max (1, maxBlockSize);
+        blockSize = (std::max) (1, maxBlockSize);
 
         inL.assign  ((size_t) blockSize, 0.0);
         inR.assign  ((size_t) blockSize, 0.0);
@@ -129,7 +146,7 @@ public:
 
         for (int start = 0; start < numSamples; start += blockSize)
         {
-            const int n = std::min (blockSize, numSamples - start);
+            const int n = (std::min) (blockSize, numSamples - start);
 
             for (int i = 0; i < n; ++i)
             {

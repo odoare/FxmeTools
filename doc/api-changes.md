@@ -11,6 +11,22 @@ project after a break.
 
 ---
 
+## `dsp/Reverb.h` builds on Windows without `NOMINMAX` (2026-09-27)
+
+Fix, **no consumer action**. `Reverb.h` includes WDL's `verbengine.h`, which
+brings in `<windows.h>` on Windows; its `min`/`max` macros broke the header's
+own `std::min`/`std::max` (MSVC C2589) in any consumer that registers the
+module directly instead of going through `fxmetools_attach()` (which defines
+`NOMINMAX` in CMake). The header now defines `NOMINMAX` around the WDL include
+(withdrawing it afterwards if it was its own) and parenthesises its two calls,
+`(std::max) (...)`, which no function-like macro can expand.
+
+Still relying on the CMake `NOMINMAX`: `dsp/FirFilter.h` (WDL's
+`convoengine.h`). A direct-registration consumer using it should add
+`target_compile_definitions(<target> PRIVATE $<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>)`.
+
+---
+
 ## Spectral ceiling and gate knee: `SpectralBandSplitter` and `SpectrumRegionEditor` (2026-09-27)
 
 Additive and off by default: **no consumer needs to do anything**, and a
