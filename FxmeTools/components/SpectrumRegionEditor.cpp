@@ -333,12 +333,12 @@ void SpectrumRegionEditor::mouseDrag (const juce::MouseEvent& e)
     switch (dragHandle)
     {
         case Handle::leftEdge:
-            r.lowHz = xToFreq (e.position.x, plot);
+            r.lowHz = snappedEdgeFrequency (e.position.x, dragIndex, plot);
             enforceMinimumWidth (r, true);
             break;
 
         case Handle::rightEdge:
-            r.highHz = xToFreq (e.position.x, plot);
+            r.highHz = snappedEdgeFrequency (e.position.x, dragIndex, plot);
             enforceMinimumWidth (r, false);
             break;
 
@@ -447,6 +447,39 @@ void SpectrumRegionEditor::moveLevelLine (Region& r, const Region& current, bool
         r.ceilingDb = current.ceilingDb;
 }
 
+float SpectrumRegionEditor::snappedEdgeFrequency (float x, int ownIndex, juce::Rectangle<float> plot)
+{
+    float bestDistance = edgeSnapPx;
+    float bestFreq = -1.0f, bestX = -1.0f;
+
+    if (edgeSnapPx > 0.0f)
+    {
+        for (int i = 0; i < (int) regions.size(); ++i)
+        {
+            const auto& other = regions[(size_t) i];
+            if (i == ownIndex || ! other.active)
+                continue;
+
+            for (const float f : { other.lowHz, other.highHz })
+            {
+                const float wallX = freqToX (f, plot);
+                const float d = std::abs (x - wallX);
+                if (d <= bestDistance)
+                {
+                    bestDistance = d;
+                    bestFreq = f;
+                    bestX = wallX;
+                }
+            }
+        }
+    }
+
+    // Stuck to a wall: exactly its frequency, so the two regions meet with
+    // no gap and no overlap. Otherwise the pointer's own frequency.
+    snapLineX = bestX;
+    return bestFreq > 0.0f ? bestFreq : xToFreq (x, plot);
+}
+
 void SpectrumRegionEditor::mouseUp (const juce::MouseEvent& e)
 {
     if (creating)
@@ -478,6 +511,7 @@ void SpectrumRegionEditor::mouseUp (const juce::MouseEvent& e)
         // emphasis should already have gone back to what is under the pointer.
         dragIndex = -1;
         dragHandle = Handle::none;
+        snapLineX = -1.0f;
         hover = hitTestRegion (e.position);
         repaint();
 
@@ -766,6 +800,13 @@ void SpectrumRegionEditor::paintOverTraces (juce::Graphics& g, juce::Rectangle<f
         g.fillRect (b);
         g.setColour (getColours().text.withAlpha (0.7f));
         g.drawRect (b, 1.0f);
+    }
+
+    // The wall a dragged border is stuck to, the full height of the plot.
+    if (dragIndex >= 0 && snapLineX >= plot.getX() && snapLineX <= plot.getRight())
+    {
+        g.setColour (getColours().text.withAlpha (0.55f));
+        g.drawVerticalLine (juce::roundToInt (snapLineX), plot.getY(), plot.getBottom());
     }
 }
 

@@ -11,6 +11,20 @@ project after a break.
 
 ---
 
+## `SpectrumRegionEditor::setEdgeSnapPixels`: borders stick to other regions' (2026-09-28)
+
+Opt-in, **no consumer action**: off by default, nothing changes until it is
+called.
+
+`setEdgeSnapPixels (px)`: while a region's border is dragged, it sticks to the
+nearest border of another active region once the pointer is within `px` of it,
+landing on exactly that frequency (the two regions then meet with no gap and
+no overlap), and stays there until the pointer moves further than `px`. A thin
+full-height line marks the wall while it holds. Only border drags snap, not
+moving a whole region. Dede uses 8 px.
+
+---
+
 ## `SpectralBandSplitter::getGateOpenness`, `SpectralBandEffects::resetBand` (2026-09-28)
 
 Additive, **no consumer action**.

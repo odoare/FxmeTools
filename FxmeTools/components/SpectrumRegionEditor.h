@@ -114,6 +114,14 @@ public:
         its borders (default 1.06, roughly a semitone). */
     void setMinimumRegionRatio (float ratio);
 
+    /** A small wall at other regions' borders: while a border is dragged, it
+        sticks to the border of another region once the pointer comes within
+        `pixels` of it, landing on exactly the same frequency, and stays there
+        until the pointer moves further than that. A thin line marks the wall
+        while it holds. 0 (the default) turns it off. Only border drags snap,
+        not moving a whole region. */
+    void setEdgeSnapPixels (float pixels) noexcept { edgeSnapPx = juce::jmax (0.0f, pixels); }
+
     int  getSelectedRegion() const noexcept      { return selected; }
     void setSelectedRegion (int index);
 
@@ -179,6 +187,12 @@ private:
     float yToGain (float y, juce::Rectangle<float> plot) const;
     static float xToPan (float x, float left, float right);
 
+    /** The frequency a border dragged to `x` lands on: the nearest border of
+        another active region within edgeSnapPx, exactly, or `x`'s own
+        frequency when none is that close. Records the wall's position for
+        drawing (snapLineX, -1 when not stuck). */
+    float snappedEdgeFrequency (float x, int ownIndex, juce::Rectangle<float> plot);
+
     /** Keeps a region's borders apart by at least the minimum ratio, moving
         whichever border was not the one being dragged. */
     void enforceMinimumWidth (Region& r, bool movingLow) const;
@@ -221,6 +235,9 @@ private:
     float ceilingMinDb = -100.0f, ceilingMaxDb = 0.0f;
     float minRatio = 1.06f;
     bool  ceilingEnabled = false;
+
+    float edgeSnapPx = 0.0f;
+    float snapLineX = -1.0f;      // the wall a dragged border is stuck to, -1 when none
 
     static constexpr float edgeGrabPx   = 5.0f;
     static constexpr float lineGrabPx   = 5.0f;
