@@ -5,7 +5,9 @@
     Splits one mono stream into several independent frequency bands, each with
     a spectral gate, a gain and a pan, and hands back one stereo signal per
     band. Everything happens in one short-time Fourier transform: a single
-    analysis FFT per hop, then one inverse FFT per active band.
+    analysis FFT per hop, then one inverse FFT per active band that has
+    something to output (a band whose gate is closed, or whose input is
+    silent, costs no transform).
 
     A band is a frequency interval plus a per-bin gate: inside the interval,
     bins quieter than the gate threshold are muted and the rest pass. That is
@@ -107,7 +109,11 @@ struct SpectralBand
     Both calls come from the audio thread, from inside process(), and must be
     realtime safe. The spectrum layout is the one of fxme::RealFft: N
     interleaved complex bins, of which only the first N/2 + 1 matter (the
-    inverse transform rebuilds the rest). */
+    inverse transform rebuilds the rest). In a band's frame, only those are
+    filled in; the upper half holds nothing meaningful.
+
+    If a band's frame reaches processBand() entirely zero and leaves it
+    entirely zero, the splitter skips that band's inverse transform. */
 class SpectralBandProcessor
 {
 public:
@@ -162,9 +168,13 @@ public:
         fft = std::make_unique<RealFft> (order);
 
         window.resize ((size_t) fftSize);
+        synthesisWindow.resize ((size_t) fftSize);
         for (int i = 0; i < fftSize; ++i)   // periodic Hann: sums to a constant at 75% overlap
+        {
             window[(size_t) i] = 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::twoPi
                                                          * (float) i / (float) fftSize);
+            synthesisWindow[(size_t) i] = window[(size_t) i] * olaNorm;
+        }
 
         history.assign ((size_t) fftSize, 0.0f);
         spectrum.assign ((size_t) (2 * fftSize), 0.0f);
@@ -344,30 +354,30 @@ public:
 
         float* const* out = outputs.getArrayOfWritePointers();
 
-        for (int i = 0; i < numSamples; ++i)
+        // Work in runs that stop at the next frame boundary (and, defensively,
+        // at either ring's end, although both rings are multiples of the hop
+        // and start aligned with it), so each band is one straight loop per run.
+        for (int done = 0; done < numSamples;)
         {
-            history[(size_t) histPos] = mono[i];
-            if (++histPos >= fftSize)
-                histPos = 0;
+            const int n = fxme::jmin (fxme::jmin (numSamples - done, hop - hopCount),
+                                      fftSize - histPos, 2 * fftSize - olaRead);
+
+            std::copy (mono + done, mono + done + n, history.data() + histPos);
 
             for (int b = 0; b < numBands; ++b)
-            {
-                auto& s = state[(size_t) b];
-                const float v = s.ola[(size_t) olaRead];
-                s.ola[(size_t) olaRead] = 0.0f;
+                renderBandRun (b, out[2 * b] + done, out[2 * b + 1] + done, n);
 
-                const float gl = s.gainL.getNextValue();
-                const float gr = s.gainR.getNextValue();
-                const bool  on = bands[(size_t) b].enabled;
+            done     += n;
+            histPos  += n;
+            olaRead  += n;
+            hopCount += n;
 
-                out[2 * b][i]     = on ? v * gl : 0.0f;
-                out[2 * b + 1][i] = on ? v * gr : 0.0f;
-            }
-
-            if (++olaRead >= 2 * fftSize)
+            if (histPos >= fftSize)
+                histPos = 0;
+            if (olaRead >= 2 * fftSize)
                 olaRead = 0;
 
-            if (++hopCount >= hop)
+            if (hopCount >= hop)
             {
                 hopCount = 0;
                 renderFrame();
@@ -398,7 +408,9 @@ private:
     struct BandState
     {
         std::vector<float> ola;           // overlap-add ring, 2 * fftSize
-        std::vector<float> gateGain;      // per-bin gate gain, smoothed across frames
+        std::vector<float> gateGain;      // per-bin gate gain, smoothed across frames;
+                                          // 0 everywhere outside kLo..kHi
+        int kLo = 0, kHi = -1;            // the bins the last frame covered
         Threshold gate, ceiling;
         bool  gateOpen = true;
         bool  ceilingOff = true;
@@ -488,17 +500,69 @@ private:
         return (float) std::exp (-stepSeconds / (double) seconds);
     }
 
+    /** Band `b`'s next `n` output samples, read (and cleared) from its
+        overlap-add ring at olaRead. A disabled band outputs silence, still
+        draining its ring and advancing its gain glides. */
+    void renderBandRun (int b, float* left, float* right, int n) noexcept
+    {
+        auto& s = state[(size_t) b];
+        float* const v = s.ola.data() + olaRead;
+
+        if (! bands[(size_t) b].enabled)
+        {
+            std::fill (left,  left  + n, 0.0f);
+            std::fill (right, right + n, 0.0f);
+            std::fill (v, v + n, 0.0f);
+
+            for (int i = 0; i < n && (s.gainL.isSmoothing() || s.gainR.isSmoothing()); ++i)
+            {
+                s.gainL.getNextValue();
+                s.gainR.getNextValue();
+            }
+            return;
+        }
+
+        if (s.gainL.isSmoothing() || s.gainR.isSmoothing())
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                left[i]  = v[i] * s.gainL.getNextValue();
+                right[i] = v[i] * s.gainR.getNextValue();
+            }
+        }
+        else
+        {
+            const float gl = s.gainL.getCurrentValue();
+            const float gr = s.gainR.getCurrentValue();
+
+            for (int i = 0; i < n; ++i)
+            {
+                left[i]  = v[i] * gl;
+                right[i] = v[i] * gr;
+            }
+        }
+
+        std::fill (v, v + n, 0.0f);
+    }
+
     /** One analysis frame: window and transform the last fftSize inputs, then
-        for every active band mask, gate, invert and overlap-add the result. */
+        for every active band mask, gate, invert and overlap-add the result.
+
+        Only a band's own bins are computed: the frame is zeroed around them,
+        and only the non-negative half is written at all, since that is all
+        the inverse transform reads. A band whose frame comes out entirely
+        zero (gate closed, band narrower than a bin, silent input) skips the
+        inverse transform and the overlap-add, which would only add zeros. */
     void renderFrame() noexcept
     {
-        // The history ring holds the last fftSize inputs; histPos is the oldest.
-        for (int i = 0; i < fftSize; ++i)
-        {
-            const int r = (histPos + i) % fftSize;
-            spectrum[(size_t) i] = history[(size_t) r] * window[(size_t) i];
-        }
-        std::fill (spectrum.begin() + fftSize, spectrum.end(), 0.0f);
+        // The history ring holds the last fftSize inputs; histPos is the
+        // oldest, so the window starts there and wraps once.
+        const int tail = fftSize - histPos;
+        for (int i = 0; i < tail; ++i)
+            spectrum[(size_t) i] = history[(size_t) (histPos + i)] * window[(size_t) i];
+        for (int i = tail; i < fftSize; ++i)
+            spectrum[(size_t) i] = history[(size_t) (i - tail)] * window[(size_t) i];
+
         fft->performRealOnlyForwardTransform (spectrum.data(), false);
 
         if (bandProcessor != nullptr)
@@ -517,33 +581,45 @@ private:
 
             auto& s = state[(size_t) b];
 
-            // Bins fully inside the band, plus the taper skirt on each side.
+            // The bins of the band, the taper skirt included (it lies inside).
+            // Empty (kLo > kHi) when the band is narrower than one bin.
             const int kLo = fxme::jlimit (0, numBins - 1, (int) std::ceil  (cfg.lowHz  / binHz));
             const int kHi = fxme::jlimit (0, numBins - 1, (int) std::floor (cfg.highHz / binHz));
+            moveBandBins (s, kLo, kHi);
 
-            std::copy (spectrum.begin(), spectrum.end(), frame.begin());
+            float* const f = frame.data();
+            const float* const x = spectrum.data();
+            std::fill (f, f + 2 * fxme::jmin (kLo, numBins), 0.0f);
+            if (kHi + 1 < numBins)
+                std::fill (f + 2 * fxme::jmax (kLo, kHi + 1), f + 2 * numBins, 0.0f);
 
             const bool levelGated = ! s.gateOpen || ! s.ceilingOff;
             double passedEnergy = 0.0, bandEnergy = 0.0;
+            bool anyNonZero = false;
 
-            for (int k = 0; k < numBins; ++k)
+            for (int k = kLo; k <= kHi; ++k)
             {
+                const float re = x[2 * k];
+                const float im = x[2 * k + 1];
                 float gain = bandMask (k, kLo, kHi);
+                auto& g = s.gateGain[(size_t) k];
 
-                if (gain > 0.0f && levelGated)
+                if (levelGated)
                 {
-                    const float re = frame[(size_t) (2 * k)];
-                    const float im = frame[(size_t) (2 * k + 1)];
                     const float magSq = re * re + im * im;
 
                     // Pass what is above the gate and below the ceiling; a
                     // ceiling at or under the gate leaves nothing to pass.
                     const float target = (s.gateOpen   ? 1.0f : rise (magSq, s.gate))
                                        * (s.ceilingOff ? 1.0f : 1.0f - rise (magSq, s.ceiling));
-                    const float coef   = target > s.gateGain[(size_t) k] ? gateAttackCoef
-                                                                         : gateReleaseCoef;
-                    auto& g = s.gateGain[(size_t) k];
+                    const float coef   = target > g ? gateAttackCoef : gateReleaseCoef;
                     g = target + coef * (g - target);
+
+                    // The release only approaches 0; land on it once inaudible,
+                    // so a closed gate yields a truly silent frame (and no
+                    // denormals).
+                    if (g < gateFloor)
+                        g = 0.0f;
 
                     const double weighted = (double) magSq * (double) gain;
                     bandEnergy   += weighted;
@@ -551,16 +627,14 @@ private:
 
                     gain *= g;
                 }
-                else if (gain > 0.0f)
-                {
-                    s.gateGain[(size_t) k] = 1.0f;
-                }
                 else
                 {
-                    s.gateGain[(size_t) k] = 0.0f;
+                    g = 1.0f;
                 }
 
-                scaleBin (frame.data(), k, gain);
+                f[2 * k]     = re * gain;
+                f[2 * k + 1] = im * gain;
+                anyNonZero = anyNonZero || f[2 * k] != 0.0f || f[2 * k + 1] != 0.0f;
             }
 
             openness[(size_t) b].store (! levelGated ? 1.0f
@@ -569,20 +643,46 @@ private:
                                         std::memory_order_relaxed);
 
             if (bandProcessor != nullptr)
-                bandProcessor->processBand (b, frame.data(), numBins);
-
-            fft->performRealOnlyInverseTransform (frame.data());
-
-            // Hann on the way out too, and the 1/1.5 the squared window sums to
-            // at 75% overlap.
-            int w = olaRead;
-            for (int i = 0; i < fftSize; ++i)
             {
-                s.ola[(size_t) w] += frame[(size_t) i] * window[(size_t) i] * olaNorm;
-                if (++w >= 2 * fftSize)
-                    w = 0;
+                bandProcessor->processBand (b, f, numBins);
+
+                // A processor can sound on its own (a frozen spectrum, a blur
+                // tail), so an empty band is only skipped if it left it empty.
+                if (! anyNonZero)
+                    anyNonZero = std::any_of (f, f + 2 * numBins, [] (float v) { return v != 0.0f; });
             }
+
+            if (! anyNonZero)
+                continue;
+
+            fft->performRealOnlyInverseTransform (f);
+
+            // Hann on the way out too, with the 1/1.5 the squared window sums
+            // to at 75% overlap folded in. The window starts at olaRead and
+            // wraps at most once.
+            float* const ola = s.ola.data();
+            const int first = fxme::jmin (fftSize, 2 * fftSize - olaRead);
+            for (int i = 0; i < first; ++i)
+                ola[olaRead + i] += f[i] * synthesisWindow[(size_t) i];
+            for (int i = first; i < fftSize; ++i)
+                ola[i - first] += f[i] * synthesisWindow[(size_t) i];
         }
+    }
+
+    /** Keeps gateGain at 0 outside the band's bins when its edges move: the
+        bins it leaves are cleared, so any bin entering later starts closed,
+        as it would have had it been reset on every frame. */
+    static void moveBandBins (BandState& s, int kLo, int kHi) noexcept
+    {
+        if (kLo == s.kLo && kHi == s.kHi)
+            return;
+
+        for (int k = s.kLo; k <= s.kHi; ++k)
+            if (k < kLo || k > kHi)
+                s.gateGain[(size_t) k] = 0.0f;
+
+        s.kLo = kLo;
+        s.kHi = kHi;
     }
 
     /** 1 inside the band, 0 outside, raised cosine across the taper skirt. */
@@ -601,27 +701,13 @@ private:
         return 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::pi * x);
     }
 
-    /** Scales bin k of a real-only transform, mirroring onto its conjugate so
-        the inverse transform stays real. */
-    void scaleBin (float* data, int k, float gain) const noexcept
-    {
-        data[2 * k]     *= gain;
-        data[2 * k + 1] *= gain;
-
-        // Bin 0 (DC) and bin fftSize/2 (Nyquist) are their own mirror image and
-        // must not be scaled twice.
-        const int mirror = fftSize - k;
-        if (k > 0 && mirror != k && mirror < fftSize)
-        {
-            data[2 * mirror]     *= gain;
-            data[2 * mirror + 1] *= gain;
-        }
-    }
-
     static constexpr float olaNorm = 1.0f / 1.5f;   // sum of Hann^2 at 75% overlap
 
+    /** A gate gain below this (-100 dB) is snapped to 0. */
+    static constexpr float gateFloor = 1.0e-5f;
+
     std::unique_ptr<RealFft> fft;
-    std::vector<float> window, history, spectrum, frame;
+    std::vector<float> window, synthesisWindow, history, spectrum, frame;
     std::vector<SpectralBand> bands;
     std::vector<BandState> state;
     AudioBuffer outputs;

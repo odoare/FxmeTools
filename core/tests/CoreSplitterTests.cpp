@@ -21,6 +21,10 @@
          with no averaging and at the same window size, reads the tone at
          exactly the level the gate compares against, at every size the
          splitter and the view share.
+     10. Skipping silent bands: once a gate has released after the tone
+         fell under it, the band outputs exact zeros (the frame is skipped,
+         not rendered as near-silence), while a band processor that sounds
+         on its own, on silent input, is still heard.
 
     The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
     kHz), so through the Hann window it occupies three bins only: the centre
@@ -166,6 +170,52 @@ namespace
             splitter.process (in.data(), blockSize);
         }
         return splitter.getGateOpenness (0);
+    }
+
+    /** Writes a fixed bin into every band's frame, whatever the input: what a
+        frozen spectrum does. */
+    struct ConstantBin : fxme::SpectralBandProcessor
+    {
+        void beginFrame (const float*, int) noexcept override {}
+        void processBand (int, float* frame, int) noexcept override { frame[2 * toneBin] = 100.0f; }
+    };
+
+    /** Two seconds through a one-band splitter, with the tone at `amplitude`
+        for the first half second and at `laterAmplitude` after that, and an
+        optional processor. Returns the left output over the last quarter
+        second. */
+    std::vector<float> runChanging (const fxme::SpectralBand& band, float laterAmplitude,
+                                    fxme::SpectralBandProcessor* processor = nullptr)
+    {
+        fxme::SpectralBandSplitter splitter;
+        splitter.prepare (sampleRate, blockSize, 1, order);
+        splitter.setBand (0, band);
+        splitter.setBandProcessor (processor);
+
+        const int total = 2 * (int) sampleRate;
+        const int keepFrom = total - total / 8;
+        const double w = 2.0 * 3.141592653589793238 * toneBin / (double) fftSize;
+
+        std::vector<float> in ((size_t) blockSize), kept;
+        for (int start = 0; start < total; start += blockSize)
+        {
+            const float a = start < (int) sampleRate / 2 ? amplitude : laterAmplitude;
+            for (int i = 0; i < blockSize; ++i)
+                in[(size_t) i] = a * (float) std::sin (w * (double) (start + i));
+
+            splitter.process (in.data(), blockSize);
+
+            const float* left = splitter.getBandOutput (0, 0);
+            for (int i = 0; i < blockSize; ++i)
+                if (start + i >= keepFrom)
+                    kept.push_back (left[i]);
+        }
+        return kept;
+    }
+
+    bool allZero (const std::vector<float>& x)
+    {
+        return std::all_of (x.begin(), x.end(), [] (float v) { return v == 0.0f; });
     }
 
     double rms (const std::vector<float>& x)
@@ -334,6 +384,20 @@ int main()
                        "at %d points the analyser reads the tone at the gate's level (%+.4f dB off)",
                        n, peak - toneDb);
         check (std::abs (peak - toneDb) < 0.001f, what);
+    }
+
+    // ---- 10. skipping silent bands --------------------------------------------
+    {
+        auto b = fullBand();
+        b.gateDb = toneDb - 20.0f;
+        check (! allZero (runChanging (b, amplitude)), "a gate under a steady tone keeps passing it");
+        check (allZero (runChanging (b, amplitude * 0.001f)),
+               "once the tone falls under the gate and the gate releases, the output is exactly zero");
+
+        ConstantBin constant;
+        check (allZero (runChanging (fullBand(), 0.0f)), "silent input gives exactly zero output");
+        check (! allZero (runChanging (fullBand(), 0.0f, &constant)),
+               "a processor sounding on silent input is still heard");
     }
 
     std::printf ("\n%s (%d failures)\n",

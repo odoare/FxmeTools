@@ -11,6 +11,36 @@ project after a break.
 
 ---
 
+## `SpectralBandSplitter` is cheaper per band; gate release lands on zero (2026-09-28)
+
+Same API, same output to float rounding (checked against the previous version
+on noise and tones, with moving band edges, bands narrower than a bin,
+disabled bands and silence, at 1024 to 8192 points: every difference is at
+least 130 dB below the signal). Measured at 2048 points, 8 bands, 48 kHz: 1.3 %
+of a core down to 1.0 % with every band open, 1.7 % to 0.5 % with every gate
+closed, 0.26 % to 0.12 % with no band enabled.
+
+- Each band only computes its own bins (the frame is zeroed around them), and
+  a band whose frame is entirely zero skips its inverse FFT and overlap-add.
+  The output loop runs per band over runs of samples up to the next hop
+  instead of per sample, and the analysis window reads the history ring
+  without a modulo.
+- **Visible, tiny, no consumer action.** A per-bin gate gain now snaps to 0
+  once its release falls under -100 dB, instead of approaching 0 forever. A
+  gated band therefore goes exactly silent (and skips its transform) about a
+  second after its signal falls under the gate, rather than carrying a
+  -100 dB residue.
+- **Visible to a `SpectralBandProcessor`, no action for existing ones.** The
+  frame handed to `processBand()` now only has its first N/2 + 1 bins filled
+  in; the upper half is no longer a mirror of them. The interface already
+  said only those bins matter, and `SpectralBandEffects` reads nothing else.
+  A processor that makes sound from an empty frame (a frozen spectrum, a
+  blur tail) is still heard: the skip happens only if the frame is still
+  entirely zero after `processBand()`.
+- Pinned in `core/tests/CoreSplitterTests.cpp`, group 10.
+
+---
+
 ## `SpectrumAnalyzer` uses a periodic Hann window; `SpectrumDisplay::setMeasurementLocked` (2026-09-28)
 
 - **Visible, tiny, no consumer action.** `fxme::SpectrumAnalyzer` now windows
