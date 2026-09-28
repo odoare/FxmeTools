@@ -11,6 +11,29 @@ project after a break.
 
 ---
 
+## `EdgeBandPass`: a band-pass following moving edges (2026-09-28)
+
+New, additive, **no consumer action**. `dsp/EdgeBandPass.h` (core,
+header-only, in the module umbrella): 4th-order Butterworth high-pass at the
+lower edge and low-pass at the upper one (two `fxme::Biquad` sections each,
+24 dB per octave), mono, for putting a band that was cut out spectrally and
+then processed in the time domain back into its range.
+
+- `prepare (sampleRate, smoothingSeconds = 0.02)`, `setEdges (low, high,
+  snap = false)`, `process (x, n)` in place, `reset()`. Realtime-safe, no
+  allocation.
+- Edges glide in log frequency and coefficients are only recomputed when an
+  edge moved. An edge at 20 Hz / 20 kHz (or near Nyquist) drops its stage;
+  with both dropped the signal passes untouched, bit for bit.
+- Limits, documented not compensated: slopes far softer than a spectral mask,
+  and a band under about an octave loses some level at its centre (1.9 dB for
+  half an octave).
+- Tests: `core/tests/CoreEdgeBandPassTests.cpp` (7 checks: pass-through at
+  full range, 0.0 dB in band, -51 / -48 dB two octaves out, settling after an
+  edge moves, the narrow-band loss).
+
+---
+
 ## `SpectralBandProcessor` hook and `SpectralBandEffects` (pitch, freeze, blur) (2026-09-27)
 
 Additive, **no consumer action**. A splitter with no processor installed

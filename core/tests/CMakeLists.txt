@@ -28,7 +28,12 @@ add_executable(FxmeCoreSpectralEffectsTests CoreSpectralEffectsTests.cpp)
 target_link_libraries(FxmeCoreSpectralEffectsTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreSpectralEffectsTests COMMAND FxmeCoreSpectralEffectsTests)
 
-# ── 6. Every core header is self-contained without JUCE ────────────────────
+# ── 6. A band-pass following moving edges (EdgeBandPass) ───────────────────
+add_executable(FxmeCoreEdgeBandPassTests CoreEdgeBandPassTests.cpp)
+target_link_libraries(FxmeCoreEdgeBandPassTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreEdgeBandPassTests COMMAND FxmeCoreEdgeBandPassTests)
+
+# ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
 add_test(NAME FxmeCoreHeaderTest COMMAND FxmeCoreHeaderTest)
@@ -60,7 +65,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

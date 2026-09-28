@@ -102,6 +102,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/SpectralBandEffects.h>)
  #include <FxmeTools/dsp/SpectralBandEffects.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/EdgeBandPass.h>)
+ #include <FxmeTools/dsp/EdgeBandPass.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/SpectrumTap.h>)
  #include <FxmeTools/dsp/SpectrumTap.h>
 #endif
