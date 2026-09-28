@@ -11,6 +11,26 @@ project after a break.
 
 ---
 
+## `SpectralBandSplitter::getGateOpenness`, `SpectralBandEffects::resetBand` (2026-09-28)
+
+Additive, **no consumer action**.
+
+- `fxme::SpectralBandSplitter::getGateOpenness (band)`: how much of a band's
+  energy its gate and ceiling let through in the last frame, 0 to 1, for a
+  meter. Energy-weighted (each bin's gate gain weighted by its energy), so a
+  loud tone passing in a wide band reads near 1 although few bins are open;
+  a plain average of the gains would read near 0 there. 1 with no level
+  gating, 0 for a disabled or silent band. Written once per hop through
+  relaxed atomics (allocated in `prepare()`), readable from any thread.
+  Tested in `core/tests/CoreSplitterTests.cpp` (4 checks).
+- `fxme::SpectralBandEffects::resetBand (band)`: forgets one band's freeze
+  capture, blur state and phase history, for a slot being reused. Realtime
+  safe.
+- `fxme::RealFft::performFrequencyOnlyForwardTransform`: a local shadowing
+  the `size` member (left from the WDL change) removed. No behaviour change.
+
+---
+
 ## `EdgeBandPass`: a band-pass following moving edges (2026-09-28)
 
 New, additive, **no consumer action**. `dsp/EdgeBandPass.h` (core,

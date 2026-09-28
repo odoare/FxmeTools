@@ -15,6 +15,8 @@
          and going back to a zero knee restores the hard switch exactly.
       7. With the pan turned off, both channels carry the same band at unity
          (gain only), whatever the band's pan; with it on, the pan applies.
+      8. The gate openness a meter reads: 1 with no level gating, near 1 when
+         the tone passes, near 0 when the gate removes it, 0 when disabled.
 
     The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
     kHz), so through the Hann window it occupies three bins only: the centre
@@ -140,6 +142,25 @@ namespace
         return { left, right };
     }
 
+    /** Runs the tone through a one-band splitter and returns the band's gate
+        openness at the end. */
+    float opennessAfter (const fxme::SpectralBand& band)
+    {
+        fxme::SpectralBandSplitter splitter;
+        splitter.prepare (sampleRate, blockSize, 1, order);
+        splitter.setBand (0, band);
+
+        const double w = 2.0 * 3.141592653589793238 * toneBin / (double) fftSize;
+        std::vector<float> in ((size_t) blockSize);
+        for (int start = 0; start < (int) sampleRate; start += blockSize)
+        {
+            for (int i = 0; i < blockSize; ++i)
+                in[(size_t) i] = amplitude * (float) std::sin (w * (double) (start + i));
+            splitter.process (in.data(), blockSize);
+        }
+        return splitter.getGateOpenness (0);
+    }
+
     double rms (const std::vector<float>& x)
     {
         double sum = 0.0;
@@ -255,6 +276,29 @@ int main()
         const double unity = amplitude / std::sqrt (2.0);
         check (std::abs (rms (mono.first) - unity) < 0.05 * unity,
                "with the pan off, the band comes out at its own gain (unity here)");
+    }
+
+    // ---- 8. gate openness ---------------------------------------------------
+    {
+        char what[160];
+        auto b = fullBand();
+        check (opennessAfter (b) == 1.0f, "openness is 1 with no level gating");
+
+        b.gateDb = toneDb - 20.0f;
+        const float passing = opennessAfter (b);
+        std::snprintf (what, sizeof what,
+                       "openness is near 1 when a gate under the tone lets it through (%.3f)", passing);
+        check (passing > 0.9f, what);
+
+        b.gateDb = toneDb + 10.0f;
+        const float closed = opennessAfter (b);
+        std::snprintf (what, sizeof what,
+                       "openness is near 0 when a gate over the tone removes it (%.3f)", closed);
+        check (closed < 0.1f, what);
+
+        auto off = fullBand();
+        off.enabled = false;
+        check (opennessAfter (off) == 0.0f, "openness is 0 for a disabled band");
     }
 
     std::printf ("\n%s (%d failures)\n",

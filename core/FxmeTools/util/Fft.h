@@ -203,8 +203,6 @@ public:
     void performFrequencyOnlyForwardTransform (float* inputOutputData,
                                                bool onlyCalculateNonNegativeFrequencies = false) const noexcept
     {
-        const int size = getSize();
-
         if (size == 1)
             return;
 

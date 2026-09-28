@@ -160,6 +160,20 @@ public:
         }
     }
 
+    /** Forgets one band's capture, smoothing and phase history, for a band
+        whose slot is being reused: it starts as if its effects were just
+        switched on. Realtime safe. */
+    void resetBand (int band) noexcept
+    {
+        if (band < 0 || band >= numBands)
+            return;
+
+        auto& s = state[(size_t) band];
+        s.wasActive = false;
+        s.frozen = false;
+        s.blurPrimed = false;
+    }
+
     /** Updates one band. Cheap; call it every block if convenient. */
     void setBand (int band, const Settings& newSettings) noexcept
     {

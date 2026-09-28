@@ -68,6 +68,7 @@
 #include <FxmeTools/util/Math.h>
 #include <FxmeTools/util/SmoothedValue.h>
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <memory>
@@ -183,6 +184,10 @@ public:
         outputs.setSize (fxme::jmax (1, 2 * numBands), blockSize);
         outputs.clear();
 
+        openness = std::make_unique<std::atomic<float>[]> ((size_t) fxme::jmax (1, numBands));
+        for (int b = 0; b < numBands; ++b)
+            openness[(size_t) b].store (0.0f);
+
         setGateTimes (gateAttackSeconds, gateReleaseSeconds);
         setLevelSmoothingSeconds (0.02);
         reset();
@@ -204,6 +209,19 @@ public:
             s.gainR.setCurrentAndTargetValue (s.gainR.getTargetValue());
         }
         outputs.clear();
+    }
+
+    /** How much of band `band`'s energy its gate and ceiling let through in
+        the last frame, 0 to 1: the per-bin gate gains weighted by each bin's
+        energy, so a loud tone passing in a wide band reads near 1 even though
+        few bins are open. 1 for a band with no level gating, 0 for a disabled
+        band or a silent one. Written once per hop on the audio thread; safe
+        to read from any thread (for a meter). */
+    float getGateOpenness (int band) const noexcept
+    {
+        return openness != nullptr && fxme::isPositiveAndBelow (band, numBands)
+                 ? openness[(size_t) band].load (std::memory_order_relaxed)
+                 : 0.0f;
     }
 
     int    getNumBands() const noexcept        { return numBands; }
@@ -492,7 +510,10 @@ private:
         {
             const auto& cfg = bands[(size_t) b];
             if (! cfg.enabled)
+            {
+                openness[(size_t) b].store (0.0f, std::memory_order_relaxed);
                 continue;
+            }
 
             auto& s = state[(size_t) b];
 
@@ -503,6 +524,7 @@ private:
             std::copy (spectrum.begin(), spectrum.end(), frame.begin());
 
             const bool levelGated = ! s.gateOpen || ! s.ceilingOff;
+            double passedEnergy = 0.0, bandEnergy = 0.0;
 
             for (int k = 0; k < numBins; ++k)
             {
@@ -522,6 +544,11 @@ private:
                                                                          : gateReleaseCoef;
                     auto& g = s.gateGain[(size_t) k];
                     g = target + coef * (g - target);
+
+                    const double weighted = (double) magSq * (double) gain;
+                    bandEnergy   += weighted;
+                    passedEnergy += weighted * (double) g;
+
                     gain *= g;
                 }
                 else if (gain > 0.0f)
@@ -535,6 +562,11 @@ private:
 
                 scaleBin (frame.data(), k, gain);
             }
+
+            openness[(size_t) b].store (! levelGated ? 1.0f
+                                        : bandEnergy > 1.0e-12 ? (float) (passedEnergy / bandEnergy)
+                                                               : 0.0f,
+                                        std::memory_order_relaxed);
 
             if (bandProcessor != nullptr)
                 bandProcessor->processBand (b, frame.data(), numBins);
@@ -605,6 +637,7 @@ private:
     float gateKneeDb = 0.0f;
     bool  applyPan = true;
     SpectralBandProcessor* bandProcessor = nullptr;
+    std::unique_ptr<std::atomic<float>[]> openness;
 
     SpectralBandSplitter (const SpectralBandSplitter&) = delete;
     SpectralBandSplitter& operator= (const SpectralBandSplitter&) = delete;
