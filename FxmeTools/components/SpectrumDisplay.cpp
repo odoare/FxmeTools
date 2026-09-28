@@ -71,11 +71,14 @@ SpectrumDisplay::ViewState SpectrumDisplay::getViewState() const
 
 void SpectrumDisplay::setViewState (const ViewState& s)
 {
-    mode = s.mode;
+    if (! measurementLocked)
+    {
+        mode = s.mode;
+        avgOn = s.averaging;
+        nAvg = juce::jlimit (1, 32, s.numAveraged);
+    }
     if (! fftLocked)
         setFftOrder (s.fftOrder);
-    avgOn = s.averaging;
-    nAvg = juce::jlimit (1, 32, s.numAveraged);
     setDbWindow (s.minDb, s.maxDb - s.minDb);
     setFreqWindow (s.lowHz, s.highHz);
     for (size_t i = 0; i < traces.size() && i < s.hiddenTraces.size(); ++i)
@@ -103,6 +106,13 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
     // there to be clicked, and the pan below takes their area back.
     if (badgesVisible)
     {
+        // A locked measurement swallows clicks on its badges rather than
+        // letting them start a pan.
+        if (measurementLocked
+            && (detectorBadgeBounds().contains (p) || avgBadgeBounds().contains (p)
+                || nBadgeBounds().contains (p)))
+            return;
+
         if (detectorBadgeBounds().contains (p))
         {
             mode = mode == Mode::peak ? Mode::average : Mode::peak;
@@ -392,9 +402,9 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     if (badgesVisible)
     {
         drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), ! fftLocked);
-        drawBadge (g, avgBadgeBounds(), "avg", avgOn);
-        drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn);
-        drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", true);
+        drawBadge (g, avgBadgeBounds(), "avg", avgOn && ! measurementLocked);
+        drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn && ! measurementLocked);
+        drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", ! measurementLocked);
     }
 
     // Cursor frequency / level read-out (top-right), drawn over the SPL tag.

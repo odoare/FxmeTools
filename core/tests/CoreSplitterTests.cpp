@@ -17,6 +17,10 @@
          (gain only), whatever the band's pan; with it on, the pan applies.
       8. The gate openness a meter reads: 1 with no level gating, near 1 when
          the tone passes, near 0 when the gate removes it, 0 when disabled.
+      9. fxme::SpectrumAnalyzer (what a spectrum view draws), in peak mode
+         with no averaging and at the same window size, reads the tone at
+         exactly the level the gate compares against, at every size the
+         splitter and the view share.
 
     The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
     kHz), so through the Hann window it occupies three bins only: the centre
@@ -32,7 +36,10 @@
 */
 
 #include <FxmeTools/dsp/SpectralBandSplitter.h>
+#include <FxmeTools/dsp/SpectrumAnalyzer.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -299,6 +306,34 @@ int main()
         auto off = fullBand();
         off.enabled = false;
         check (opennessAfter (off) == 0.0f, "openness is 0 for a disabled band");
+    }
+
+    // ---- 9. the analyser reads the gate's level ------------------------------
+    for (int analysedOrder = 10; analysedOrder <= 14; ++analysedOrder)
+    {
+        const int n = 1 << analysedOrder;
+        const int bin = n / 32;                  // 1500 Hz at every size
+        const double w = 2.0 * 3.141592653589793238 * bin / (double) n;
+
+        fxme::SpectrumTap tap;
+        tap.setEnabled (true);
+        std::vector<float> tone ((size_t) (2 * n));
+        for (size_t i = 0; i < tone.size(); ++i)
+            tone[i] = amplitude * (float) std::sin (w * (double) i);
+        tap.push (tone.data(), (int) tone.size());
+
+        fxme::SpectrumAnalyzer analyser;
+        analyser.setFftSize (n);
+        std::array<float, fxme::SpectrumAnalyzer::numPoints> db;
+        db.fill (-120.0f);
+        analyser.update (tap, db, sampleRate, fxme::SpectrumAnalyzer::Mode::peak, 1.0f);
+
+        const float peak = *std::max_element (db.begin(), db.end());
+        char what[160];
+        std::snprintf (what, sizeof what,
+                       "at %d points the analyser reads the tone at the gate's level (%+.4f dB off)",
+                       n, peak - toneDb);
+        check (std::abs (peak - toneDb) < 0.001f, what);
     }
 
     std::printf ("\n%s (%d failures)\n",

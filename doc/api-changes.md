@@ -11,6 +11,26 @@ project after a break.
 
 ---
 
+## `SpectrumAnalyzer` uses a periodic Hann window; `SpectrumDisplay::setMeasurementLocked` (2026-09-28)
+
+- **Visible, tiny, no consumer action.** `fxme::SpectrumAnalyzer` now windows
+  with a *periodic* Hann (`cos (2 pi i / N)`) instead of a symmetric one
+  (`/ (N - 1)`). It is the right window for an FFT, and the one
+  `fxme::SpectralBandSplitter` uses, so a level read on a spectrum view is now
+  exactly the level the splitter's gates compare against. Traces move by
+  about +0.004 dB at 2048 points (+0.008 dB at 1024): invisible. Pinned in
+  `core/tests/CoreSplitterTests.cpp` (the analyser reads a bin-centred tone at
+  the gate's level to 0.001 dB, at 1024 to 16384 points; the old window
+  failed at the small sizes).
+- **Additive.** `fxme::SpectrumDisplay::setMeasurementLocked (bool)`, off by
+  default: locks the detector (avg/peak) and temporal-averaging badges like
+  `setFftSizeLocked` locks the window size (clicks ignored, badges dimmed,
+  `setViewState` leaves them alone). For a view that must show exactly what
+  some DSP compares against: set the measurement first (for a per-bin gate:
+  peak detector, no averaging), then lock. Dede does.
+
+---
+
 ## `SpectrumRegionEditor::setEdgeSnapPixels`: borders stick to other regions' (2026-09-28)
 
 Opt-in, **no consumer action**: off by default, nothing changes until it is

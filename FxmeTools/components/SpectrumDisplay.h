@@ -121,6 +121,15 @@ public:
     void setFftSizeLocked (bool shouldBeLocked) { fftLocked = shouldBeLocked; repaint(); }
     bool isFftSizeLocked() const noexcept       { return fftLocked; }
 
+    /** Stops the detector (avg/peak) and temporal-averaging badges responding
+        to clicks (they draw dimmed), and setViewState() leaving them alone,
+        so the way levels are measured cannot be changed from the GUI. For a
+        view that has to show exactly what some DSP compares against, set the
+        detector and averaging first (peak, no averaging, for a per-bin gate),
+        then lock. */
+    void setMeasurementLocked (bool shouldBeLocked) { measurementLocked = shouldBeLocked; repaint(); }
+    bool isMeasurementLocked() const noexcept       { return measurementLocked; }
+
     /** Everything a user can change on the display with the mouse: the
         detector, the window size, the temporal averaging, the dB and frequency
         windows, and the traces hidden from the legend. The traces themselves
@@ -300,6 +309,7 @@ private:
 
     int  fftOrder = spectrumFftOrder;           // window size = 1 << fftOrder
     bool fftLocked = false;
+    bool measurementLocked = false;
     bool badgesVisible = true;                     // badge ignores clicks
     bool avgOn = true;                          // temporal averaging
     int  nAvg  = 4;                             // averaged over ~nAvg frames

@@ -28,9 +28,12 @@ void SpectrumAnalyzer::rebuild (int order)
     fftSize  = 1 << fftOrder;
     fft = std::make_unique<RealFft> (fftOrder);
 
+    // Periodic Hann (divided by N, not N - 1): the right window for an FFT,
+    // and the one fxme::SpectralBandSplitter uses, so a level read here is
+    // exactly the level the splitter's gates compare against.
     for (int i = 0; i < fftSize; ++i)
         window[(size_t) i] = 0.5f * (1.0f - std::cos (
-            2.0f * fxme::MathConstants<float>::pi * (float) i / (float) (fftSize - 1)));
+            2.0f * fxme::MathConstants<float>::pi * (float) i / (float) fftSize));
 }
 
 void SpectrumAnalyzer::setFftSize (int sizePow2)
