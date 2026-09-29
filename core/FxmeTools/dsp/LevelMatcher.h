@@ -102,6 +102,31 @@ public:
         return processed * gain;
     }
 
+    /** Several channels at once, with one gain for all: `reference` and
+        `processed` hold numChannels samples each (a frame), and the levels
+        followed are the channels' average power. So a stereo signal keeps its
+        balance, however unevenly the processing treated the two sides. With
+        one channel it is exactly process(). */
+    void processFrame (const float* reference, float* processed, int numChannels) noexcept
+    {
+        float refSq = 0.0f, procSq = 0.0f;
+        for (int c = 0; c < numChannels; ++c)
+        {
+            refSq  += reference[c] * reference[c];
+            procSq += processed[c] * processed[c];
+        }
+        const float inv = 1.0f / (float) fxme::jmax (1, numChannels);
+
+        referenceMs += coef * (refSq * inv - referenceMs);
+        processedMs += coef * (procSq * inv - processedMs);
+
+        if (referenceMs > silenceMs && processedMs > silenceMs)
+            gain = fxme::jlimit (minGain, maxGain, std::sqrt (referenceMs / processedMs));
+
+        for (int c = 0; c < numChannels; ++c)
+            processed[c] *= gain;
+    }
+
     /** The gain currently applied (linear). */
     float getGain() const noexcept { return gain; }
 

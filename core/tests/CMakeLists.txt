@@ -48,6 +48,11 @@ add_executable(FxmeCoreDelayInsertTests CoreDelayInsertTests.cpp)
 target_link_libraries(FxmeCoreDelayInsertTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreDelayInsertTests COMMAND FxmeCoreDelayInsertTests)
 
+# ── 6e. Stereo input through the splitters and the spectral effects ───────
+add_executable(FxmeCoreStereoBandsTests CoreStereoBandsTests.cpp)
+target_link_libraries(FxmeCoreStereoBandsTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreStereoBandsTests COMMAND FxmeCoreStereoBandsTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -80,7 +85,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

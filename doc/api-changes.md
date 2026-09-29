@@ -11,6 +11,36 @@ project after a break.
 
 ---
 
+## Stereo input for the band splitters, with mono detection (2026-09-29)
+
+Additive, **no consumer action**: every new argument defaults to the mono
+behaviour, and the mono paths are unchanged (the spectral splitter to float
+rounding, the spectral effects and the filter bank bit for bit).
+
+- `SpectralBandSplitter::prepare (..., fftOrder, numInputChannels = 1)` and
+  `process (left, right, n)`; `FilterBankSplitter::prepare (..., numBands,
+  numInputChannels = 1)` and `process (left, right, n)`; `isStereoInput()`
+  on both. In stereo each band keeps its left and right, and every decision
+  is taken on the two channels' average (the spectral splitter's gates and
+  ceilings per bin, the filter bank's band gate), one gain for both sides.
+  With the pan applied (`setApplyPan (true)`), a stereo band is balanced
+  (the far side turned down) rather than panned.
+- `SpectralBandProcessor::processBandStereo (band, left, right, numBins)`:
+  virtual, called instead of `processBand` with stereo input. The default
+  runs `processBand` on each side, which only suits a processor keeping no
+  per-band state; `SpectralBandEffects` overrides it (peaks on the sum of
+  both magnitudes, frequencies from the sum, each side resynthesised with
+  its own magnitudes and phase offset to the sum). `beginFrame` is given the
+  two channels' average spectrum.
+- `BandGate::processLinked (detector, left, right, n)`,
+  `LevelMatcher::processFrame (reference, processed, numChannels)` (one gain
+  from the channels' average power), `Saturator::processSample (x,
+  railDemand)` (the rail follows `railDemand`: give two channels the same one
+  and they sag together).
+- Pinned in `core/tests/CoreStereoBandsTests.cpp`.
+
+---
+
 ## New: `fxme::SplicePitchShifter`; `StereoCrossDelay` loop insert (2026-09-29)
 
 Additive, **no consumer action**.

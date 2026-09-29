@@ -20,8 +20,12 @@
         loses some level;
       - there is no frame to process, so no spectral effects.
 
-    What it gains: no latency, transients intact, and a fraction of the CPU
-    (four biquads and a level detector per band per sample).
+    What it gains: no latency and transients intact.
+
+    Mono or stereo input (prepare()'s numInputChannels). In stereo each band
+    is filtered on both channels, and its gate follows the two channels'
+    average (the mono sum a spectrum view would show), with one gain for
+    both, so the band opens and closes as one and keeps its image.
 
     Levels follow fxme::BandGate's convention, so a steady tone passes a gate
     drawn at the same place in either splitter. A noisy band's level (the sum
@@ -63,12 +67,16 @@ public:
     FilterBankSplitter() = default;
 
     //==========================================================================
-    /** Allocates everything. Message thread / prepareToPlay only. */
-    void prepare (double sampleRateIn, int maxBlockSize, int numBandsIn)
+    /** Allocates everything. Message thread / prepareToPlay only.
+        `numInputChannels` is 1 (process (mono, n)) or 2 (process (left,
+        right, n)). */
+    void prepare (double sampleRateIn, int maxBlockSize, int numBandsIn, int numInputChannels = 1)
     {
         sampleRate = sampleRateIn > 0.0 ? sampleRateIn : 48000.0;
         numBands   = fxme::jmax (0, numBandsIn);
         blockSize  = fxme::jmax (1, maxBlockSize);
+        stereoInput = numInputChannels > 1;
+        detector.assign ((size_t) blockSize, 0.0f);
 
         bands.assign ((size_t) numBands, {});
         state.clear();
@@ -76,6 +84,7 @@ public:
         for (auto& s : state)
         {
             s.filter.prepare (sampleRate);
+            s.filterR.prepare (sampleRate);
             s.gate.prepare (sampleRate);
         }
 
@@ -98,6 +107,7 @@ public:
         {
             auto& s = state[(size_t) b];
             s.filter.reset();
+            s.filterR.reset();
             s.gate.reset();
             s.wasEnabled = false;
             s.gainL.setCurrentAndTargetValue (s.gainL.getTargetValue());
@@ -157,6 +167,7 @@ public:
         const float lo = fxme::jmin (b.lowHz, b.highHz);
         const float hi = fxme::jmax (b.lowHz, b.highHz);
         s.filter.setEdges (lo, hi, ! s.wasEnabled);
+        s.filterR.setEdges (lo, hi, ! s.wasEnabled);
         s.gate.setThresholds (b.gateDb, b.ceilingDb);
         s.gate.setDetectorSeconds (BandGate::detectorSecondsFor (lo));
         updateGainTargets (index);
@@ -214,6 +225,31 @@ public:
         else; enabled again, it starts from rest. */
     void process (const float* mono, int numSamples) noexcept
     {
+        assert (! stereoInput);
+        processInput (mono, nullptr, numSamples);
+    }
+
+    /** The stereo form, for a splitter prepared with two input channels:
+        each band's output keeps its left and right. */
+    void process (const float* left, const float* right, int numSamples) noexcept
+    {
+        assert (stereoInput);
+        processInput (left, right, numSamples);
+    }
+
+    bool isStereoInput() const noexcept          { return stereoInput; }
+
+    /** The last process() call's output for one band, channel 0 or 1. */
+    const float* getBandOutput (int band, int channel) const noexcept
+    {
+        const int ch = fxme::jlimit (0, fxme::jmax (0, outputs.getNumChannels() - 1),
+                                     2 * band + channel);
+        return outputs.getReadPointer (ch);
+    }
+
+private:
+    void processInput (const float* inL, const float* inR, int numSamples) noexcept
+    {
         assert (numSamples <= outputs.getNumSamples());
         numSamples = fxme::jmin (numSamples, outputs.getNumSamples());
         if (numSamples <= 0 || numBands == 0)
@@ -235,6 +271,7 @@ public:
                 {
                     s.wasEnabled = false;
                     s.filter.reset();
+                    s.filterR.reset();
                     s.gate.reset();
                 }
                 for (int i = 0; i < numSamples && (s.gainL.isSmoothing() || s.gainR.isSmoothing()); ++i)
@@ -253,33 +290,17 @@ public:
                 // rather than gliding from where it was.
                 const auto& cfg = bands[(size_t) b];
                 s.filter.setEdges (cfg.lowHz, cfg.highHz, true);
+                s.filterR.setEdges (cfg.lowHz, cfg.highHz, true);
                 s.wasEnabled = true;
             }
 
-            std::copy (mono, mono + numSamples, left);
+            std::copy (inL, inL + numSamples, left);
             s.filter.process (left, numSamples);
-            s.gate.process (left, numSamples);
 
-            if (s.gainL.isSmoothing() || s.gainR.isSmoothing())
-            {
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    const float v = left[i];
-                    left[i]  = v * s.gainL.getNextValue();
-                    right[i] = v * s.gainR.getNextValue();
-                }
-            }
+            if (inR != nullptr)
+                renderStereoBand (s, left, right, inR, numSamples);
             else
-            {
-                const float gl = s.gainL.getCurrentValue();
-                const float gr = s.gainR.getCurrentValue();
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    const float v = left[i];
-                    left[i]  = v * gl;
-                    right[i] = v * gr;
-                }
-            }
+                renderMonoBand (s, left, right, numSamples);
 
             openness[(size_t) b].store (s.gate.getGain(), std::memory_order_relaxed);
             levels[(size_t) b].store (s.gate.getLevelDb(), std::memory_order_relaxed);
@@ -290,18 +311,57 @@ public:
         }
     }
 
-    /** The last process() call's output for one band, channel 0 or 1. */
-    const float* getBandOutput (int band, int channel) const noexcept
+    /** Mono input: `left` holds the filtered band; gate it, then spread it
+        over both outputs with the band's gain and pan. */
+    template <typename State>
+    static void renderMonoBand (State& s, float* left, float* right, int numSamples) noexcept
     {
-        const int ch = fxme::jlimit (0, fxme::jmax (0, outputs.getNumChannels() - 1),
-                                     2 * band + channel);
-        return outputs.getReadPointer (ch);
+        s.gate.process (left, numSamples);
+
+        if (s.gainL.isSmoothing() || s.gainR.isSmoothing())
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float v = left[i];
+                left[i]  = v * s.gainL.getNextValue();
+                right[i] = v * s.gainR.getNextValue();
+            }
+        }
+        else
+        {
+            const float gl = s.gainL.getCurrentValue();
+            const float gr = s.gainR.getCurrentValue();
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float v = left[i];
+                left[i]  = v * gl;
+                right[i] = v * gr;
+            }
+        }
     }
 
-private:
+    /** Stereo input: `left` holds the filtered left band; filter the right
+        one, gate both on their average, then each side its gain. */
+    template <typename State>
+    void renderStereoBand (State& s, float* left, float* right, const float* inR, int numSamples) noexcept
+    {
+        std::copy (inR, inR + numSamples, right);
+        s.filterR.process (right, numSamples);
+
+        for (int i = 0; i < numSamples; ++i)
+            detector[(size_t) i] = 0.5f * (left[i] + right[i]);
+        s.gate.processLinked (detector.data(), left, right, numSamples);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            left[i]  *= s.gainL.getNextValue();
+            right[i] *= s.gainR.getNextValue();
+        }
+    }
+
     struct BandState
     {
-        EdgeBandPass filter;
+        EdgeBandPass filter, filterR;    // filterR only with stereo input
         BandGate gate;
         bool wasEnabled = false;
         SmoothedValue<float> gainL { 0.0f }, gainR { 0.0f };
@@ -322,6 +382,17 @@ private:
             return;
         }
 
+        // A stereo band is balanced rather than panned: the side it moves
+        // away from is turned down, the other left as it is.
+        if (stereoInput)
+        {
+            const float p = fxme::jlimit (-1.0f, 1.0f, b.pan);
+            const float away = std::cos (std::abs (p) * fxme::MathConstants<float>::pi * 0.5f);
+            s.gainL.setTargetValue (g * (p > 0.0f ? away : 1.0f));
+            s.gainR.setTargetValue (g * (p < 0.0f ? away : 1.0f));
+            return;
+        }
+
         const float theta = (fxme::jlimit (-1.0f, 1.0f, b.pan) + 1.0f)
                                 * fxme::MathConstants<float>::pi * 0.25f;
         s.gainL.setTargetValue (g * std::cos (theta));
@@ -336,6 +407,8 @@ private:
     int numBands = 0, blockSize = 512;
     float gateAttackSeconds = 0.005f, gateReleaseSeconds = 0.080f;
     bool applyPan = true;
+    bool stereoInput = false;
+    std::vector<float> detector;         // the stereo gate's input, one block
 
     std::unique_ptr<std::atomic<float>[]> openness, levels, peaks;
 

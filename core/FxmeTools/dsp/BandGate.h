@@ -118,13 +118,23 @@ public:
     /** Gates `x` in place, following its level. */
     void process (float* x, int numSamples) noexcept
     {
+        processLinked (x, x, nullptr, numSamples);
+    }
+
+    /** Gates `left` and `right` (null for mono) in place with one gain,
+        following the level of `detector` (the two channels' average, say),
+        so a stereo band opens and closes as one. `detector` may be `left`:
+        each detector sample is read before its channel sample is scaled. */
+    void processLinked (const float* detector, float* left, float* right, int numSamples) noexcept
+    {
         const bool gating = isGating();
 
         float peak = peakMeanSquare;
 
         for (int i = 0; i < numSamples; ++i)
         {
-            meanSquare += detectorCoef * (x[i] * x[i] - meanSquare);
+            const float d = detector[i];
+            meanSquare += detectorCoef * (d * d - meanSquare);
             peak = fxme::jmax (peak, meanSquare);
 
             if (! gating)
@@ -135,7 +145,9 @@ public:
                                * (ceilingOff ? 1.0f : 1.0f - rise (levelSq, ceiling));
             const float coef = target > gain ? attackCoef : releaseCoef;
             gain = target + coef * (gain - target);
-            x[i] *= gain;
+            left[i] *= gain;
+            if (right != nullptr)
+                right[i] *= gain;
         }
 
         peakMeanSquare = peak;

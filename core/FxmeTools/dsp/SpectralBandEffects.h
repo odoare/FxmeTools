@@ -125,7 +125,14 @@ public:
         previousPhase.assign (bins, 0.0f);
         trueFrequency.assign (bins, 0.0f);
         magnitude.assign (bins, 0.0f);
+        magnitudeL.assign (bins, 0.0f);
+        magnitudeR.assign (bins, 0.0f);
+        deltaL.assign (bins, 0.0f);
+        deltaR.assign (bins, 0.0f);
         outMagnitude.assign (bins, 0.0f);
+        outMagnitudeR.assign (bins, 0.0f);
+        outDeltaL.assign (bins, 0.0f);
+        outDeltaR.assign (bins, 0.0f);
         outPhase.assign (bins, 0.0f);
         strongest.assign (bins, 0.0f);
         peaks.assign (bins, 0);
@@ -141,6 +148,12 @@ public:
             s.blurredMagnitude.assign (bins, 0.0f);
             s.blurredFrequency.assign (bins, 0.0f);
             s.synthesisPhase.assign (bins, 0.0f);
+            s.frozenMagnitudeR.assign (bins, 0.0f);
+            s.frozenDeltaL.assign (bins, 0.0f);
+            s.frozenDeltaR.assign (bins, 0.0f);
+            s.blurredMagnitudeR.assign (bins, 0.0f);
+            s.blurredDeltaL.assign (bins, 0.0f);
+            s.blurredDeltaR.assign (bins, 0.0f);
         }
 
         reset();
@@ -236,8 +249,28 @@ public:
 
     void processBand (int band, float* frame, int bins) noexcept override
     {
+        processBandImpl<false> (band, frame, nullptr, bins);
+    }
+
+    /** Stereo: the analysis (peaks, frequencies, the phase each peak
+        carries on with) is the mono sum's, from beginFrame(); each channel
+        is resynthesised with its own magnitudes and its own phase offset to
+        the sum, bin by bin. So both channels move together, as one image,
+        and a bin panned one way stays panned that way. Content that cancels
+        in the sum (a pure side signal) has no reliable phase of its own
+        there: it takes the left channel as its reference instead. */
+    void processBandStereo (int band, float* left, float* right, int bins) noexcept override
+    {
+        processBandImpl<true> (band, left, right, bins);
+    }
+
+private:
+    template <bool stereo>
+    void processBandImpl (int band, float* frame, float* right, int bins) noexcept
+    {
         if (band < 0 || band >= numBands || bins != numBins)
             return;
+        (void) right;
 
         const auto& cfg = settings[(size_t) band];
         auto& s = state[(size_t) band];
@@ -252,11 +285,17 @@ public:
             return;
         }
 
-        for (int k = 0; k < numBins; ++k)
-            magnitude[(size_t) k] = std::hypot (frame[2 * k], frame[2 * k + 1]);
+        if constexpr (stereo)
+            analyseStereo (frame, right);
+        else
+            for (int k = 0; k < numBins; ++k)
+                magnitude[(size_t) k] = std::hypot (frame[2 * k], frame[2 * k + 1]);
 
         // ---- 1. What to resynthesise: frozen, blurred or live -----------------
-        const float* srcMagnitude = magnitude.data();
+        // In stereo, srcMagnitude is the left channel's and `src` holds the
+        // right's and both phase offsets to the sum.
+        StereoSource src { magnitudeR.data(), deltaL.data(), deltaR.data() };
+        const float* srcMagnitude = stereo ? magnitudeL.data() : magnitude.data();
         const float* srcFrequency = trueFrequency.data();
         const float* srcPhase     = analysisPhase.data();
 
@@ -267,12 +306,25 @@ public:
                 std::copy (magnitude.begin(),     magnitude.end(),     s.frozenMagnitude.begin());
                 std::copy (trueFrequency.begin(), trueFrequency.end(), s.frozenFrequency.begin());
                 std::copy (analysisPhase.begin(), analysisPhase.end(), s.frozenPhase.begin());
+                if constexpr (stereo)
+                {
+                    std::copy (magnitudeL.begin(), magnitudeL.end(), s.frozenMagnitude.begin());
+                    std::copy (magnitudeR.begin(), magnitudeR.end(), s.frozenMagnitudeR.begin());
+                    std::copy (deltaL.begin(), deltaL.end(), s.frozenDeltaL.begin());
+                    std::copy (deltaR.begin(), deltaR.end(), s.frozenDeltaR.begin());
+                }
                 s.frozen = true;
             }
 
             srcMagnitude = s.frozenMagnitude.data();
             srcFrequency = s.frozenFrequency.data();
             srcPhase     = s.frozenPhase.data();
+            if constexpr (stereo)
+            {
+                src.magR   = s.frozenMagnitudeR.data();
+                src.deltaL = s.frozenDeltaL.data();
+                src.deltaR = s.frozenDeltaR.data();
+            }
         }
         else
         {
@@ -285,6 +337,13 @@ public:
             {
                 std::copy (magnitude.begin(),     magnitude.end(),     s.blurredMagnitude.begin());
                 std::copy (trueFrequency.begin(), trueFrequency.end(), s.blurredFrequency.begin());
+                if constexpr (stereo)
+                {
+                    std::copy (magnitudeL.begin(), magnitudeL.end(), s.blurredMagnitude.begin());
+                    std::copy (magnitudeR.begin(), magnitudeR.end(), s.blurredMagnitudeR.begin());
+                    std::copy (deltaL.begin(), deltaL.end(), s.blurredDeltaL.begin());
+                    std::copy (deltaR.begin(), deltaR.end(), s.blurredDeltaR.begin());
+                }
                 s.blurPrimed = true;
             }
             else
@@ -295,20 +354,49 @@ public:
                                   : 1.0f;
                 for (int k = 0; k < numBins; ++k)
                 {
-                    auto& m = s.blurredMagnitude[(size_t) k];
-                    m += a * (magnitude[(size_t) k] - m);
+                    const auto i = (size_t) k;
+
+                    // In stereo each channel's magnitude is blurred on its own,
+                    // and the reliability test is on their sum.
+                    float blurredSum;
+                    if constexpr (stereo)
+                    {
+                        s.blurredMagnitude[i]  += a * (magnitudeL[i] - s.blurredMagnitude[i]);
+                        s.blurredMagnitudeR[i] += a * (magnitudeR[i] - s.blurredMagnitudeR[i]);
+                        blurredSum = s.blurredMagnitude[i] + s.blurredMagnitudeR[i];
+                    }
+                    else
+                    {
+                        auto& m = s.blurredMagnitude[i];
+                        m += a * (magnitude[i] - m);
+                        blurredSum = m;
+                    }
 
                     // A bin's tracked frequency is only trusted while the live
                     // signal still holds a fair share of the blurred level. In
                     // a tail the analysis sees silence and its frequencies are
-                    // noise, so the last reliable one is held.
-                    if (magnitude[(size_t) k] >= 0.25f * m)
-                        s.blurredFrequency[(size_t) k] = trueFrequency[(size_t) k];
+                    // noise, so the last reliable one is held (and in stereo,
+                    // the last reliable phase offsets between the channels).
+                    if (magnitude[i] >= 0.25f * blurredSum)
+                    {
+                        s.blurredFrequency[i] = trueFrequency[i];
+                        if constexpr (stereo)
+                        {
+                            s.blurredDeltaL[i] = deltaL[i];
+                            s.blurredDeltaR[i] = deltaR[i];
+                        }
+                    }
                 }
             }
 
             srcMagnitude = s.blurredMagnitude.data();
             srcFrequency = s.blurredFrequency.data();
+            if constexpr (stereo)
+            {
+                src.magR   = s.blurredMagnitudeR.data();
+                src.deltaL = s.blurredDeltaL.data();
+                src.deltaR = s.blurredDeltaR.data();
+            }
 
             // In a tail the analysis phases are those of silence, useless as a
             // pattern around a peak: use the one a steady partial has instead.
@@ -323,13 +411,12 @@ public:
         const float ratio = cfg.pitchOn ? std::exp2 (cfg.pitchSemitones / 12.0f) : 1.0f;
         const bool wash = cfg.freezeOn && cfg.freezeMode == FreezeMode::wash;
 
-        resynthesise (band, s, frame, srcMagnitude, srcFrequency, srcPhase,
-                      std::abs (ratio - 1.0f) > 1.0e-5f ? ratio : 1.0f, wash);
+        resynthesise<stereo> (band, s, frame, right, srcMagnitude, src, srcFrequency, srcPhase,
+                              std::abs (ratio - 1.0f) > 1.0e-5f ? ratio : 1.0f, wash);
 
         s.wasActive = true;
     }
 
-private:
     static constexpr double twoPi = 6.283185307179586476925;
     static constexpr double pi    = 3.141592653589793238462;
 
@@ -338,10 +425,62 @@ private:
         std::vector<float> frozenMagnitude, frozenFrequency, frozenPhase;
         std::vector<float> blurredMagnitude, blurredFrequency;
         std::vector<float> synthesisPhase;
+
+        // Stereo only: the right channel's magnitudes and both channels'
+        // phase offsets to the sum, frozen or blurred like the rest (the
+        // left channel's magnitudes use frozenMagnitude / blurredMagnitude).
+        std::vector<float> frozenMagnitudeR, frozenDeltaL, frozenDeltaR;
+        std::vector<float> blurredMagnitudeR, blurredDeltaL, blurredDeltaR;
+
         bool wasActive = false;
         bool frozen = false;
         bool blurPrimed = false;
     };
+
+    /** In stereo, what goes with the left channel's magnitudes: the right
+        channel's, and each channel's phase offset to the sum. */
+    struct StereoSource
+    {
+        const float* magR;
+        const float* deltaL;
+        const float* deltaR;
+    };
+
+    /** Stereo analysis of one band: each channel's magnitude, their sum (in
+        `magnitude`, what peaks are found on), and each channel's phase
+        offset to the sum's phase (analysisPhase, from beginFrame()). Where
+        the sum cancels, its phase means nothing: the left channel is then
+        the reference (offset 0) and the right keeps its offset to it. */
+    void analyseStereo (const float* left, const float* right) noexcept
+    {
+        for (int k = 0; k < numBins; ++k)
+        {
+            const auto i = (size_t) k;
+            const float lr = left[2 * k],  li = left[2 * k + 1];
+            const float rr = right[2 * k], ri = right[2 * k + 1];
+
+            const float mL = std::hypot (lr, li);
+            const float mR = std::hypot (rr, ri);
+            magnitudeL[i] = mL;
+            magnitudeR[i] = mR;
+            magnitude[i]  = mL + mR;
+
+            const float phaseL = std::atan2 (li, lr);
+            const float phaseR = std::atan2 (ri, rr);
+            const float mid = std::hypot (lr + rr, li + ri);
+
+            if (mid > 0.05f * (mL + mR))
+            {
+                deltaL[i] = (float) wrap ((double) phaseL - (double) analysisPhase[i]);
+                deltaR[i] = (float) wrap ((double) phaseR - (double) analysisPhase[i]);
+            }
+            else
+            {
+                deltaL[i] = 0.0f;
+                deltaR[i] = (float) wrap ((double) phaseR - (double) phaseL);
+            }
+        }
+    }
 
     static bool isActive (const Settings& s) noexcept
     {
@@ -370,22 +509,36 @@ private:
 
         `wash` replaces every phase by a deterministic random one instead, at
         the level a coherent resynthesis would have. */
-    void resynthesise (int band, BandState& s, float* frame,
-                       const float* mag, const float* freq, const float* phase,
+    template <bool stereo>
+    void resynthesise (int band, BandState& s, float* frame, float* right,
+                       const float* mag, const StereoSource& src,
+                       const float* freq, const float* phase,
                        float ratio, bool wash) noexcept
     {
+        // What peaks are found on: the band's magnitude, or in stereo the
+        // sum of both channels' (so content on one side only still counts).
+        const auto level = [&] (int k) noexcept
+        {
+            if constexpr (stereo)
+                return mag[k] + src.magR[k];
+            else
+                return mag[k];
+        };
+
         int numPeaks = 0;
         for (int k = 0; k < numBins; ++k)
         {
-            const float m = mag[k];
-            const float left  = k > 0 ? mag[k - 1] : 0.0f;
-            const float right = k + 1 < numBins ? mag[k + 1] : 0.0f;
-            if (m > 0.0f && m > left && m >= right)
+            const float m = level (k);
+            const float left  = k > 0 ? level (k - 1) : 0.0f;
+            const float next  = k + 1 < numBins ? level (k + 1) : 0.0f;
+            if (m > 0.0f && m > left && m >= next)
                 peaks[(size_t) numPeaks++] = k;
         }
 
         std::fill (outMagnitude.begin(), outMagnitude.end(), 0.0f);
         std::fill (strongest.begin(),    strongest.end(),    0.0f);
+        if constexpr (stereo)
+            std::fill (outMagnitudeR.begin(), outMagnitudeR.end(), 0.0f);
 
         for (int p = 0; p < numPeaks; ++p)
         {
@@ -408,7 +561,7 @@ private:
             for (int k = lo; k <= hi; ++k)
             {
                 const int j = k + shift;
-                const float m = mag[k];
+                const float m = level (k);
                 if (j < 0 || j >= numBins || m <= 0.0f)
                     continue;
 
@@ -417,35 +570,60 @@ private:
 
                 // Regions landing on the same bins (a downward shift squeezes
                 // them) add up; the phase comes from the strongest.
-                outMagnitude[(size_t) j] += m;
+                outMagnitude[(size_t) j] += mag[k];
+                if constexpr (stereo)
+                    outMagnitudeR[(size_t) j] += src.magR[k];
+
                 if (m > strongest[(size_t) j])
                 {
                     strongest[(size_t) j] = m;
                     outPhase[(size_t) j]  = (float) wrap (thetaPeak + offset);
+                    if constexpr (stereo)
+                    {
+                        outDeltaL[(size_t) j] = src.deltaL[k];
+                        outDeltaR[(size_t) j] = src.deltaR[k];
+                    }
                 }
             }
         }
 
         for (int j = 0; j < numBins; ++j)
         {
-            const float m = outMagnitude[(size_t) j];
-            if (m <= 0.0f)
+            const auto i = (size_t) j;
+            if (strongest[i] <= 0.0f)
             {
                 frame[2 * j] = frame[2 * j + 1] = 0.0f;
+                if constexpr (stereo)
+                    right[2 * j] = right[2 * j + 1] = 0.0f;
                 continue;
             }
 
+            float theta, gain = 1.0f;
             if (wash)
             {
                 const float u = detrand::u01 (washSeed, (uint64_t) band, frameCounter, (uint64_t) j);
-                const float angle = (float) twoPi * u;
-                frame[2 * j]     = m * washGain * std::cos (angle);
-                frame[2 * j + 1] = m * washGain * std::sin (angle);
+                theta = (float) twoPi * u;
+                gain = washGain;
             }
             else
             {
-                const float theta = outPhase[(size_t) j];
-                s.synthesisPhase[(size_t) j] = theta;
+                theta = outPhase[i];
+                s.synthesisPhase[i] = theta;
+            }
+
+            if constexpr (stereo)
+            {
+                // Both channels on the sum's phase, each with its own offset
+                // to it, so the image survives the resynthesis.
+                const float mL = outMagnitude[i] * gain, mR = outMagnitudeR[i] * gain;
+                frame[2 * j]     = mL * std::cos (theta + outDeltaL[i]);
+                frame[2 * j + 1] = mL * std::sin (theta + outDeltaL[i]);
+                right[2 * j]     = mR * std::cos (theta + outDeltaR[i]);
+                right[2 * j + 1] = mR * std::sin (theta + outDeltaR[i]);
+            }
+            else
+            {
+                const float m = outMagnitude[i] * gain;
                 frame[2 * j]     = m * std::cos (theta);
                 frame[2 * j + 1] = m * std::sin (theta);
             }
@@ -465,6 +643,8 @@ private:
 
     std::vector<float> analysisPhase, previousPhase, trueFrequency, magnitude;
     std::vector<float> outMagnitude, outPhase, strongest;
+    std::vector<float> magnitudeL, magnitudeR, deltaL, deltaR;          // stereo analysis
+    std::vector<float> outMagnitudeR, outDeltaL, outDeltaR;             // stereo synthesis
     std::vector<int> peaks;
 
     std::vector<Settings> settings;

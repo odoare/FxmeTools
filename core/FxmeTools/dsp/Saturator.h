@@ -69,10 +69,19 @@ public:
 
     float processSample (float x)
     {
+        return processSample (x, x);
+    }
+
+    /** As processSample (x), with the supply rail following `railDemand`
+        instead of `x` itself. For stereo: give both channels' saturators the
+        same demand (the louder channel, say), and their rails sag together,
+        so the image does not shift with the level. */
+    float processSample (float x, float railDemand)
+    {
         // RC rail model: rail droops with current draw, recovers slowly.
         if (sag > 0.0f && model != Model::Standard)
         {
-            const float driveAbs = drive * std::fabs (x);
+            const float driveAbs = drive * std::fabs (railDemand);
             // Saturating demand in [0, 1] so very high drive doesn't blow up
             // the target.
             const float demand = driveAbs / (1.0f + driveAbs);

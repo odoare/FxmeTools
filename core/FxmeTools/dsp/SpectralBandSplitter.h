@@ -29,6 +29,14 @@
     both the same size, or expect the line to sit off the trace by
     10*log10(sizeRatio) dB.
 
+    Mono or stereo input (prepare()'s numInputChannels). In stereo both
+    channels are transformed and resynthesised, but every decision is taken
+    on their average, the mono sum a spectrum view shows: each bin's gate and
+    ceiling compare the sum's level, and the gain found is applied to both
+    channels. So a band keeps its image, and a gate line drawn on the view
+    of the sum means what it looks like. It costs one more forward transform
+    per hop and twice the inverse ones.
+
     Analysis and synthesis both use a periodic Hann window with 75% overlap,
     which sums to a constant and needs no further compensation beyond the
     fixed 1/1.5 the class applies. Latency is exactly one window.
@@ -126,6 +134,17 @@ public:
     /** Once per hop for every enabled band, with that band's spectrum after
         its mask and gate, to be modified in place (bins 0 to numBins - 1). */
     virtual void processBand (int band, float* frame, int numBins) noexcept = 0;
+
+    /** The stereo form, for a splitter with stereo input: both channels'
+        spectra of the band. beginFrame() was given the two channels'
+        average. The default processes each channel on its own with
+        processBand(), which only suits a processor keeping no per-band
+        state; one that does should override this. */
+    virtual void processBandStereo (int band, float* left, float* right, int numBins) noexcept
+    {
+        processBand (band, left, numBins);
+        processBand (band, right, numBins);
+    }
 };
 
 class SpectralBandSplitter
@@ -154,9 +173,13 @@ public:
         @param numBands       how many bands to make room for
         @param fftOrder       window size exponent (11 = 2048 samples, and one
                               window is also the latency: ~43 ms at 48 kHz)
+        @param numInputChannels  1 (process (mono, n)) or 2 (process (left,
+                              right, n), see the class comment)
     */
-    void prepare (double sampleRateIn, int maxBlockSize, int numBandsIn, int fftOrder = 11)
+    void prepare (double sampleRateIn, int maxBlockSize, int numBandsIn, int fftOrder = 11,
+                  int numInputChannels = 1)
     {
+        stereoInput = numInputChannels > 1;
         sampleRate = sampleRateIn > 0.0 ? sampleRateIn : 48000.0;
         order      = fxme::jlimit (minFftOrder, maxFftOrder, fftOrder);
         fftSize    = 1 << order;
@@ -180,6 +203,12 @@ public:
         spectrum.assign ((size_t) (2 * fftSize), 0.0f);
         frame.assign    ((size_t) (2 * fftSize), 0.0f);
 
+        const size_t stereoSize = stereoInput ? (size_t) (2 * fftSize) : 0;
+        historyR.assign (stereoInput ? (size_t) fftSize : 0, 0.0f);
+        spectrumR.assign (stereoSize, 0.0f);
+        frameR.assign (stereoSize, 0.0f);
+        midSpectrum.assign (stereoSize, 0.0f);
+
         bands.assign ((size_t) numBands, {});
         state.clear();
         state.reserve ((size_t) numBands);
@@ -187,6 +216,7 @@ public:
         {
             BandState s;
             s.ola.assign ((size_t) (2 * fftSize), 0.0f);
+            s.olaR.assign (stereoInput ? (size_t) (2 * fftSize) : 0, 0.0f);
             s.gateGain.assign ((size_t) numBins, 0.0f);
             state.push_back (std::move (s));
         }
@@ -207,6 +237,7 @@ public:
     void reset()
     {
         std::fill (history.begin(), history.end(), 0.0f);
+        std::fill (historyR.begin(), historyR.end(), 0.0f);
         histPos = 0;
         hopCount = 0;
         olaRead = 0;
@@ -214,6 +245,7 @@ public:
         for (auto& s : state)
         {
             std::fill (s.ola.begin(), s.ola.end(), 0.0f);
+            std::fill (s.olaR.begin(), s.olaR.end(), 0.0f);
             std::fill (s.gateGain.begin(), s.gateGain.end(), 0.0f);
             s.gainL.setCurrentAndTargetValue (s.gainL.getTargetValue());
             s.gainR.setCurrentAndTargetValue (s.gainR.getTargetValue());
@@ -345,6 +377,32 @@ public:
         cost nothing beyond that). */
     void process (const float* mono, int numSamples) noexcept
     {
+        assert (! stereoInput);
+        processInput (mono, nullptr, numSamples);
+    }
+
+    /** The stereo form, for a splitter prepared with two input channels:
+        each band's output keeps its left and right. */
+    void process (const float* left, const float* right, int numSamples) noexcept
+    {
+        assert (stereoInput);
+        processInput (left, right, numSamples);
+    }
+
+    bool isStereoInput() const noexcept          { return stereoInput; }
+
+    /** The last process() call's output for one band. `channel` is 0 (left) or
+        1 (right). Never null once prepare() has run. */
+    const float* getBandOutput (int band, int channel) const noexcept
+    {
+        const int ch = fxme::jlimit (0, fxme::jmax (0, outputs.getNumChannels() - 1),
+                                     2 * band + channel);
+        return outputs.getReadPointer (ch);
+    }
+
+private:
+    void processInput (const float* inL, const float* inR, int numSamples) noexcept
+    {
         // A host handing over more than the block size prepare() was told about
         // would need a bigger output buffer, which cannot be allocated here.
         assert (numSamples <= outputs.getNumSamples());
@@ -362,7 +420,9 @@ public:
             const int n = fxme::jmin (fxme::jmin (numSamples - done, hop - hopCount),
                                       fftSize - histPos, 2 * fftSize - olaRead);
 
-            std::copy (mono + done, mono + done + n, history.data() + histPos);
+            std::copy (inL + done, inL + done + n, history.data() + histPos);
+            if (inR != nullptr)
+                std::copy (inR + done, inR + done + n, historyR.data() + histPos);
 
             for (int b = 0; b < numBands; ++b)
                 renderBandRun (b, out[2 * b] + done, out[2 * b + 1] + done, n);
@@ -385,16 +445,6 @@ public:
         }
     }
 
-    /** The last process() call's output for one band. `channel` is 0 (left) or
-        1 (right). Never null once prepare() has run. */
-    const float* getBandOutput (int band, int channel) const noexcept
-    {
-        const int ch = fxme::jlimit (0, fxme::jmax (0, outputs.getNumChannels() - 1),
-                                     2 * band + channel);
-        return outputs.getReadPointer (ch);
-    }
-
-private:
     //==========================================================================
     /** One line (the gate or the ceiling) as squared-magnitude edges, so the
         per-bin test costs no logarithm outside the knee. With a hard knee the
@@ -408,6 +458,7 @@ private:
     struct BandState
     {
         std::vector<float> ola;           // overlap-add ring, 2 * fftSize
+        std::vector<float> olaR;          // the right channel's, with stereo input
         std::vector<float> gateGain;      // per-bin gate gain, smoothed across frames;
                                           // 0 everywhere outside kLo..kHi
         int kLo = 0, kHi = -1;            // the bins the last frame covered
@@ -442,6 +493,17 @@ private:
         {
             s.gainL.setTargetValue (g);
             s.gainR.setTargetValue (g);
+            return;
+        }
+
+        // A stereo band is balanced rather than panned: the side it moves
+        // away from is turned down, the other left as it is.
+        if (stereoInput)
+        {
+            const float p = fxme::jlimit (-1.0f, 1.0f, b.pan);
+            const float away = std::cos (std::abs (p) * fxme::MathConstants<float>::pi * 0.5f);
+            s.gainL.setTargetValue (g * (p > 0.0f ? away : 1.0f));
+            s.gainR.setTargetValue (g * (p < 0.0f ? away : 1.0f));
             return;
         }
 
@@ -507,12 +569,15 @@ private:
     {
         auto& s = state[(size_t) b];
         float* const v = s.ola.data() + olaRead;
+        float* const vR = stereoInput ? s.olaR.data() + olaRead : nullptr;
 
         if (! bands[(size_t) b].enabled)
         {
             std::fill (left,  left  + n, 0.0f);
             std::fill (right, right + n, 0.0f);
             std::fill (v, v + n, 0.0f);
+            if (vR != nullptr)
+                std::fill (vR, vR + n, 0.0f);
 
             for (int i = 0; i < n && (s.gainL.isSmoothing() || s.gainR.isSmoothing()); ++i)
             {
@@ -522,12 +587,15 @@ private:
             return;
         }
 
+        // Stereo: each side from its own ring, with its own gain.
+        const float* const src = vR != nullptr ? vR : v;
+
         if (s.gainL.isSmoothing() || s.gainR.isSmoothing())
         {
             for (int i = 0; i < n; ++i)
             {
-                left[i]  = v[i] * s.gainL.getNextValue();
-                right[i] = v[i] * s.gainR.getNextValue();
+                left[i]  = v[i]   * s.gainL.getNextValue();
+                right[i] = src[i] * s.gainR.getNextValue();
             }
         }
         else
@@ -537,12 +605,14 @@ private:
 
             for (int i = 0; i < n; ++i)
             {
-                left[i]  = v[i] * gl;
-                right[i] = v[i] * gr;
+                left[i]  = v[i]   * gl;
+                right[i] = src[i] * gr;
             }
         }
 
         std::fill (v, v + n, 0.0f);
+        if (vR != nullptr)
+            std::fill (vR, vR + n, 0.0f);
     }
 
     /** One analysis frame: window and transform the last fftSize inputs, then
@@ -557,16 +627,33 @@ private:
     {
         // The history ring holds the last fftSize inputs; histPos is the
         // oldest, so the window starts there and wraps once.
-        const int tail = fftSize - histPos;
-        for (int i = 0; i < tail; ++i)
-            spectrum[(size_t) i] = history[(size_t) (histPos + i)] * window[(size_t) i];
-        for (int i = tail; i < fftSize; ++i)
-            spectrum[(size_t) i] = history[(size_t) (i - tail)] * window[(size_t) i];
+        const auto analyse = [this] (const std::vector<float>& hist, std::vector<float>& spec)
+        {
+            const int tail = fftSize - histPos;
+            for (int i = 0; i < tail; ++i)
+                spec[(size_t) i] = hist[(size_t) (histPos + i)] * window[(size_t) i];
+            for (int i = tail; i < fftSize; ++i)
+                spec[(size_t) i] = hist[(size_t) (i - tail)] * window[(size_t) i];
 
-        fft->performRealOnlyForwardTransform (spectrum.data(), false);
+            fft->performRealOnlyForwardTransform (spec.data(), false);
+        };
+
+        analyse (history, spectrum);
+
+        // What every decision is taken on: the input's spectrum, or with
+        // stereo input the two channels' average (the transform is linear,
+        // so that is the mono sum's spectrum, at no extra transform).
+        const float* detect = spectrum.data();
+        if (stereoInput)
+        {
+            analyse (historyR, spectrumR);
+            for (int i = 0; i < 2 * numBins; ++i)
+                midSpectrum[(size_t) i] = 0.5f * (spectrum[(size_t) i] + spectrumR[(size_t) i]);
+            detect = midSpectrum.data();
+        }
 
         if (bandProcessor != nullptr)
-            bandProcessor->beginFrame (spectrum.data(), numBins);
+            bandProcessor->beginFrame (detect, numBins);
 
         const float binHz = (float) (sampleRate / (double) fftSize);
 
@@ -589,9 +676,18 @@ private:
 
             float* const f = frame.data();
             const float* const x = spectrum.data();
-            std::fill (f, f + 2 * fxme::jmin (kLo, numBins), 0.0f);
-            if (kHi + 1 < numBins)
-                std::fill (f + 2 * fxme::jmax (kLo, kHi + 1), f + 2 * numBins, 0.0f);
+            float* const fR = stereoInput ? frameR.data() : nullptr;
+            const float* const xR = stereoInput ? spectrumR.data() : nullptr;
+
+            const auto clearOutside = [&] (float* fr)
+            {
+                std::fill (fr, fr + 2 * fxme::jmin (kLo, numBins), 0.0f);
+                if (kHi + 1 < numBins)
+                    std::fill (fr + 2 * fxme::jmax (kLo, kHi + 1), fr + 2 * numBins, 0.0f);
+            };
+            clearOutside (f);
+            if (fR != nullptr)
+                clearOutside (fR);
 
             const bool levelGated = ! s.gateOpen || ! s.ceilingOff;
             double passedEnergy = 0.0, bandEnergy = 0.0;
@@ -599,8 +695,8 @@ private:
 
             for (int k = kLo; k <= kHi; ++k)
             {
-                const float re = x[2 * k];
-                const float im = x[2 * k + 1];
+                const float re = detect[2 * k];
+                const float im = detect[2 * k + 1];
                 float gain = bandMask (k, kLo, kHi);
                 auto& g = s.gateGain[(size_t) k];
 
@@ -632,9 +728,16 @@ private:
                     g = 1.0f;
                 }
 
-                f[2 * k]     = re * gain;
-                f[2 * k + 1] = im * gain;
+                f[2 * k]     = x[2 * k]     * gain;
+                f[2 * k + 1] = x[2 * k + 1] * gain;
                 anyNonZero = anyNonZero || f[2 * k] != 0.0f || f[2 * k + 1] != 0.0f;
+
+                if (fR != nullptr)
+                {
+                    fR[2 * k]     = xR[2 * k]     * gain;
+                    fR[2 * k + 1] = xR[2 * k + 1] * gain;
+                    anyNonZero = anyNonZero || fR[2 * k] != 0.0f || fR[2 * k + 1] != 0.0f;
+                }
             }
 
             openness[(size_t) b].store (! levelGated ? 1.0f
@@ -644,29 +747,45 @@ private:
 
             if (bandProcessor != nullptr)
             {
-                bandProcessor->processBand (b, f, numBins);
+                if (fR != nullptr)
+                    bandProcessor->processBandStereo (b, f, fR, numBins);
+                else
+                    bandProcessor->processBand (b, f, numBins);
 
                 // A processor can sound on its own (a frozen spectrum, a blur
                 // tail), so an empty band is only skipped if it left it empty.
+                const auto nonZero = [this] (const float* fr)
+                {
+                    return std::any_of (fr, fr + 2 * numBins, [] (float v) { return v != 0.0f; });
+                };
                 if (! anyNonZero)
-                    anyNonZero = std::any_of (f, f + 2 * numBins, [] (float v) { return v != 0.0f; });
+                    anyNonZero = nonZero (f) || (fR != nullptr && nonZero (fR));
             }
 
             if (! anyNonZero)
                 continue;
 
-            fft->performRealOnlyInverseTransform (f);
-
-            // Hann on the way out too, with the 1/1.5 the squared window sums
-            // to at 75% overlap folded in. The window starts at olaRead and
-            // wraps at most once.
-            float* const ola = s.ola.data();
-            const int first = fxme::jmin (fftSize, 2 * fftSize - olaRead);
-            for (int i = 0; i < first; ++i)
-                ola[olaRead + i] += f[i] * synthesisWindow[(size_t) i];
-            for (int i = first; i < fftSize; ++i)
-                ola[i - first] += f[i] * synthesisWindow[(size_t) i];
+            overlapAdd (f, s.ola);
+            if (fR != nullptr)
+                overlapAdd (fR, s.olaR);
         }
+    }
+
+    /** Inverse transform of one band's frame, then the synthesis window and
+        the overlap-add into `ola`. */
+    void overlapAdd (float* f, std::vector<float>& olaRing) noexcept
+    {
+        fft->performRealOnlyInverseTransform (f);
+
+        // Hann on the way out too, with the 1/1.5 the squared window sums to
+        // at 75% overlap folded in. The window starts at olaRead and wraps at
+        // most once.
+        float* const ola = olaRing.data();
+        const int first = fxme::jmin (fftSize, 2 * fftSize - olaRead);
+        for (int i = 0; i < first; ++i)
+            ola[olaRead + i] += f[i] * synthesisWindow[(size_t) i];
+        for (int i = first; i < fftSize; ++i)
+            ola[i - first] += f[i] * synthesisWindow[(size_t) i];
     }
 
     /** Keeps gateGain at 0 outside the band's bins when its edges move: the
@@ -708,6 +827,8 @@ private:
 
     std::unique_ptr<RealFft> fft;
     std::vector<float> window, synthesisWindow, history, spectrum, frame;
+    std::vector<float> historyR, spectrumR, frameR, midSpectrum;   // stereo input only
+    bool stereoInput = false;
     std::vector<SpectralBand> bands;
     std::vector<BandState> state;
     AudioBuffer outputs;
