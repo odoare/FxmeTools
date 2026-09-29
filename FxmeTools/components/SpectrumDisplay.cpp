@@ -19,6 +19,13 @@ void SpectrumDisplay::timerCallback()
     const double sr = sampleRateProvider != nullptr ? sampleRateProvider() : 0.0;
     bool any = false;
 
+    // Real time between ticks, for the hold (a busy message thread can space
+    // them out).
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    const float dt = lastTimerMs > 0.0 ? (float) juce::jlimit (0.0, 1.0, (nowMs - lastTimerMs) * 0.001)
+                                       : 0.0f;
+    lastTimerMs = nowMs;
+
     for (auto& tr : traces)
     {
         const bool en = tr.cfg.tap != nullptr && tr.cfg.tap->isEnabled();
@@ -26,6 +33,8 @@ void SpectrumDisplay::timerCallback()
         {
             tr.enabled = en;
             tr.smoothedDb.fill (-120.0f);
+            tr.heldDb.fill (-200.0f);
+            tr.heldAge.fill (0.0f);
             any = true;
         }
         if (! en)
@@ -34,6 +43,10 @@ void SpectrumDisplay::timerCallback()
         any = true;
         const float weight = avgOn ? 1.0f / (float) juce::jmax (1, nAvg) : 1.0f;
         analyzer.update (*tr.cfg.tap, tr.smoothedDb, sr, mode, weight);
+
+        if (holdSeconds > 0.0f)
+            for (size_t p = 0; p < tr.heldDb.size(); ++p)
+                tr.heldDb[p] = updateHeld (tr.heldDb[p], tr.smoothedDb[p], tr.heldAge[p], dt);
     }
 
     if (any)
@@ -52,6 +65,22 @@ void SpectrumDisplay::setFftOrder (int order)
     repaint();
 }
 
+void SpectrumDisplay::setHoldSeconds (float seconds)
+{
+    holdSeconds = juce::jmax (0.0f, seconds);
+    restartHold();
+    repaint();
+}
+
+juce::String SpectrumDisplay::holdBadgeText() const
+{
+    if (holdSeconds <= 0.0f)
+        return "hold off";
+    if (std::isinf (holdSeconds))
+        return "hold " + juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"));
+    return "hold " + juce::String (juce::roundToInt (holdSeconds)) + "s";
+}
+
 SpectrumDisplay::ViewState SpectrumDisplay::getViewState() const
 {
     ViewState s;
@@ -63,6 +92,7 @@ SpectrumDisplay::ViewState SpectrumDisplay::getViewState() const
     s.maxDb = maxDb;
     s.lowHz = viewFMin;
     s.highHz = viewFMax;
+    s.holdSeconds = holdSeconds;
     s.hiddenTraces.reserve (traces.size());
     for (const auto& tr : traces)
         s.hiddenTraces.push_back (! tr.userVisible);
@@ -83,6 +113,7 @@ void SpectrumDisplay::setViewState (const ViewState& s)
     setFreqWindow (s.lowHz, s.highHz);
     for (size_t i = 0; i < traces.size() && i < s.hiddenTraces.size(); ++i)
         traces[i].userVisible = ! s.hiddenTraces[i];
+    holdSeconds = juce::jmax (0.0f, s.holdSeconds);
     restartAveraging();
     repaint();
 }
@@ -126,6 +157,17 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
             // host has pinned it.
             if (! fftLocked)
                 setFftOrder (fftOrder >= spectrumMaxFftOrder ? spectrumMinFftOrder : fftOrder + 1);
+            return;
+        }
+        if (holdBadgeBounds().contains (p))
+        {
+            // Off, 1, 3, 10 s, for good, and round again.
+            const float opts[] { 0.0f, 1.0f, 3.0f, 10.0f, std::numeric_limits<float>::infinity() };
+            size_t next = 0;
+            for (size_t i = 0; i < std::size (opts); ++i)
+                if (opts[i] == holdSeconds)
+                    next = (i + 1) % std::size (opts);
+            setHoldSeconds (opts[next]);
             return;
         }
         if (avgBadgeBounds().contains (p))
@@ -354,6 +396,23 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             if (! tr.enabled || ! tr.userVisible)
                 continue;
 
+            // The held maxima first, thin and lighter, so the trace stays on top.
+            if (holdSeconds > 0.0f)
+            {
+                juce::Path held;
+                for (int p = 0; p < SpectrumAnalyzer::numPoints; ++p)
+                {
+                    const float freq = SpectrumAnalyzer::pointFreq (p);
+                    const float off  = magnitudeOffsetDb != nullptr ? magnitudeOffsetDb (freq) : 0.0f;
+                    const float x = freqToX (freq, plot);
+                    const float y = dbToY (juce::jlimit (minDb, maxDb, tr.heldDb[(size_t) p] + off), plot);
+                    if (p == 0) held.startNewSubPath (x, y);
+                    else        held.lineTo (x, y);
+                }
+                g.setColour (tr.cfg.colour.brighter (0.6f).withAlpha (0.7f));
+                g.strokePath (held, juce::PathStrokeType (1.0f));
+            }
+
             juce::Path path;
             bool started = false;
             for (int p = 0; p < SpectrumAnalyzer::numPoints; ++p)
@@ -404,6 +463,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         drawBadge (g, fftBadgeBounds(), "fft " + juce::String (analyzer.getFftSize()), ! fftLocked);
         drawBadge (g, avgBadgeBounds(), "avg", avgOn && ! measurementLocked);
         drawBadge (g, nBadgeBounds(),   "N " + juce::String (nAvg), avgOn && ! measurementLocked);
+        drawBadge (g, holdBadgeBounds(), holdBadgeText(), holdSeconds > 0.0f);
         drawBadge (g, detectorBadgeBounds(), mode == Mode::peak ? "peak" : "avg", ! measurementLocked);
     }
 

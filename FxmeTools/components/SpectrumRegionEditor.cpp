@@ -26,6 +26,9 @@ void SpectrumRegionEditor::setNumRegions (int numRegions)
 {
     regions.assign ((size_t) juce::jmax (0, numRegions), {});
     regionLevels.assign (regions.size(), -1000.0f);
+    heldLevels.assign (regions.size(), -1000.0f);
+    heldAges.assign (regions.size(), 0.0f);
+    levelTimesMs.assign (regions.size(), 0.0);
     selected = -1;
     repaint();
 }
@@ -50,18 +53,41 @@ void SpectrumRegionEditor::setLevelMarkersEnabled (bool shouldBeEnabled)
     repaint();
 }
 
-void SpectrumRegionEditor::setRegionLevel (int index, float db)
+void SpectrumRegionEditor::setRegionLevel (int index, float db, float peakDb)
 {
     if (! juce::isPositiveAndBelow (index, (int) regionLevels.size()))
         return;
 
-    auto& level = regionLevels[(size_t) index];
-    if (std::abs (level - db) < 0.25f)
-        return;
+    const auto i = (size_t) index;
+    bool moved = false;
 
-    level = db;
-    if (levelMarkers && regions[(size_t) index].active)
+    if (getHoldSeconds() > 0.0f)
+    {
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        const float dt = levelTimesMs[i] > 0.0
+                           ? (float) juce::jlimit (0.0, 1.0, (nowMs - levelTimesMs[i]) * 0.001)
+                           : 0.0f;
+        levelTimesMs[i] = nowMs;
+
+        const float held = updateHeld (heldLevels[i], juce::jmax (db, peakDb), heldAges[i], dt);
+        moved = std::abs (held - heldLevels[i]) >= 0.25f;
+        heldLevels[i] = held;
+    }
+
+    if (std::abs (regionLevels[i] - db) >= 0.25f)
+    {
+        regionLevels[i] = db;
+        moved = true;
+    }
+
+    if (moved && levelMarkers && regions[i].active)
         repaint();
+}
+
+void SpectrumRegionEditor::holdRestarted()
+{
+    std::fill (heldLevels.begin(), heldLevels.end(), -1000.0f);
+    std::fill (heldAges.begin(), heldAges.end(), 0.0f);
 }
 
 void SpectrumRegionEditor::drawLevelMarker (juce::Graphics& g, int index,
@@ -70,19 +96,30 @@ void SpectrumRegionEditor::drawLevelMarker (juce::Graphics& g, int index,
     const auto& r = regions[(size_t) index];
     const auto b = regionBounds (r, plot);
     const float y = dbToY (regionLevels[(size_t) index], plot);
-    if (y >= b.getBottom())
-        return;
 
-    const float top = juce::jmax (b.getY(), y);
     if (fill)
     {
-        g.setColour (r.colour.withAlpha (0.14f));
-        g.fillRect (b.withTop (top));
+        if (y < b.getBottom())
+        {
+            g.setColour (r.colour.withAlpha (0.14f));
+            g.fillRect (b.withTop (juce::jmax (b.getY(), y)));
+        }
+        return;
     }
-    else if (y >= b.getY())
+
+    if (y >= b.getY() && y < b.getBottom())
     {
         g.setColour (r.colour.withAlpha (0.85f));
         g.fillRect (juce::Rectangle<float> (b.getX(), y - 1.0f, b.getWidth(), 2.0f));
+    }
+
+    // The held maximum, dashed, while the display's max-hold is on.
+    const float heldY = dbToY (heldLevels[(size_t) index], plot);
+    if (getHoldSeconds() > 0.0f && heldY >= b.getY() && heldY < b.getBottom())
+    {
+        const float dashes[] { 3.0f, 3.0f };
+        g.setColour (r.colour.brighter (0.5f).withAlpha (0.9f));
+        g.drawDashedLine ({ b.getX(), heldY, b.getRight(), heldY }, dashes, 2, 1.2f);
     }
 }
 

@@ -11,6 +11,32 @@ project after a break.
 
 ---
 
+## Max-hold: `SpectrumDisplay::setHoldSeconds`, held region levels, band peaks (2026-09-29)
+
+Additive, **no consumer action**: the hold is off by default, and nothing
+draws differently until it is turned on.
+
+- `SpectrumDisplay::setHoldSeconds (seconds)` / `getHoldSeconds()`: each point
+  of each trace keeps its highest level for that long, then falls at 20 dB/s
+  until the trace catches it; drawn as a thin, lighter line under the trace.
+  0 is off, infinity holds for good. A new **"hold" badge**, right of "N",
+  cycles off, 1, 3, 10 s and infinity; any change starts the held levels
+  over, as does a window-size change. `ViewState` gains `holdSeconds` (last
+  field, default 0). Not affected by `setMeasurementLocked`: it adds a line,
+  it does not change how levels are measured. For subclasses: a protected
+  `holdRestarted()` hook and `updateHeld()` helper, so their own markers hold
+  the same way.
+- `SpectrumRegionEditor::setRegionLevel (index, db, peakDb)` (the two-argument
+  form is kept): with the hold on and level markers enabled, the peaks are
+  held and drawn as a dashed line in each region.
+- Core: `BandGate::takePeakLevelDb()` and
+  `FilterBankSplitter::takeBandPeakLevelDb (band)`, the highest detector
+  level since the previous call, sample accurate, for a GUI timer that would
+  otherwise miss short peaks between reads. Pinned in `CoreFilterBankTests`
+  (a 30 ms burst between two reads is caught to 0.1 dB).
+
+---
+
 ## New: `fxme::BandGate` and `fxme::FilterBankSplitter`; `SpectrumRegionEditor` level markers (2026-09-29)
 
 Additive, **no consumer action**.

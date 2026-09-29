@@ -17,6 +17,8 @@
          through at once, untouched.
       6. Openness and level reporting: the gate gain, 1 with no gating, 0 for
          a disabled band; the band level as the gate compares it.
+      7. The peak level: a short burst between two reads is caught, and the
+         next read starts over.
 
     Exit code 0 when everything passes.
 
@@ -237,6 +239,29 @@ int main()
         std::snprintf (what, sizeof what, "the band level reads the tone (%+.2f dB off)",
                        bank.getBandLevelDb (1) - toneDb);
         check (std::abs (bank.getBandLevelDb (1) - toneDb) < 0.5f, what);
+    }
+
+    // ---- 7. peak level ---------------------------------------------------------
+    {
+        fxme::FilterBankSplitter bank;
+        bank.prepare (sampleRate, 512, 1);
+        bank.setBand (0, { true, 500.0f, 2000.0f, -1000.0f, 0.0f, 0.0f });
+        bank.takeBandPeakLevelDb (0);
+
+        // 30 ms of the tone inside a second of silence, in one read window.
+        std::vector<float> x ((size_t) sampleRate, 0.0f);
+        const auto burst = tone ((int) (0.03 * sampleRate));
+        std::copy (burst.begin(), burst.end(), x.begin() + (long) (0.4 * sampleRate));
+        for (int start = 0; start + 512 <= (int) x.size(); start += 512)
+            bank.process (x.data() + start, 512);
+
+        const float peak = bank.takeBandPeakLevelDb (0);
+        std::snprintf (what, sizeof what,
+                       "a 30 ms burst between two reads is caught (%+.2f dB from the tone's level)",
+                       peak - toneDb);
+        check (std::abs (peak - toneDb) < 1.5f, what);
+        check (bank.getBandLevelDb (0) < toneDb - 40.0f, "while the level now reads silence");
+        check (bank.takeBandPeakLevelDb (0) < -150.0f, "and the next read starts over");
     }
 
     std::printf ("\n%s (%d failures)\n",

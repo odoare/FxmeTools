@@ -9,8 +9,9 @@
     axis is relabelled in dB SPL (= dBFS + offset).
 
     Add/remove curves with addTrace()/clearTraces(); the per-point detector
-    (avg/peak), FFT window size and temporal averaging are user-clickable
-    badges. Palette is injected via setColours() (defaults to a dark theme).
+    (avg/peak), FFT window size, temporal averaging and max-hold are
+    user-clickable badges. The max-hold draws, under each trace, the highest
+    level each point reached: held for a while, then falling. Palette is injected via setColours() (defaults to a dark theme).
 
     Mouse: wheel zooms the dB axis around the cursor, ctrl+wheel zooms the
     frequency axis around it, drag pans both, double-click resets both. The
@@ -70,6 +71,7 @@ public:
     {
         traces.push_back ({ std::move (cfg), false, {} });
         traces.back().smoothedDb.fill (-120.0f);
+        traces.back().heldDb.fill (-200.0f);
     }
 
     void clearTraces() { traces.clear(); }
@@ -130,6 +132,14 @@ public:
     void setMeasurementLocked (bool shouldBeLocked) { measurementLocked = shouldBeLocked; repaint(); }
     bool isMeasurementLocked() const noexcept       { return measurementLocked; }
 
+    /** Max-hold: each point of each trace keeps the highest level it reached,
+        drawn as a thin line under the trace, for `seconds`, then falls
+        (20 dB/s) until the trace catches it again. 0 turns it off (the
+        default), infinity holds for good. The badge cycles off, 1, 3, 10 s
+        and infinity; any change starts the held levels over. */
+    void setHoldSeconds (float seconds);
+    float getHoldSeconds() const noexcept          { return holdSeconds; }
+
     /** Everything a user can change on the display with the mouse: the
         detector, the window size, the temporal averaging, the dB and frequency
         windows, and the traces hidden from the legend. The traces themselves
@@ -150,6 +160,7 @@ public:
         float minDb = -100.0f, maxDb = 10.0f;
         float lowHz = SpectrumAnalyzer::fMin, highHz = SpectrumAnalyzer::fMax;
         std::vector<bool> hiddenTraces;         // by addTrace() order
+        float holdSeconds = 0.0f;               // max-hold, 0 = off
     };
 
     ViewState getViewState() const;
@@ -195,6 +206,28 @@ protected:
         plot: for handles and anything that must stay legible over a curve. */
     virtual void paintOverTraces (juce::Graphics&, juce::Rectangle<float> /*plotArea*/) {}
 
+    /** Called when the held levels start over (the hold time changed, the
+        window size changed): for a subclass holding levels of its own. */
+    virtual void holdRestarted() {}
+
+    /** Held levels move in time: `seconds` since the last update, the value
+        now, and a level held `age` seconds ago. Returns the new held level,
+        updating `age`. Shared by the traces and a subclass's own markers. */
+    float updateHeld (float held, float now, float& age, float seconds) const noexcept
+    {
+        if (now >= held)
+        {
+            age = 0.0f;
+            return now;
+        }
+
+        age += seconds;
+        if (age <= holdSeconds)
+            return held;
+
+        return juce::jmax (now, held - holdFallDbPerSecond * seconds);
+    }
+
     juce::Rectangle<float> getPlotArea() const
     {
         return getLocalBounds().toFloat().reduced (8.0f)
@@ -229,7 +262,8 @@ protected:
     {
         return badgesVisible
             && (detectorBadgeBounds().contains (p) || fftBadgeBounds().contains (p)
-                || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p));
+                || avgBadgeBounds().contains (p) || nBadgeBounds().contains (p)
+                || holdBadgeBounds().contains (p));
     }
 
     /** True when the point is over a legend entry (same reasoning). Only valid
@@ -249,6 +283,8 @@ private:
         bool enabled;                   // tap is running
         std::array<float, (size_t) SpectrumAnalyzer::numPoints> smoothedDb;
         bool userVisible = true;        // legend toggle (drawing only)
+        std::array<float, (size_t) SpectrumAnalyzer::numPoints> heldDb {};
+        std::array<float, (size_t) SpectrumAnalyzer::numPoints> heldAge {};
     };
 
     void timerCallback() override;
@@ -276,6 +312,12 @@ private:
     {
         return avgBadgeBounds().translated (42, 0).withWidth (40);
     }
+    juce::Rectangle<int> holdBadgeBounds() const
+    {
+        return nBadgeBounds().translated (44, 0).withWidth (52);
+    }
+
+    juce::String holdBadgeText() const;
 
     void drawBadge (juce::Graphics& g, juce::Rectangle<int> r,
                     const juce::String& text, bool active) const;
@@ -284,6 +326,17 @@ private:
     {
         for (auto& tr : traces)
             tr.smoothedDb.fill (-120.0f);
+        restartHold();
+    }
+
+    void restartHold()
+    {
+        for (auto& tr : traces)
+        {
+            tr.heldDb.fill (-200.0f);
+            tr.heldAge.fill (0.0f);
+        }
+        holdRestarted();
     }
 
     // Apply a [min, min+span] dB window, clamped to fit within [floor, ceil].
@@ -313,6 +366,10 @@ private:
     bool badgesVisible = true;                     // badge ignores clicks
     bool avgOn = true;                          // temporal averaging
     int  nAvg  = 4;                             // averaged over ~nAvg frames
+
+    float holdSeconds = 0.0f;                   // max-hold, 0 = off
+    static constexpr float holdFallDbPerSecond = 20.0f;
+    double lastTimerMs = 0.0;
 
     // Zoom/pan (drag) state, dB and frequency axes.
     static constexpr float dbFloor = -200.0f, dbCeil = 200.0f, dbMinSpan = 10.0f;

@@ -67,7 +67,7 @@ public:
         a spectral bin does). */
     void reset() noexcept
     {
-        meanSquare = 0.0f;
+        meanSquare = peakMeanSquare = 0.0f;
         gain = isGating() ? 0.0f : 1.0f;
     }
 
@@ -120,9 +120,12 @@ public:
     {
         const bool gating = isGating();
 
+        float peak = peakMeanSquare;
+
         for (int i = 0; i < numSamples; ++i)
         {
             meanSquare += detectorCoef * (x[i] * x[i] - meanSquare);
+            peak = fxme::jmax (peak, meanSquare);
 
             if (! gating)
                 continue;
@@ -134,6 +137,8 @@ public:
             gain = target + coef * (gain - target);
             x[i] *= gain;
         }
+
+        peakMeanSquare = peak;
 
         if (! gating)
             gain = 1.0f;
@@ -150,6 +155,16 @@ public:
     float getLevelDb() const noexcept
     {
         return 10.0f * std::log10 (fxme::jmax (1.0e-20f, 0.5f * meanSquare));
+    }
+
+    /** The highest level the detector reached since the last call, in dB
+        (same convention), then starts over. Sample-accurate, where reading
+        getLevelDb() now and then would miss a short peak between reads. */
+    float takePeakLevelDb() noexcept
+    {
+        const float db = 10.0f * std::log10 (fxme::jmax (1.0e-20f, 0.5f * peakMeanSquare));
+        peakMeanSquare = 0.0f;
+        return db;
     }
 
     /** True when the gate or the ceiling is in use. */
@@ -224,7 +239,7 @@ private:
     float attackSeconds = 0.005f, releaseSeconds = 0.080f, detectorSeconds = 0.005f;
     float attackCoef = 0.0f, releaseCoef = 0.0f, detectorCoef = 1.0f;
 
-    float meanSquare = 0.0f;
+    float meanSquare = 0.0f, peakMeanSquare = 0.0f;
     float gain = 1.0f;
 };
 

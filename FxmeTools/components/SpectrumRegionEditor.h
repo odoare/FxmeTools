@@ -132,9 +132,15 @@ public:
     void setLevelMarkersEnabled (bool shouldBeEnabled);
     bool areLevelMarkersEnabled() const noexcept { return levelMarkers; }
 
-    /** One region's level for its marker, in the plot's dB. Cheap: it only
-        repaints when the marker would move on screen by a pixel or so. */
-    void setRegionLevel (int index, float db);
+    /** One region's level for its marker, in the plot's dB, and optionally
+        the highest level since the previous call (a sample-accurate peak from
+        the DSP; the level itself when not given). With the display's
+        max-hold on (setHoldSeconds(), the "hold" badge), the peaks are held
+        and drawn as a dashed line over the marker, so the gate can be placed
+        against the loudest the band has been lately. Call it on a steady
+        timer. Cheap: it only repaints when a marker would move on screen. */
+    void setRegionLevel (int index, float db, float peakDb);
+    void setRegionLevel (int index, float db)    { setRegionLevel (index, db, db); }
 
     int  getSelectedRegion() const noexcept      { return selected; }
     void setSelectedRegion (int index);
@@ -225,6 +231,11 @@ private:
 
     std::vector<Region> regions;
     std::vector<float> regionLevels;     // dB, for the level markers
+    std::vector<float> heldLevels;       // dB, their max-hold
+    std::vector<float> heldAges;         // seconds each has been held
+    std::vector<double> levelTimesMs;    // when each was last fed
+
+    void holdRestarted() override;
     bool levelMarkers = false;
     int selected = -1;
 

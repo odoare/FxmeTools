@@ -84,6 +84,7 @@ public:
 
         openness = std::make_unique<std::atomic<float>[]> ((size_t) fxme::jmax (1, numBands));
         levels   = std::make_unique<std::atomic<float>[]> ((size_t) fxme::jmax (1, numBands));
+        peaks    = std::make_unique<std::atomic<float>[]> ((size_t) fxme::jmax (1, numBands));
 
         setGateTimes (gateAttackSeconds, gateReleaseSeconds);
         setLevelSmoothingSeconds (0.02);
@@ -103,6 +104,7 @@ public:
             s.gainR.setCurrentAndTargetValue (s.gainR.getTargetValue());
             openness[(size_t) b].store (0.0f);
             levels[(size_t) b].store (-200.0f);
+            peaks[(size_t) b].store (-200.0f);
         }
         outputs.clear();
     }
@@ -128,6 +130,18 @@ public:
     {
         return levels != nullptr && fxme::isPositiveAndBelow (band, numBands)
                  ? levels[(size_t) band].load (std::memory_order_relaxed)
+                 : -200.0f;
+    }
+
+    /** The band's highest level in dB since the previous call (sample
+        accurate, same convention as getBandLevelDb()), then starts over: for
+        a peak-hold marker read on a GUI timer. Meant for one reader. A peak
+        landing between the read and the reset can be lost; harmless for a
+        display. */
+    float takeBandPeakLevelDb (int band) noexcept
+    {
+        return peaks != nullptr && fxme::isPositiveAndBelow (band, numBands)
+                 ? peaks[(size_t) band].exchange (-200.0f, std::memory_order_relaxed)
                  : -200.0f;
     }
 
@@ -269,6 +283,10 @@ public:
 
             openness[(size_t) b].store (s.gate.getGain(), std::memory_order_relaxed);
             levels[(size_t) b].store (s.gate.getLevelDb(), std::memory_order_relaxed);
+
+            const float peak = s.gate.takePeakLevelDb();
+            if (peak > peaks[(size_t) b].load (std::memory_order_relaxed))
+                peaks[(size_t) b].store (peak, std::memory_order_relaxed);
         }
     }
 
@@ -319,7 +337,7 @@ private:
     float gateAttackSeconds = 0.005f, gateReleaseSeconds = 0.080f;
     bool applyPan = true;
 
-    std::unique_ptr<std::atomic<float>[]> openness, levels;
+    std::unique_ptr<std::atomic<float>[]> openness, levels, peaks;
 
     FilterBankSplitter (const FilterBankSplitter&) = delete;
     FilterBankSplitter& operator= (const FilterBankSplitter&) = delete;
