@@ -108,8 +108,11 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/EdgeBandPass.h>)
  #include <FxmeTools/dsp/EdgeBandPass.h>
 #endif
-#if FXME_TRY_INCLUDE(<FxmeTools/dsp/BandGate.h>)
- #include <FxmeTools/dsp/BandGate.h>
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/BandDynamics.h>)
+ #include <FxmeTools/dsp/BandDynamics.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/BandDynamicsProcessor.h>)
+ #include <FxmeTools/dsp/BandDynamicsProcessor.h>
 #endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/FilterBankSplitter.h>)
  #include <FxmeTools/dsp/FilterBankSplitter.h>

@@ -1,13 +1,22 @@
 /*
   ------------------------------------------------------------------------------
-    BandGate.h
+    BandDynamicsProcessor.h
 
-    A gate and a ceiling on a whole signal's level, per sample: the
-    time-domain counterpart of fxme::SpectralBandSplitter's per-bin gate,
-    meant for one band of a filter bank (fxme::FilterBankSplitter).
+    The dynamics of one band, on its whole level, per sample: the
+    time-domain counterpart of fxme::SpectralBandSplitter's per-bin gate
+    and ceiling, meant for one band of a filter bank
+    (fxme::FilterBankSplitter). It measures the band's level, asks
+    fxme::DynamicsCurve (BandDynamics.h, the stateless maths both splitters
+    share) what gain each line wants, follows that with each line's attack
+    and release, and applies it. (Formerly fxme::BandGate: it compresses as
+    well as gates now.)
 
-    The signal passes while its level is above the gate and below the
-    ceiling, with the same knee (a smoothstep over the level in dB, kneeDb
+    Around its two lines it applies fxme::BandDynamics: under the gate a
+    downward expander (a hard gate by default), over the ceiling a compressor
+    or a cut (a cut by default). With a compressor ratio this is one band of a
+    classic multiband compressor. The default behaves as a gate and a
+    ceiling: the signal passes while its level is above the gate and below
+    the ceiling, with the same knee (a smoothstep over the level in dB, kneeDb
     wide, centred on each line) and the same attack and release as the
     spectral gate, so a band's settings mean the same in both. Only the grain
     differs: here the whole band opens or closes, where the spectral gate
@@ -38,6 +47,7 @@
 
 #pragma once
 
+#include <FxmeTools/dsp/BandDynamics.h>
 #include <FxmeTools/util/Math.h>
 #include <algorithm>
 #include <cmath>
@@ -45,30 +55,31 @@
 namespace fxme
 {
 
-class BandGate
+class BandDynamicsProcessor
 {
 public:
     /** A gate at or below this is fully open; a ceiling at or above
         offCeilingDb is off. The values of fxme::SpectralBandSplitter. */
     static constexpr float openGateDb   = -150.0f;
     static constexpr float offCeilingDb = 150.0f;
-    static constexpr float maxKneeDb    = 48.0f;
+    static constexpr float maxKneeDb    = DynamicsCurve::maxKneeDb;
 
     void prepare (double sampleRateIn) noexcept
     {
         sampleRate = sampleRateIn > 0.0 ? sampleRateIn : 48000.0;
-        setTimes (attackSeconds, releaseSeconds);
+        setDynamics (dynamics);
         setDetectorSeconds (detectorSeconds);
         reset();
     }
 
-    /** Forgets the level; the gain goes back to 1 if the gate is open, 0
-        otherwise (a gated band starts closed and opens with its attack, as
-        a spectral bin does). */
+    /** Forgets the level; the gate's gain goes back to closed if the gate is
+        in use (a gated band starts closed and opens with its attack, as a
+        spectral bin does), the ceiling's to 1. */
     void reset() noexcept
     {
         meanSquare = peakMeanSquare = 0.0f;
-        gain = isGating() ? 0.0f : 1.0f;
+        gateGain = curve.isGateOn() ? 0.0f : 1.0f;
+        ceilingGain = 1.0f;
     }
 
     /** The two lines in dB (see the level convention in the file comment). */
@@ -78,26 +89,42 @@ public:
             return;
         gateDbSet    = gateDb;
         ceilingDbSet = ceilingDb;
-        updateThresholds();
+        updateCurve();
     }
+
+    /** What the two lines do (see fxme::BandDynamics): expander ratio and
+        range under the gate, compressor ratio or cut over the ceiling, and
+        each line's knee, attack and release, followed per sample. */
+    void setDynamics (const BandDynamics& d) noexcept
+    {
+        dynamics = d;
+        gateAttackCoef     = coefFor (d.gateAttackSeconds);
+        gateReleaseCoef    = coefFor (d.gateReleaseSeconds);
+        ceilingAttackCoef  = coefFor (d.ceilingAttackSeconds);
+        ceilingReleaseCoef = coefFor (d.ceilingReleaseSeconds);
+        updateCurve();
+    }
+
+    const BandDynamics& getDynamics() const noexcept { return dynamics; }
 
     /** Width of the transition around both lines, in dB (0: hard switch). */
     void setKnee (float kneeDb) noexcept
     {
         const float k = fxme::jlimit (0.0f, maxKneeDb, kneeDb);
-        if (k == knee)
+        if (k == dynamics.gateKneeDb && k == dynamics.ceilingKneeDb)
             return;
-        knee = k;
-        updateThresholds();
+        auto d = dynamics;
+        d.gateKneeDb = d.ceilingKneeDb = k;
+        setDynamics (d);
     }
 
-    /** How fast the gain rises towards open and falls towards closed. */
+    /** How fast both lines' gains rise and fall. */
     void setTimes (float attackSecondsIn, float releaseSecondsIn) noexcept
     {
-        attackSeconds  = fxme::jmax (0.0f, attackSecondsIn);
-        releaseSeconds = fxme::jmax (0.0f, releaseSecondsIn);
-        attackCoef  = coefFor (attackSeconds);
-        releaseCoef = coefFor (releaseSeconds);
+        auto d = dynamics;
+        d.gateAttackSeconds  = d.ceilingAttackSeconds  = fxme::jmax (0.0f, attackSecondsIn);
+        d.gateReleaseSeconds = d.ceilingReleaseSeconds = fxme::jmax (0.0f, releaseSecondsIn);
+        setDynamics (d);
     }
 
     /** Time constant of the level detector (default 5 ms). */
@@ -127,8 +154,7 @@ public:
         each detector sample is read before its channel sample is scaled. */
     void processLinked (const float* detector, float* left, float* right, int numSamples) noexcept
     {
-        const bool gating = isGating();
-
+        const bool gateOn = curve.isGateOn(), ceilingOn = curve.isCeilingOn();
         float peak = peakMeanSquare;
 
         for (int i = 0; i < numSamples; ++i)
@@ -137,23 +163,38 @@ public:
             meanSquare += detectorCoef * (d * d - meanSquare);
             peak = fxme::jmax (peak, meanSquare);
 
-            if (! gating)
+            if (! gateOn && ! ceilingOn)
                 continue;
 
             const float levelSq = 0.5f * meanSquare;
-            const float target = (gateOpen   ? 1.0f : rise (levelSq, gate))
-                               * (ceilingOff ? 1.0f : 1.0f - rise (levelSq, ceiling));
-            const float coef = target > gain ? attackCoef : releaseCoef;
-            gain = target + coef * (gain - target);
-            left[i] *= gain;
+
+            if (gateOn)
+            {
+                const float target = curve.gateGain (levelSq);
+                gateGain = target + (target > gateGain ? gateAttackCoef : gateReleaseCoef) * (gateGain - target);
+            }
+            if (ceilingOn)
+            {
+                const float target = curve.ceilingGain (levelSq);
+                // The ceiling acts by pulling the gain down: that is its
+                // attack; letting it back up is its release (the gate's the
+                // other way round).
+                ceilingGain = target + (target < ceilingGain ? ceilingAttackCoef : ceilingReleaseCoef)
+                                           * (ceilingGain - target);
+            }
+
+            const float g = gateGain * ceilingGain;
+            left[i] *= g;
             if (right != nullptr)
-                right[i] *= gain;
+                right[i] *= g;
         }
 
         peakMeanSquare = peak;
 
-        if (! gating)
-            gain = 1.0f;
+        if (! gateOn)
+            gateGain = 1.0f;
+        if (! ceilingOn)
+            ceilingGain = 1.0f;
 
         // Keeps the detector out of denormals in silence.
         if (meanSquare < 1.0e-20f)
@@ -161,7 +202,7 @@ public:
     }
 
     /** The gain applied last, 0 to 1 (1 when neither line is in use). */
-    float getGain() const noexcept { return gain; }
+    float getGain() const noexcept { return gateGain * ceilingGain; }
 
     /** The band's level in dB, in the convention above. */
     float getLevelDb() const noexcept
@@ -180,60 +221,21 @@ public:
     }
 
     /** True when the gate or the ceiling is in use. */
-    bool isGating() const noexcept { return ! gateOpen || ! ceilingOff; }
+    bool isGating() const noexcept { return curve.isGateOn() || curve.isCeilingOn(); }
 
 private:
-    /** One line as squared-level edges, as in the spectral splitter. */
-    struct Threshold
+    void updateCurve() noexcept
     {
-        float loSq = 0.0f, hiSq = 0.0f;
-        float invLogSpan = 0.0f;
-    };
+        const bool gateWasOn = curve.isGateOn();
 
-    static float rise (float levelSq, const Threshold& t) noexcept
-    {
-        if (levelSq >= t.hiSq)
-            return 1.0f;
-        if (levelSq <= t.loSq)
-            return 0.0f;
-
-        const float x = std::log (levelSq / t.loSq) * t.invLogSpan;
-        return x * x * (3.0f - 2.0f * x);
-    }
-
-    Threshold edgesFor (float db) const noexcept
-    {
-        const float level = fxme::Decibels::decibelsToGain (db, -200.0f);
-        const float thrSq = level * level;
-
-        Threshold t;
-        if (knee <= 0.0f)
-        {
-            t.loSq = t.hiSq = thrSq;
-            return t;
-        }
-
-        const float halfRatio = std::pow (10.0f, knee * 0.05f);
-        t.loSq = thrSq / halfRatio;
-        t.hiSq = thrSq * halfRatio;
-        t.invLogSpan = 1.0f / std::log (t.hiSq / t.loSq);
-        return t;
-    }
-
-    void updateThresholds() noexcept
-    {
-        const bool wasGating = isGating();
-
-        gateOpen   = gateDbSet <= openGateDb;
-        ceilingOff = ceilingDbSet >= offCeilingDb;
-        if (! gateOpen)
-            gate = edgesFor (gateDbSet);
-        if (! ceilingOff)
-            ceiling = edgesFor (ceilingDbSet);
+        curve.set (gateDbSet <= openGateDb ? 0.0f : fxme::Decibels::decibelsToGain (gateDbSet, -200.0f),
+                   ceilingDbSet >= offCeilingDb ? BandDynamics::infinity
+                                                : fxme::Decibels::decibelsToGain (ceilingDbSet, -200.0f),
+                   dynamics);
 
         // Starting to gate: from wide open, as the band was a moment ago.
-        if (isGating() && ! wasGating)
-            gain = 1.0f;
+        if (curve.isGateOn() && ! gateWasOn)
+            gateGain = 1.0f;
     }
 
     float coefFor (float seconds) const noexcept
@@ -244,15 +246,16 @@ private:
 
     double sampleRate = 48000.0;
 
-    float gateDbSet = -1000.0f, ceilingDbSet = 1000.0f, knee = 0.0f;
-    Threshold gate, ceiling;
-    bool gateOpen = true, ceilingOff = true;
+    float gateDbSet = -1000.0f, ceilingDbSet = 1000.0f;
+    BandDynamics dynamics;
+    DynamicsCurve curve;
 
-    float attackSeconds = 0.005f, releaseSeconds = 0.080f, detectorSeconds = 0.005f;
-    float attackCoef = 0.0f, releaseCoef = 0.0f, detectorCoef = 1.0f;
+    float gateAttackCoef = 0.0f, gateReleaseCoef = 0.0f;
+    float ceilingAttackCoef = 0.0f, ceilingReleaseCoef = 0.0f;
+    float detectorSeconds = 0.005f, detectorCoef = 1.0f;
 
     float meanSquare = 0.0f, peakMeanSquare = 0.0f;
-    float gain = 1.0f;
+    float gateGain = 1.0f, ceilingGain = 1.0f;
 };
 
 } // namespace fxme

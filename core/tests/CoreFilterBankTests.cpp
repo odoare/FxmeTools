@@ -2,7 +2,7 @@
   ------------------------------------------------------------------------------
     CoreFilterBankTests.cpp
 
-    fxme::BandGate and fxme::FilterBankSplitter, the live (filter bank)
+    fxme::BandDynamicsProcessor and fxme::FilterBankSplitter, the live (filter bank)
     engine:
 
       1. Level convention: a steady sine of amplitude A reads A/2, the level
@@ -27,7 +27,7 @@
   ------------------------------------------------------------------------------
 */
 
-#include <FxmeTools/dsp/BandGate.h>
+#include <FxmeTools/dsp/BandDynamicsProcessor.h>
 #include <FxmeTools/dsp/FilterBankSplitter.h>
 
 #include <cmath>
@@ -73,7 +73,7 @@ namespace
     /** One second of the tone through a gate; RMS over the last quarter. */
     double gatedRms (float gateDb, float ceilingDb, float kneeDb = 0.0f)
     {
-        fxme::BandGate gate;
+        fxme::BandDynamicsProcessor gate;
         gate.prepare (sampleRate);
         gate.setKnee (kneeDb);
         gate.setThresholds (gateDb, ceilingDb);
@@ -88,13 +88,13 @@ namespace
         matter. */
     double timeConstantMs (bool attack, float seconds)
     {
-        fxme::BandGate gate;
+        fxme::BandDynamicsProcessor gate;
         gate.prepare (sampleRate);
         gate.setDetectorSeconds (0.0002f);
         gate.setTimes (attack ? seconds : 0.0f, attack ? 0.0f : seconds);
         // Just under the level of the DC used below, so the detector crosses
         // it almost at once and only the gain's own time is measured.
-        gate.setThresholds (toneDb, fxme::BandGate::offCeilingDb);
+        gate.setThresholds (toneDb, fxme::BandDynamicsProcessor::offCeilingDb);
 
         // DC over the gate (a steady level, no ripple) for a release, silence
         // for an attack: the gain starts from the other end.
@@ -119,13 +119,13 @@ namespace
 
 int main()
 {
-    std::printf ("BandGate and FilterBankSplitter\n");
+    std::printf ("BandDynamicsProcessor and FilterBankSplitter\n");
     const double inRms = amplitude / std::sqrt (2.0);
     char what[200];
 
     // ---- 1. level convention ------------------------------------------------
     {
-        fxme::BandGate gate;
+        fxme::BandDynamicsProcessor gate;
         gate.prepare (sampleRate);
         auto x = tone ((int) sampleRate / 2);
         gate.process (x.data(), (int) x.size());
@@ -136,7 +136,7 @@ int main()
 
     // ---- 2. gate, ceiling, knee -----------------------------------------------
     {
-        const float off = fxme::BandGate::offCeilingDb, open = fxme::BandGate::openGateDb;
+        const float off = fxme::BandDynamicsProcessor::offCeilingDb, open = fxme::BandDynamicsProcessor::openGateDb;
         check (std::abs (db (gatedRms (toneDb - 10.0f, off)) - db (inRms)) < 0.1,
                "a gate 10 dB under the tone passes it");
         check (db (gatedRms (toneDb + 10.0f, off)) < db (inRms) - 60.0,

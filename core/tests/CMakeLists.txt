@@ -53,6 +53,11 @@ add_executable(FxmeCoreStereoBandsTests CoreStereoBandsTests.cpp)
 target_link_libraries(FxmeCoreStereoBandsTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreStereoBandsTests COMMAND FxmeCoreStereoBandsTests)
 
+# ── 6f. Band dynamics: expander / compressor curves, both splitters ─────────
+add_executable(FxmeCoreDynamicsTests CoreDynamicsTests.cpp)
+target_link_libraries(FxmeCoreDynamicsTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreDynamicsTests COMMAND FxmeCoreDynamicsTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -85,7 +90,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

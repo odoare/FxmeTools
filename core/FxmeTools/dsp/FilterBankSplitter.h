@@ -5,8 +5,9 @@
     The zero-latency twin of fxme::SpectralBandSplitter: splits one mono
     stream into bands with filters instead of a short-time Fourier transform.
     Per band, a fxme::EdgeBandPass (24 dB per octave on each side) cuts the
-    band out of the input, a fxme::BandGate applies its gate and ceiling to
-    the band's level, and the band's gain (and pan, when applied) finish it.
+    band out of the input, a fxme::BandDynamicsProcessor applies its gate and
+    ceiling (expander, compressor or cut) to the band's level, and the band's
+    gain (and pan, when applied) finish it.
 
     It takes the same fxme::SpectralBand settings and has the same outward
     API as the spectral splitter, so a consumer can offer both and switch
@@ -27,7 +28,7 @@
     average (the mono sum a spectrum view would show), with one gain for
     both, so the band opens and closes as one and keeps its image.
 
-    Levels follow fxme::BandGate's convention, so a steady tone passes a gate
+    Levels follow fxme::BandDynamicsProcessor's convention, so a steady tone passes a gate
     drawn at the same place in either splitter. A noisy band's level (the sum
     of all its bins) reads higher than its spectrum trace: getBandLevelDb()
     is what the gate compares, for a consumer to show beside the lines.
@@ -45,7 +46,7 @@
 
 #pragma once
 
-#include <FxmeTools/dsp/BandGate.h>
+#include <FxmeTools/dsp/BandDynamicsProcessor.h>
 #include <FxmeTools/dsp/EdgeBandPass.h>
 #include <FxmeTools/dsp/SpectralBandSplitter.h>
 #include <FxmeTools/util/AudioBuffer.h>
@@ -85,7 +86,7 @@ public:
         {
             s.filter.prepare (sampleRate);
             s.filterR.prepare (sampleRate);
-            s.gate.prepare (sampleRate);
+            s.dynamics.prepare (sampleRate);
         }
 
         outputs.setSize (fxme::jmax (1, 2 * numBands), blockSize);
@@ -108,7 +109,7 @@ public:
             auto& s = state[(size_t) b];
             s.filter.reset();
             s.filterR.reset();
-            s.gate.reset();
+            s.dynamics.reset();
             s.wasEnabled = false;
             s.gainL.setCurrentAndTargetValue (s.gainL.getTargetValue());
             s.gainR.setCurrentAndTargetValue (s.gainR.getTargetValue());
@@ -134,7 +135,7 @@ public:
                  : 0.0f;
     }
 
-    /** The band's level in dB, as its gate compares it (see fxme::BandGate),
+    /** The band's level in dB, as its gate compares it (see fxme::BandDynamicsProcessor),
         at the end of the last process() call. Any thread. */
     float getBandLevelDb (int band) const noexcept
     {
@@ -168,8 +169,8 @@ public:
         const float hi = fxme::jmax (b.lowHz, b.highHz);
         s.filter.setEdges (lo, hi, ! s.wasEnabled);
         s.filterR.setEdges (lo, hi, ! s.wasEnabled);
-        s.gate.setThresholds (b.gateDb, b.ceilingDb);
-        s.gate.setDetectorSeconds (BandGate::detectorSecondsFor (lo));
+        s.dynamics.setThresholds (b.gateDb, b.ceilingDb);
+        s.dynamics.setDetectorSeconds (BandDynamicsProcessor::detectorSecondsFor (lo));
         updateGainTargets (index);
     }
 
@@ -192,6 +193,15 @@ public:
 
     bool isApplyingPan() const noexcept          { return applyPan; }
 
+    /** One band's dynamics around its two lines (see fxme::BandDynamics):
+        with a compressor ratio on the ceiling, a classic multiband
+        compressor. Per sample. */
+    void setBandDynamics (int index, const BandDynamics& d) noexcept
+    {
+        if (fxme::isPositiveAndBelow (index, numBands))
+            state[(size_t) index].dynamics.setDynamics (d);
+    }
+
     /** Attack and release of every band's gate (defaults 5 ms and 80 ms).
         Applied per sample, so any attack is meaningful. */
     void setGateTimes (float attackSeconds, float releaseSeconds) noexcept
@@ -199,14 +209,14 @@ public:
         gateAttackSeconds  = fxme::jmax (0.0f, attackSeconds);
         gateReleaseSeconds = fxme::jmax (0.0f, releaseSeconds);
         for (auto& s : state)
-            s.gate.setTimes (gateAttackSeconds, gateReleaseSeconds);
+            s.dynamics.setTimes (gateAttackSeconds, gateReleaseSeconds);
     }
 
     /** Knee of every band's gate and ceiling, in dB. */
     void setGateKnee (float kneeDb) noexcept
     {
         for (auto& s : state)
-            s.gate.setKnee (kneeDb);
+            s.dynamics.setKnee (kneeDb);
     }
 
     /** Glide applied to gain and pan changes, in seconds (default 20 ms). */
@@ -272,7 +282,7 @@ private:
                     s.wasEnabled = false;
                     s.filter.reset();
                     s.filterR.reset();
-                    s.gate.reset();
+                    s.dynamics.reset();
                 }
                 for (int i = 0; i < numSamples && (s.gainL.isSmoothing() || s.gainR.isSmoothing()); ++i)
                 {
@@ -302,10 +312,10 @@ private:
             else
                 renderMonoBand (s, left, right, numSamples);
 
-            openness[(size_t) b].store (s.gate.getGain(), std::memory_order_relaxed);
-            levels[(size_t) b].store (s.gate.getLevelDb(), std::memory_order_relaxed);
+            openness[(size_t) b].store (s.dynamics.getGain(), std::memory_order_relaxed);
+            levels[(size_t) b].store (s.dynamics.getLevelDb(), std::memory_order_relaxed);
 
-            const float peak = s.gate.takePeakLevelDb();
+            const float peak = s.dynamics.takePeakLevelDb();
             if (peak > peaks[(size_t) b].load (std::memory_order_relaxed))
                 peaks[(size_t) b].store (peak, std::memory_order_relaxed);
         }
@@ -316,7 +326,7 @@ private:
     template <typename State>
     static void renderMonoBand (State& s, float* left, float* right, int numSamples) noexcept
     {
-        s.gate.process (left, numSamples);
+        s.dynamics.process (left, numSamples);
 
         if (s.gainL.isSmoothing() || s.gainR.isSmoothing())
         {
@@ -350,7 +360,7 @@ private:
 
         for (int i = 0; i < numSamples; ++i)
             detector[(size_t) i] = 0.5f * (left[i] + right[i]);
-        s.gate.processLinked (detector.data(), left, right, numSamples);
+        s.dynamics.processLinked (detector.data(), left, right, numSamples);
 
         for (int i = 0; i < numSamples; ++i)
         {
@@ -362,7 +372,7 @@ private:
     struct BandState
     {
         EdgeBandPass filter, filterR;    // filterR only with stereo input
-        BandGate gate;
+        BandDynamicsProcessor dynamics;
         bool wasEnabled = false;
         SmoothedValue<float> gainL { 0.0f }, gainR { 0.0f };
     };

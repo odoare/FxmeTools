@@ -11,6 +11,42 @@ project after a break.
 
 ---
 
+## `fxme::BandGate` renamed `fxme::BandDynamicsProcessor` (2026-09-29)
+
+**Breaking, rename only**: `core/FxmeTools/dsp/BandGate.h` is now
+`BandDynamicsProcessor.h` and the class `fxme::BandDynamicsProcessor`, same
+API. It compresses and expands as well as gating, so the old name misled.
+Entries below keep the old name, as it was then. Consumers: only Dede, which
+reaches it through `FilterBankSplitter` and needs no change.
+
+---
+
+## Band dynamics: expander and compressor around the gate and ceiling (2026-09-29)
+
+Additive, **no consumer action**: the defaults are the previous gate and
+ceiling, and the global setters still work.
+
+- `core/FxmeTools/dsp/BandDynamics.h` (new, in the umbrella):
+  `fxme::BandDynamics` (gate: ratio, range, knee, attack, release; ceiling:
+  cut or compressor ratio, knee, attack, release) and `fxme::DynamicsCurve`
+  (the static gain of each line for a squared level).
+- `SpectralBandSplitter::setBandDynamics (index, dynamics)`: per band, applied
+  bin by bin (a spectral expander / compressor). Each bin now has two smoothed
+  gains, one per line, with their own time constants; with only one line in
+  use the result is as before. `setGateKnee` and `setGateTimes` now set both
+  lines of every band (and the defaults of bands prepared later).
+- `FilterBankSplitter::setBandDynamics (index, dynamics)` and
+  `BandGate::setDynamics (dynamics)`: on the band's level, per sample (a
+  multiband expander / compressor). `setKnee` / `setTimes` set both lines.
+- `BandGate` starting to gate with only a ceiling now starts open (the
+  ceiling's gain at 1) rather than closed.
+- The ceiling's attack is how fast it pulls its gain down, its release how
+  fast it lets it back up (the gate's are the other way round: opening is
+  its attack). A first version had the ceiling's swapped.
+- Pinned in `core/tests/CoreDynamicsTests.cpp`.
+
+---
+
 ## `SpectralBandSplitter`: touching bands rebuild the input exactly (2026-09-29)
 
 **Visible, no consumer action** (Dede is the only consumer). Bands whose
