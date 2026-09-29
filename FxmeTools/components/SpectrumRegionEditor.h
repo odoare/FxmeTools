@@ -122,6 +122,20 @@ public:
         not moving a whole region. */
     void setEdgeSnapPixels (float pixels) noexcept { edgeSnapPx = juce::jmax (0.0f, pixels); }
 
+    /** Shows each region's current level, as a translucent column from the
+        bottom of its rectangle up to a solid line at that level, fed with
+        setRegionLevel(). For a consumer whose gate compares something other
+        than the trace (a filter bank's band level, which sums every bin of
+        the band and so reads higher than the trace for anything noise-like):
+        the gate and ceiling lines are then set against the level they are
+        really compared to. Off by default. */
+    void setLevelMarkersEnabled (bool shouldBeEnabled);
+    bool areLevelMarkersEnabled() const noexcept { return levelMarkers; }
+
+    /** One region's level for its marker, in the plot's dB. Cheap: it only
+        repaints when the marker would move on screen by a pixel or so. */
+    void setRegionLevel (int index, float db);
+
     int  getSelectedRegion() const noexcept      { return selected; }
     void setSelectedRegion (int index);
 
@@ -210,7 +224,12 @@ private:
     static juce::String panText (float pan);
 
     std::vector<Region> regions;
+    std::vector<float> regionLevels;     // dB, for the level markers
+    bool levelMarkers = false;
     int selected = -1;
+
+    /** The level marker's column (fill) or its top line. */
+    void drawLevelMarker (juce::Graphics&, int index, juce::Rectangle<float> plot, bool fill) const;
 
     // Live gesture state. baseGesture records that the press was handed to
     // SpectrumDisplay, so only those drags are forwarded on: forwarding one the

@@ -25,6 +25,7 @@ SpectrumRegionEditor::SpectrumRegionEditor()
 void SpectrumRegionEditor::setNumRegions (int numRegions)
 {
     regions.assign ((size_t) juce::jmax (0, numRegions), {});
+    regionLevels.assign (regions.size(), -1000.0f);
     selected = -1;
     repaint();
 }
@@ -39,6 +40,50 @@ void SpectrumRegionEditor::setRegion (int index, const Region& region)
         selected = -1;
 
     repaint();
+}
+
+void SpectrumRegionEditor::setLevelMarkersEnabled (bool shouldBeEnabled)
+{
+    if (levelMarkers == shouldBeEnabled)
+        return;
+    levelMarkers = shouldBeEnabled;
+    repaint();
+}
+
+void SpectrumRegionEditor::setRegionLevel (int index, float db)
+{
+    if (! juce::isPositiveAndBelow (index, (int) regionLevels.size()))
+        return;
+
+    auto& level = regionLevels[(size_t) index];
+    if (std::abs (level - db) < 0.25f)
+        return;
+
+    level = db;
+    if (levelMarkers && regions[(size_t) index].active)
+        repaint();
+}
+
+void SpectrumRegionEditor::drawLevelMarker (juce::Graphics& g, int index,
+                                            juce::Rectangle<float> plot, bool fill) const
+{
+    const auto& r = regions[(size_t) index];
+    const auto b = regionBounds (r, plot);
+    const float y = dbToY (regionLevels[(size_t) index], plot);
+    if (y >= b.getBottom())
+        return;
+
+    const float top = juce::jmax (b.getY(), y);
+    if (fill)
+    {
+        g.setColour (r.colour.withAlpha (0.14f));
+        g.fillRect (b.withTop (top));
+    }
+    else if (y >= b.getY())
+    {
+        g.setColour (r.colour.withAlpha (0.85f));
+        g.fillRect (juce::Rectangle<float> (b.getX(), y - 1.0f, b.getWidth(), 2.0f));
+    }
 }
 
 SpectrumRegionEditor::Region SpectrumRegionEditor::getRegion (int index) const
@@ -763,7 +808,11 @@ void SpectrumRegionEditor::paintBehindTraces (juce::Graphics& g, juce::Rectangle
 {
     for (int i = 0; i < (int) regions.size(); ++i)
         if (regions[(size_t) i].active)
+        {
             drawRegion (g, regions[(size_t) i], plot, i == selected, true, Handle::none);
+            if (levelMarkers)
+                drawLevelMarker (g, i, plot, true);
+        }
 }
 
 void SpectrumRegionEditor::paintOverTraces (juce::Graphics& g, juce::Rectangle<float> plot)
@@ -776,6 +825,12 @@ void SpectrumRegionEditor::paintOverTraces (juce::Graphics& g, juce::Rectangle<f
         if (i != selected && regions[(size_t) i].active
             && emphasisFor (i) != Handle::none && emphasisFor (i) != Handle::body)
             emphasisedOther = i;
+
+    // Level markers under every region's lines, so they never hide a handle.
+    if (levelMarkers)
+        for (int i = 0; i < (int) regions.size(); ++i)
+            if (regions[(size_t) i].active)
+                drawLevelMarker (g, i, plot, false);
 
     for (int i = 0; i < (int) regions.size(); ++i)
         if (regions[(size_t) i].active && i != selected && i != emphasisedOther)

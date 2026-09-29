@@ -88,6 +88,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/SpectralBandEffects.h>
 #include <FxmeTools/dsp/EdgeBandPass.h>
 #include <FxmeTools/dsp/LevelMatcher.h>
+#include <FxmeTools/dsp/BandGate.h>
+#include <FxmeTools/dsp/FilterBankSplitter.h>
 #include <FxmeTools/dsp/RmsMeter.h>
 #include <FxmeTools/dsp/VuMeter.h>
 #include <FxmeTools/dsp/SignalGenerator.h>

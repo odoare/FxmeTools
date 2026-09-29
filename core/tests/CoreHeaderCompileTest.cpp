@@ -105,6 +105,12 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/EdgeBandPass.h>)
  #include <FxmeTools/dsp/EdgeBandPass.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/BandGate.h>)
+ #include <FxmeTools/dsp/BandGate.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/FilterBankSplitter.h>)
+ #include <FxmeTools/dsp/FilterBankSplitter.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/LevelMatcher.h>)
  #include <FxmeTools/dsp/LevelMatcher.h>
 #endif

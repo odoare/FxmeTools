@@ -11,6 +11,35 @@ project after a break.
 
 ---
 
+## New: `fxme::BandGate` and `fxme::FilterBankSplitter`; `SpectrumRegionEditor` level markers (2026-09-29)
+
+Additive, **no consumer action**.
+
+- `core/FxmeTools/dsp/BandGate.h`: a gate and a ceiling on a signal's level,
+  per sample, with the spectral splitter's knee (smoothstep over dB) and
+  attack/release, and its open/off conventions (`openGateDb` -150,
+  `offCeilingDb` 150). Levels read like a `SpectrumAnalyzer` trace for a
+  steady tone (a sine of amplitude A reads A/2; level squared = mean square /
+  2). `detectorSecondsFor (lowHz)` gives a detector time of about one period
+  of the band's lowest frequency, 3 to 50 ms.
+- `core/FxmeTools/dsp/FilterBankSplitter.h`: the zero-latency twin of
+  `SpectralBandSplitter`, same `SpectralBand` settings and the same outward
+  API (`setBand`, `setApplyPan`, `setGateTimes`, `setGateKnee`, `process`,
+  `getBandOutput`, `getGateOpenness`, `getLatencySamples` = 0), plus
+  `getBandLevelDb (band)`. Per band: `EdgeBandPass`, `BandGate`, gain (and
+  pan). No spectral effects. Cost with 8 bands is about that of the spectral
+  splitter at 2048 points (about 1 % of a core); run it with denormals
+  flushed (a plugin's `ScopedNoDenormals`), or the filters' tails get very
+  slow.
+- `SpectrumRegionEditor::setLevelMarkersEnabled (bool)` (off by default) and
+  `setRegionLevel (index, db)`: a translucent column from the bottom of each
+  region up to a solid line at the level given. For a consumer whose gate
+  compares something other than the trace.
+- Both core classes in the module umbrella. Pinned in
+  `core/tests/CoreFilterBankTests.cpp`.
+
+---
+
 ## New: `fxme::LevelMatcher`, automatic gain compensation (2026-09-28)
 
 Additive, **no consumer action**. `core/FxmeTools/dsp/LevelMatcher.h`, in the

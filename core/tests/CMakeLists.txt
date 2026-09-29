@@ -38,6 +38,11 @@ add_executable(FxmeCoreLevelMatcherTests CoreLevelMatcherTests.cpp)
 target_link_libraries(FxmeCoreLevelMatcherTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreLevelMatcherTests COMMAND FxmeCoreLevelMatcherTests)
 
+# ── 6c. The live engine: filter bank and band gate ────────────────────────
+add_executable(FxmeCoreFilterBankTests CoreFilterBankTests.cpp)
+target_link_libraries(FxmeCoreFilterBankTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreFilterBankTests COMMAND FxmeCoreFilterBankTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -70,7 +75,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
