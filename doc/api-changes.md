@@ -11,6 +11,33 @@ project after a break.
 
 ---
 
+## New: `fxme::SplicePitchShifter`; `StereoCrossDelay` loop insert (2026-09-29)
+
+Additive, **no consumer action**.
+
+- `core/FxmeTools/dsp/SplicePitchShifter.h`: a time-domain pitch shifter for
+  musical intervals (+-24 semitones), mono or stereo (one set of splices for
+  both channels). Each splice is placed by normalised cross-correlation
+  (coarse then fine search, +-8 ms) and crossfaded over 10 ms, so a tone
+  stays in phase across it. `prepare (sampleRate, numChannels, windowMs = 40)`,
+  `setPitchSemitones` / `setPitchRatio` (glides over 20 ms),
+  `processFrame (float*)`, `processSample`, `getLatencySamples()` (half a
+  window plus 4 samples). At 0 semitones it is an exact delay. About 0.3 % of
+  a core per stereo instance at 0 semitones, 0.5 % at +-12, 1 % at +24.
+  `fxme::PitchShifter` is unchanged; it stays the right tool for small
+  detunes, but at an octave it turns a sine into a comb of lines around the
+  target (measured: the target itself up to 67 dB under the strongest line),
+  which is why this class exists.
+- `StereoCrossDelay::processSample (inL, inR, outL, outR, insert)` and
+  `process (..., numSamples, insert)`: template overloads taking a callable
+  `insert (float& l, float& r)` applied to the pair entering the lines (input
+  plus feedback): it acts on the first echo and on every repeat. The existing
+  overloads are unchanged (they call these with an empty insert; output
+  identical, sample for sample).
+- Pinned in `core/tests/CoreDelayInsertTests.cpp`.
+
+---
+
 ## Max-hold: `SpectrumDisplay::setHoldSeconds`, held region levels, band peaks (2026-09-29)
 
 Additive, **no consumer action**: the hold is off by default, and nothing

@@ -43,6 +43,11 @@ add_executable(FxmeCoreFilterBankTests CoreFilterBankTests.cpp)
 target_link_libraries(FxmeCoreFilterBankTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreFilterBankTests COMMAND FxmeCoreFilterBankTests)
 
+# ── 6d. Inserts in a delay loop, and the pitch shifter for them ──────────
+add_executable(FxmeCoreDelayInsertTests CoreDelayInsertTests.cpp)
+target_link_libraries(FxmeCoreDelayInsertTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreDelayInsertTests COMMAND FxmeCoreDelayInsertTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -75,7 +80,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

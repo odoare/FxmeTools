@@ -98,6 +98,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/UnisonSpread.h>
 #include <FxmeTools/dsp/CracksGenerator.h>
 #include <FxmeTools/dsp/PitchShifter.h>
+#include <FxmeTools/dsp/SplicePitchShifter.h>
 #include <FxmeTools/dsp/GrainLooper.h>
 #include <FxmeTools/dsp/Waveshapers.h>
 #include <FxmeTools/dsp/Saturator.h>

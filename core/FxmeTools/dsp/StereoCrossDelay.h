@@ -123,14 +123,30 @@ public:
 
     void processSample (float inL, float inR, float& outL, float& outR) noexcept
     {
+        processSample (inL, inR, outL, outR, [] (float&, float&) noexcept {});
+    }
+
+    /** One sample with an insert inside the loop: `insert (l, r)` gets the
+        pair about to be written into the lines (the input plus the fed-back
+        signal) and may change it in place. So it acts on the first echo and
+        again on every repeat: a saturator there drives each repeat harder, a
+        pitch shifter shifts each one further. The insert must be realtime
+        safe, and whatever delay it adds lengthens the loop. */
+    template <typename Insert>
+    void processSample (float inL, float inR, float& outL, float& outR, Insert&& insert) noexcept
+    {
         // The previous output is what feeds back: one sample of extra loop
         // delay against thousands in the line itself, and it keeps the matrix
         // out of the lines' own write path.
         dampStateL += dampCoef * (lastL - dampStateL);
         dampStateR += dampCoef * (lastR - dampStateR);
 
-        outL = left.processSample  (inL + fbL * dampStateL + fbX * dampStateR);
-        outR = right.processSample (inR + fbR * dampStateR + fbX * dampStateL);
+        float writeL = inL + fbL * dampStateL + fbX * dampStateR;
+        float writeR = inR + fbR * dampStateR + fbX * dampStateL;
+        insert (writeL, writeR);
+
+        outL = left.processSample  (writeL);
+        outR = right.processSample (writeR);
 
         lastL = outL;
         lastR = outR;
@@ -140,10 +156,19 @@ public:
     void process (const float* inL, const float* inR,
                   float* outL, float* outR, int numSamples) noexcept
     {
+        process (inL, inR, outL, outR, numSamples, [] (float&, float&) noexcept {});
+    }
+
+    /** Block form with a loop insert (see processSample()), called once per
+        sample, in order. */
+    template <typename Insert>
+    void process (const float* inL, const float* inR,
+                  float* outL, float* outR, int numSamples, Insert&& insert) noexcept
+    {
         for (int i = 0; i < numSamples; ++i)
         {
             float l = 0.0f, r = 0.0f;
-            processSample (inL[i], inR[i], l, r);
+            processSample (inL[i], inR[i], l, r, insert);
             outL[i] = l;
             outR[i] = r;
         }
