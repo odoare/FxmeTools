@@ -11,6 +11,25 @@ project after a break.
 
 ---
 
+## New: `fxme::LevelMatcher`, automatic gain compensation (2026-09-28)
+
+Additive, **no consumer action**. `core/FxmeTools/dsp/LevelMatcher.h`, in the
+module umbrella. `process (reference, processed)` returns `processed` at the
+RMS level of `reference`: both mean squares follow the same one-pole smoother
+(`setTimeSeconds`, default 0.2 s), the gain is the square root of their ratio,
+clamped (`setGainRangeDb`, default -24 to +60 dB), and held while either is
+silent (under -100 dB).
+
+Written for a saturator's drive: dividing the output by the drive is only
+right for small signals, and a clipping signal gets quieter as the drive
+rises (26 dB at 36 dB of drive on a -6 dBFS tone). Keep that division and put
+the matcher after it. Pinned in `core/tests/CoreLevelMatcherTests.cpp`: every
+`fxme::Saturator` model, tones at -6 and -30 dBFS, drives 0 to 48 dB, matched
+within 0.01 dB. Consumers with a drive divided back the same way (FxmeFX's
+saturation stage, if it does) may want it.
+
+---
+
 ## `SpectralBandSplitter` is cheaper per band; gate release lands on zero (2026-09-28)
 
 Same API, same output to float rounding (checked against the previous version

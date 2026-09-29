@@ -33,6 +33,11 @@ add_executable(FxmeCoreEdgeBandPassTests CoreEdgeBandPassTests.cpp)
 target_link_libraries(FxmeCoreEdgeBandPassTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreEdgeBandPassTests COMMAND FxmeCoreEdgeBandPassTests)
 
+# ── 6b. Automatic gain compensation (LevelMatcher, behind Saturator) ──────
+add_executable(FxmeCoreLevelMatcherTests CoreLevelMatcherTests.cpp)
+target_link_libraries(FxmeCoreLevelMatcherTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreLevelMatcherTests COMMAND FxmeCoreLevelMatcherTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -65,7 +70,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
