@@ -25,6 +25,12 @@
          fell under it, the band outputs exact zeros (the frame is skipped,
          not rendered as near-silence), while a band processor that sounds
          on its own, on silent input, is still heard.
+     11. Touching bands rebuild the input: bands covering 20 Hz to 20 kHz
+         between them, gates open, add up to the input delayed by one window,
+         to float rounding, with or without soft edges and at every window
+         size. Their edges fade into each other (the gains sum to one) and
+         the ends of the range reach DC and Nyquist, so nothing is left out
+         and nothing rings before a transient.
 
     The tone sits exactly on bin 64 of the 2048-point window (1500 Hz at 48
     kHz), so through the Hann window it occupies three bins only: the centre
@@ -399,6 +405,58 @@ int main()
         check (! allZero (runChanging (fullBand(), 0.0f, &constant)),
                "a processor sounding on silent input is still heard");
     }
+
+    // ---- 11. touching bands rebuild the input -------------------------------------
+    for (int taper : { 0, 2, 4 })
+        for (int analysedOrder : { 10, 11, 13 })
+        {
+            constexpr int numBands = 8, block = 256;
+            fxme::SpectralBandSplitter splitter;
+            splitter.prepare (sampleRate, block, numBands, analysedOrder);
+            splitter.setApplyPan (false);
+            splitter.setEdgeTaperBins (taper);
+            for (int b = 0; b < numBands; ++b)
+                splitter.setBand (b, { true,
+                                       20.0f * std::pow (1000.0f, (float) b / numBands),
+                                       20.0f * std::pow (1000.0f, (float) (b + 1) / numBands),
+                                       -1000.0f, 0.0f, 0.0f });
+            splitter.reset();
+
+            // A click, then noise: a transient and a full spectrum.
+            const int n = block * 256;
+            std::vector<float> in ((size_t) n, 0.0f), sum ((size_t) n, 0.0f);
+            unsigned seed = 12345u;
+            for (int i = n / 2; i < n; ++i)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                in[(size_t) i] = 0.2f * ((float) (seed >> 8) / 16777216.0f - 0.5f);
+            }
+            in[(size_t) (n / 4)] = 1.0f;
+
+            for (int start = 0; start < n; start += block)
+            {
+                splitter.process (in.data() + start, block);
+                for (int b = 0; b < numBands; ++b)
+                    for (int i = 0; i < block; ++i)
+                        sum[(size_t) (start + i)] += splitter.getBandOutput (b, 0)[i];
+            }
+
+            const int latency = splitter.getLatencySamples();
+            double err = 0.0, ref = 0.0;
+            for (int i = latency; i < n; ++i)
+            {
+                const double d = (double) sum[(size_t) i] - in[(size_t) (i - latency)];
+                err += d * d;
+                ref += (double) in[(size_t) (i - latency)] * in[(size_t) (i - latency)];
+            }
+            const double db = 10.0 * std::log10 (std::max (err, 1.0e-30) / ref);
+
+            char what[160];
+            std::snprintf (what, sizeof what,
+                           "8 touching bands, taper %d, %d points: their sum is the input (error %.1f dB)",
+                           taper, 1 << analysedOrder, db);
+            check (db < -100.0, what);
+        }
 
     std::printf ("\n%s (%d failures)\n",
                  failures ? "TESTS FAILED" : "ALL TESTS PASSED", failures);

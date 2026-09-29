@@ -153,6 +153,14 @@ public:
     static constexpr int minFftOrder = 8;    // 256
     static constexpr int maxFftOrder = 14;   // 16384
 
+    /** A band edge at or below fullRangeLowHz reaches down to DC, and one at or
+        above fullRangeHighHz up to Nyquist: the ends of the audible range mean
+        "no limit", as for fxme::EdgeBandPass. So bands covering 20 Hz to
+        20 kHz between them cover the whole spectrum, and a band touching
+        either end cuts nothing there. */
+    static constexpr float fullRangeLowHz  = 20.0f;
+    static constexpr float fullRangeHighHz = 20000.0f;
+
     /** A gate at or below this is treated as fully open, and the gate stage is
         skipped entirely for that band. */
     static constexpr float openGateDb = -150.0f;
@@ -353,9 +361,13 @@ public:
             updateThresholds (b);
     }
 
-    /** Width in bins of the raised-cosine taper at each band border (0 gives a
-        rectangular mask). A couple of bins is enough to take the edge off the
-        ringing a hard mask produces; the default is 2. */
+    /** Width in bins of the raised-cosine crossfade at each band border (0
+        gives a rectangular mask). It is centred on the border, half outside
+        the band and half inside, so two bands sharing a border fade into each
+        other with gains summing to exactly 1: touching bands with their gates
+        open rebuild the input exactly, as if it had not been split. A couple
+        of bins is enough to take the edge off the ringing a hard mask
+        produces on a band on its own; the default is 2. */
     void setEdgeTaperBins (int bins) noexcept
     {
         edgeTaper = fxme::jlimit (0, 64, bins);
@@ -668,10 +680,17 @@ private:
 
             auto& s = state[(size_t) b];
 
-            // The bins of the band, the taper skirt included (it lies inside).
-            // Empty (kLo > kHi) when the band is narrower than one bin.
-            const int kLo = fxme::jlimit (0, numBins - 1, (int) std::ceil  (cfg.lowHz  / binHz));
-            const int kHi = fxme::jlimit (0, numBins - 1, (int) std::floor (cfg.highHz / binHz));
+            // The band's edges in bins, and the bins it touches: the crossfade
+            // at each edge reaches half its width outside. A hard edge takes
+            // the bins from its lower edge up to, not including, its upper one,
+            // so two bands sharing an edge never both take the bin on it.
+            // Empty (kLo > kHi) when the band falls between two bins.
+            const Edges e = edgesOf (cfg, binHz);
+            const int kLo = fxme::jlimit (0, numBins - 1, e.lowOpen ? 0
+                                                        : (int) std::ceil (e.low - e.half));
+            const int kHi = fxme::jlimit (-1, numBins - 1, e.highOpen ? numBins - 1
+                                                         : e.half > 0.0f ? (int) std::floor (e.high + e.half)
+                                                                         : (int) std::ceil (e.high) - 1);
             moveBandBins (s, kLo, kHi);
 
             float* const f = frame.data();
@@ -697,7 +716,7 @@ private:
             {
                 const float re = detect[2 * k];
                 const float im = detect[2 * k + 1];
-                float gain = bandMask (k, kLo, kHi);
+                float gain = bandMask (k, e);
                 auto& g = s.gateGain[(size_t) k];
 
                 if (levelGated)
@@ -804,20 +823,47 @@ private:
         s.kHi = kHi;
     }
 
-    /** 1 inside the band, 0 outside, raised cosine across the taper skirt. */
-    float bandMask (int k, int kLo, int kHi) const noexcept
+    /** A band's edges in bins (fractional), the crossfade's half-width, and
+        whether either edge is open (at the end of the audible range). */
+    struct Edges
     {
-        if (k < kLo || k > kHi)
-            return 0.0f;
-        if (edgeTaper <= 0)
+        float low = 0.0f, high = 0.0f, half = 0.0f;
+        bool lowOpen = false, highOpen = false;
+    };
+
+    Edges edgesOf (const SpectralBand& b, float binHz) const noexcept
+    {
+        Edges e;
+        e.low      = b.lowHz  / binHz;
+        e.high     = b.highHz / binHz;
+        e.half     = 0.5f * (float) edgeTaper;
+        e.lowOpen  = b.lowHz  <= fullRangeLowHz;
+        e.highOpen = b.highHz >= fullRangeHighHz;
+        return e;
+    }
+
+    /** The band's gain at bin k: the step of its lower edge minus the step
+        of its upper one, each step a raised cosine rising from 0 to 1 across
+        its edge (centred on it), an open end being a step already at 1 (low)
+        or never reached (high). Written as a difference, the gains of bands
+        sharing edges add up to exactly 1 whatever their widths, even for a
+        band narrower than its own crossfades. Only called for bins between
+        kLo and kHi. */
+    static float bandMask (int k, const Edges& e) noexcept
+    {
+        if (e.half <= 0.0f)
             return 1.0f;
 
-        const int d = fxme::jmin (k - kLo, kHi - k);
-        if (d >= edgeTaper)
-            return 1.0f;
+        const float x = (float) k;
+        const auto step = [&e, x] (float edge) noexcept
+        {
+            const float t = fxme::jlimit (0.0f, 1.0f, (x - (edge - e.half)) / (2.0f * e.half));
+            return 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::pi * t);
+        };
 
-        const float x = (float) (d + 1) / (float) (edgeTaper + 1);
-        return 0.5f - 0.5f * std::cos (fxme::MathConstants<float>::pi * x);
+        const float below = e.lowOpen  ? 1.0f : step (e.low);
+        const float above = e.highOpen ? 0.0f : step (e.high);
+        return fxme::jmax (0.0f, below - above);
     }
 
     static constexpr float olaNorm = 1.0f / 1.5f;   // sum of Hann^2 at 75% overlap

@@ -11,6 +11,35 @@ project after a break.
 
 ---
 
+## `SpectralBandSplitter`: touching bands rebuild the input exactly (2026-09-29)
+
+**Visible, no consumer action** (Dede is the only consumer). Bands whose
+edges meet, with their gates open, now add up to the input delayed by one
+window, to float rounding (core test group 11 in `CoreSplitterTests`:
+-137 dB, any window size, any taper). Before, they did not: each band faded
+its outermost bins *inside* itself, so two neighbours left a notch at their
+shared edge, and the ends of the range cut at 20 Hz and 20 kHz. Filtering in
+the STFT is zero-phase within a window, so those notches rang as much before
+a transient as after it (measured on a click: -24 dB of pre-echo, spread over
+the window): attacks sounded blurred.
+
+- The crossfade at an edge (`setEdgeTaperBins`, default 2) is now centred on
+  it, half outside the band, and a band's gain is the step of its lower edge
+  minus the step of its upper one, so neighbours sum to exactly 1 at every
+  bin, even bands narrower than their own crossfades. A band therefore
+  touches `taper / 2` bins beyond each edge.
+- A hard edge (taper 0) takes the bins from its lower edge up to, not
+  including, its upper one, so a bin exactly on a shared edge belongs to one
+  band only (it used to be taken by both).
+- An edge at or below `fullRangeLowHz` (20 Hz) reaches DC, one at or above
+  `fullRangeHighHz` (20 kHz) reaches Nyquist, as `EdgeBandPass` already did.
+
+What still smears a transient is any actual change: a gate or ceiling closing
+bins, or a spectral effect. That is inherent to per-bin processing in a
+window, and shrinks with the window size.
+
+---
+
 ## Stereo input for the band splitters, with mono detection (2026-09-29)
 
 Additive, **no consumer action**: every new argument defaults to the mono
