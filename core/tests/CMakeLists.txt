@@ -58,6 +58,11 @@ add_executable(FxmeCoreDynamicsTests CoreDynamicsTests.cpp)
 target_link_libraries(FxmeCoreDynamicsTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreDynamicsTests COMMAND FxmeCoreDynamicsTests)
 
+# ── 6g. Frequency shifter (Hilbert pair, single sideband) ───────────────────
+add_executable(FxmeCoreFrequencyShifterTests CoreFrequencyShifterTests.cpp)
+target_link_libraries(FxmeCoreFrequencyShifterTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreFrequencyShifterTests COMMAND FxmeCoreFrequencyShifterTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -90,7 +95,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

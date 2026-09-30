@@ -5,13 +5,17 @@
     fxme::SpectralBandEffects inside a fxme::SpectralBandSplitter, on tones:
 
       1. Installed with every effect off, it changes nothing, sample for
-         sample.
+         sample, even with the analysis kept running.
       2. Pitch lands a tone where the ratio says, for non-integer intervals
          too, up and down, at about the same level.
       3. A tonal freeze holds the tone at its pitch and level after the input
          stops, and ignores a new input.
       4. A wash freeze holds the level, and is reproducible exactly.
       5. Blur leaves a steady tone alone, and keeps a stopped tone sounding.
+      6. Freeze width, in stereo: none leaves identical channels identical;
+         full width decorrelates them (a tonal freeze keeping its pitch and
+         level on each side, a wash more so), reproducibly.
+      7. A retriggered freeze captures the new input without a gap.
 
     Frequencies are measured from interpolated upward zero crossings over a
     long window, which is exact enough for a single dominant partial.
@@ -25,6 +29,7 @@
 
 #include <FxmeTools/dsp/SpectralBandEffects.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -102,6 +107,62 @@ namespace
         return out;
     }
 
+    /** run() in stereo, the same input on both sides: left then right. */
+    std::vector<float> runStereo (const Signal& input, const Schedule& schedule,
+                                  double seconds, std::vector<float>& right,
+                                  const std::function<void (fxme::SpectralBandEffects&, int)>& atBlock = {})
+    {
+        fxme::SpectralBandSplitter splitter;
+        fxme::SpectralBandEffects effects;
+
+        splitter.prepare (sampleRate, blockSize, 1, order, 2);
+        splitter.setApplyPan (false);
+        effects.prepare (splitter.getFftSize(), splitter.getHopSize(), sampleRate, 1);
+        splitter.setBandProcessor (&effects);
+
+        fxme::SpectralBand band;
+        band.enabled = true;
+        band.lowHz = 20.0f;
+        band.highHz = 20000.0f;
+        splitter.setBand (0, band);
+
+        const int total = (int) (seconds * sampleRate);
+        std::vector<float> in ((size_t) blockSize), left;
+        right.clear();
+
+        for (int start = 0; start < total; start += blockSize)
+        {
+            effects.setBand (0, schedule (start));
+            if (atBlock)
+                atBlock (effects, start);
+            for (int i = 0; i < blockSize; ++i)
+                in[(size_t) i] = input (start + i);
+
+            splitter.process (in.data(), in.data(), blockSize);
+            const float* l = splitter.getBandOutput (0, 0);
+            const float* r = splitter.getBandOutput (0, 1);
+            left.insert (left.end(), l, l + blockSize);
+            right.insert (right.end(), r, r + blockSize);
+        }
+
+        return left;
+    }
+
+    /** Normalised correlation of two signals over [fromSec, toSec). */
+    double correlation (const std::vector<float>& a, const std::vector<float>& b,
+                        double fromSec, double toSec)
+    {
+        const auto from = (size_t) (fromSec * sampleRate), to = (size_t) (toSec * sampleRate);
+        double ab = 0.0, aa = 0.0, bb = 0.0;
+        for (size_t i = from; i < to && i < a.size() && i < b.size(); ++i)
+        {
+            ab += (double) a[i] * b[i];
+            aa += (double) a[i] * a[i];
+            bb += (double) b[i] * b[i];
+        }
+        return aa > 0.0 && bb > 0.0 ? ab / std::sqrt (aa * bb) : 0.0;
+    }
+
     Schedule constant (Settings s)       { return [s] (int) { return s; }; }
 
     double rms (const std::vector<float>& x, double fromSec, double toSec)
@@ -156,6 +217,12 @@ int main()
     // ---- 1. off is off -----------------------------------------------------
     check (live == run (tone, constant ({}), 1.0, false),
            "installed with every effect off, the output is unchanged sample for sample");
+    {
+        Settings tracking;
+        tracking.keepTracking = true;
+        check (live == run (tone, constant (tracking), 1.0),
+               "keeping the analysis running alone changes nothing either");
+    }
 
     // ---- 2. pitch ------------------------------------------------------------
     // 1500 Hz sits exactly on a bin; 1000 Hz falls between two (bin 42.7), so
@@ -245,6 +312,104 @@ int main()
         const auto tail = run (sine (toneHz, stopAt), constant (blur), 1.2);
         check (rms (dry, from, to) < 0.01 * liveRms, "without blur, a stopped tone is gone");
         check (rms (tail, from, to) > 0.3 * liveRms, "with a 500 ms blur, it is still sounding");
+    }
+
+    // ---- 6. freeze width --------------------------------------------------
+    {
+        const int freezeAt = (int) (0.4 * sampleRate);
+        const int stopAt   = (int) (0.6 * sampleRate);
+
+        // A chord of five partials between bins, so the correlation is an
+        // average over several random spreads rather than one.
+        const Signal chord = [=] (int n)
+        {
+            if (n >= stopAt)
+                return 0.0f;
+            float x = 0.0f;
+            for (double hz : { 310.0, 587.0, 1033.0, 1571.0, 2219.0 })
+                x += 0.1f * (float) std::sin (2.0 * pi * hz * n / sampleRate);
+            return x;
+        };
+
+        const auto frozenWith = [=] (float width, fxme::SpectralBandEffects::FreezeMode mode)
+        {
+            Settings s;
+            s.freezeOn = true;
+            s.freezeMode = mode;
+            s.freezeWidth = width;
+            return Schedule ([=] (int n) { return n >= freezeAt ? s : Settings{}; });
+        };
+
+        using Mode = fxme::SpectralBandEffects::FreezeMode;
+        std::vector<float> r0, r1, rw, rw2, rt;
+        const auto l0 = runStereo (chord, frozenWith (0.0f, Mode::tonal), 1.6, r0);
+        const auto l1 = runStereo (chord, frozenWith (1.0f, Mode::tonal), 1.6, r1);
+        const auto lw = runStereo (chord, frozenWith (1.0f, Mode::wash),  1.6, rw);
+
+        char what[160];
+        std::snprintf (what, sizeof what, "no width: a frozen mono image stays mono (correlation %.3f)",
+                       correlation (l0, r0, 1.0, 1.6));
+        check (correlation (l0, r0, 1.0, 1.6) > 0.999, what);
+
+        std::snprintf (what, sizeof what, "full width: a tonal freeze decorrelates the channels (%.3f)",
+                       correlation (l1, r1, 1.0, 1.6));
+        check (correlation (l1, r1, 1.0, 1.6) < 0.7, what);
+
+        std::snprintf (what, sizeof what, "full width: each side keeps the tonal freeze's level (%.2f / %.2f dB)",
+                       20.0 * std::log10 (rms (l1, 1.0, 1.6) / rms (l0, 1.0, 1.6)),
+                       20.0 * std::log10 (rms (r1, 1.0, 1.6) / rms (r0, 1.0, 1.6)));
+        check (levelClose (rms (l1, 1.0, 1.6), rms (l0, 1.0, 1.6), 1.0)
+                   && levelClose (rms (r1, 1.0, 1.6), rms (r0, 1.0, 1.6), 1.0), what);
+
+        std::vector<float> rTone;
+        const auto lTone = runStereo (sine (1000.0, stopAt), frozenWith (1.0f, Mode::tonal), 1.6, rTone);
+        check (within (frequency (lTone, 1.0, 1.6), 1000.0, 0.005)
+                   && within (frequency (rTone, 1.0, 1.6), 1000.0, 0.005),
+               "full width: a tonal freeze holds the pitch on both sides");
+
+        std::snprintf (what, sizeof what, "full width: a wash decorrelates the channels (%.3f)",
+                       correlation (lw, rw, 1.0, 1.6));
+        check (std::abs (correlation (lw, rw, 1.0, 1.6)) < 0.3, what);
+
+        const auto lw2 = runStereo (chord, frozenWith (1.0f, Mode::wash), 1.6, rw2);
+        check (lw == lw2 && rw == rw2, "a wide wash is reproducible sample for sample");
+    }
+
+    // ---- 7. retrigger --------------------------------------------------------
+    {
+        // Frozen from 0.4 s on a 1500 Hz tone; the input moves to 1000 Hz at
+        // 0.6 s and the freeze is retriggered at 0.8 s: afterwards it holds
+        // 1000 Hz, at the level, and was never silent in between.
+        const int freezeAt  = (int) (0.4 * sampleRate);
+        const int changeAt  = (int) (0.6 * sampleRate);
+        const int retrigAt  = (int) (0.8 * sampleRate);
+
+        Settings frozen;
+        frozen.freezeOn = true;
+        const Schedule schedule = [=] (int n) { return n >= freezeAt ? frozen : Settings{}; };
+
+        std::vector<float> right;
+        const auto out = runStereo (sine (toneHz, changeAt, 1000.0), schedule, 1.6, right,
+                                    [=] (fxme::SpectralBandEffects& fx, int start)
+                                    {
+                                        if (start <= retrigAt && retrigAt < start + blockSize)
+                                            fx.retriggerFreeze (0);
+                                    });
+
+        check (within (frequency (out, 0.65, 0.8), toneHz, 0.005),
+               "before the retrigger, the freeze holds the first capture");
+        check (within (frequency (out, 1.0, 1.6), 1000.0, 0.005),
+               "after the retrigger, it holds the new input");
+        check (levelClose (rms (out, 1.0, 1.6), liveRms, 3.0),
+               "after the retrigger, the level holds");
+
+        char what[160];
+        double quietest = 1.0;
+        for (double t = 0.75; t < 1.0; t += 0.005)
+            quietest = std::min (quietest, rms (out, t, t + 0.005));
+        std::snprintf (what, sizeof what, "no gap around the retrigger (quietest 5 ms: %.1f dB)",
+                       20.0 * std::log10 (quietest / liveRms));
+        check (quietest > 0.25 * liveRms, what);
     }
 
     std::printf ("\n%s (%d failures)\n",

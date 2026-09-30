@@ -21,7 +21,13 @@
         frequencies, so held notes stay notes) and wash (a fresh random phase
         per bin and per hop, paulstretch-style, a smooth static texture; the
         phase stream is a pure function of band, frame and bin through
-        fxme::detrand, so a freeze reproduces exactly).
+        fxme::detrand, so a freeze reproduces exactly). In stereo, a width
+        spreads the frozen channels apart: each bin's left and right phases
+        move away from each other by a deterministic random amount, up to
+        +-pi/2 each at full width (tonal: a fixed amount per partial, so its
+        lobe stays whole, a static decorrelation; wash: a fresh one per bin
+        and per hop, independent channels at full width). retriggerFreeze() recaptures on the next frame without
+        breaking the phase continuity, for rhythmic freezes.
       - Blur: each bin's magnitude is smoothed across hops with a one-pole of
         a given time constant, on top of the tracked frequencies: a reverb-like
         tail confined to the band rather than a smear.
@@ -88,6 +94,12 @@ public:
 
         bool       freezeOn = false;
         FreezeMode freezeMode = FreezeMode::tonal;
+        float      freezeWidth = 0.0f;   // 0..1, stereo only
+
+        /** Keeps the analysis running while the band is idle, so a freeze
+            switched on later (a gated, rhythmic one) captures on its very
+            first frame, in tune, instead of passing one hop through. */
+        bool keepTracking = false;
 
         bool  blurOn = false;
         float blurSeconds = 0.3f;
@@ -133,6 +145,7 @@ public:
         outMagnitudeR.assign (bins, 0.0f);
         outDeltaL.assign (bins, 0.0f);
         outDeltaR.assign (bins, 0.0f);
+        outSpread.assign (bins, 0.0f);
         outPhase.assign (bins, 0.0f);
         strongest.assign (bins, 0.0f);
         peaks.assign (bins, 0);
@@ -187,6 +200,15 @@ public:
         s.blurPrimed = false;
     }
 
+    /** Makes a band that is frozen capture again on its next frame, as if
+        its freeze had just been switched on, but with its synthesis phases
+        carrying on (no discontinuity at the peaks). Realtime safe. */
+    void retriggerFreeze (int band) noexcept
+    {
+        if (band >= 0 && band < numBands)
+            state[(size_t) band].frozen = false;
+    }
+
     /** Updates one band. Cheap; call it every block if convenient. */
     void setBand (int band, const Settings& newSettings) noexcept
     {
@@ -207,7 +229,7 @@ public:
 
         bool anyActive = false;
         for (const auto& s : settings)
-            anyActive = anyActive || isActive (s);
+            anyActive = anyActive || isActive (s) || s.keepTracking;
 
         // Nothing to do this hop. The phase history goes stale, so the next
         // analysis starts from bin-centre frequencies instead of trusting it.
@@ -410,9 +432,10 @@ private:
         // ---- 2 and 3. Pitch and synthesis -------------------------------------
         const float ratio = cfg.pitchOn ? std::exp2 (cfg.pitchSemitones / 12.0f) : 1.0f;
         const bool wash = cfg.freezeOn && cfg.freezeMode == FreezeMode::wash;
+        const float width = cfg.freezeOn ? std::clamp (cfg.freezeWidth, 0.0f, 1.0f) : 0.0f;
 
         resynthesise<stereo> (band, s, frame, right, srcMagnitude, src, srcFrequency, srcPhase,
-                              std::abs (ratio - 1.0f) > 1.0e-5f ? ratio : 1.0f, wash);
+                              std::abs (ratio - 1.0f) > 1.0e-5f ? ratio : 1.0f, wash, width);
 
         s.wasActive = true;
     }
@@ -508,12 +531,18 @@ private:
         window: neighbouring bins pi apart.
 
         `wash` replaces every phase by a deterministic random one instead, at
-        the level a coherent resynthesis would have. */
+        the level a coherent resynthesis would have.
+
+        `width` (stereo only) moves each bin's left and right phases apart by
+        a deterministic random amount, up to +-pi/2 each: one per peak for a
+        tonal freeze, shared by its whole lobe (a partial stays one partial,
+        held notes stay notes), one per bin drawn afresh every hop for a wash
+        (at full width, the two channels are then independent). */
     template <bool stereo>
     void resynthesise (int band, BandState& s, float* frame, float* right,
                        const float* mag, const StereoSource& src,
                        const float* freq, const float* phase,
-                       float ratio, bool wash) noexcept
+                       float ratio, bool wash, float width) noexcept
     {
         // What peaks are found on: the band's magnitude, or in stereo the
         // sum of both channels' (so content on one side only still counts).
@@ -554,6 +583,13 @@ private:
             // First active frame: no phase history, so start from the input's
             // own phase at the peak, which makes the switch seamless.
             const bool continuing = s.wasActive && jp >= 0 && jp < numBins;
+
+            // The peak's spread between the channels, for a tonal freeze:
+            // keyed on where it lands, so a held partial keeps its own.
+            float spread = 0.0f;
+            if constexpr (stereo)
+                if (width > 0.0f && ! wash)
+                    spread = detrand::u01 (widthSeed, (uint64_t) band, 0, (uint64_t) jp) - 0.5f;
             const double thetaPeak = continuing
                 ? (double) s.synthesisPhase[(size_t) jp] + expectedAdvance * fOut
                 : (double) (phase != nullptr ? phase[kp] : analysisPhase[(size_t) kp]);
@@ -582,6 +618,7 @@ private:
                     {
                         outDeltaL[(size_t) j] = src.deltaL[k];
                         outDeltaR[(size_t) j] = src.deltaR[k];
+                        outSpread[(size_t) j] = spread;
                     }
                 }
             }
@@ -614,12 +651,24 @@ private:
             if constexpr (stereo)
             {
                 // Both channels on the sum's phase, each with its own offset
-                // to it, so the image survives the resynthesis.
+                // to it, so the image survives the resynthesis; the width
+                // then pulls them apart, symmetrically.
+                float half = 0.0f;
+                if (width > 0.0f)
+                {
+                    const float spread = wash ? detrand::u01 (widthSeed, (uint64_t) band,
+                                                              frameCounter, (uint64_t) j) - 0.5f
+                                              : outSpread[i];
+                    half = width * (float) pi * spread;
+                }
+
+                const float thetaL = theta + outDeltaL[i] - half;
+                const float thetaR = theta + outDeltaR[i] + half;
                 const float mL = outMagnitude[i] * gain, mR = outMagnitudeR[i] * gain;
-                frame[2 * j]     = mL * std::cos (theta + outDeltaL[i]);
-                frame[2 * j + 1] = mL * std::sin (theta + outDeltaL[i]);
-                right[2 * j]     = mR * std::cos (theta + outDeltaR[i]);
-                right[2 * j + 1] = mR * std::sin (theta + outDeltaR[i]);
+                frame[2 * j]     = mL * std::cos (thetaL);
+                frame[2 * j + 1] = mL * std::sin (thetaL);
+                right[2 * j]     = mR * std::cos (thetaR);
+                right[2 * j + 1] = mR * std::sin (thetaR);
             }
             else
             {
@@ -630,7 +679,8 @@ private:
         }
     }
 
-    static constexpr uint64_t washSeed = 0x5eedf2eeU;
+    static constexpr uint64_t washSeed  = 0x5eedf2eeU;
+    static constexpr uint64_t widthSeed = 0x5eedb1deU;
 
     int size = 2048, hop = 512, numBins = 1025, numBands = 0;
     double sampleRate = 48000.0;
@@ -644,7 +694,7 @@ private:
     std::vector<float> analysisPhase, previousPhase, trueFrequency, magnitude;
     std::vector<float> outMagnitude, outPhase, strongest;
     std::vector<float> magnitudeL, magnitudeR, deltaL, deltaR;          // stereo analysis
-    std::vector<float> outMagnitudeR, outDeltaL, outDeltaR;             // stereo synthesis
+    std::vector<float> outMagnitudeR, outDeltaL, outDeltaR, outSpread;  // stereo synthesis
     std::vector<int> peaks;
 
     std::vector<Settings> settings;

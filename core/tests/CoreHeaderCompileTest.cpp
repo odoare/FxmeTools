@@ -81,6 +81,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/ModLfo.h>)
  #include <FxmeTools/dsp/ModLfo.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/FrequencyShifter.h>)
+ #include <FxmeTools/dsp/FrequencyShifter.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/SplicePitchShifter.h>)
  #include <FxmeTools/dsp/SplicePitchShifter.h>
 #endif

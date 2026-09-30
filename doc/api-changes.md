@@ -11,6 +11,39 @@ project after a break.
 
 ---
 
+## `fxme::SpectralBandEffects`: freeze width, retrigger, keep tracking (2026-09-30)
+
+Additive, **no consumer action**: the new fields default to the previous
+behaviour. In `Settings`:
+
+- `freezeWidth` (0..1, stereo bands only): moves each frozen bin's left and
+  right phases apart by a deterministic random amount, up to +-pi/2 each.
+  Tonal: one amount per peak, shared by its lobe, fixed (partials stay in
+  tune and at level). Wash: one per bin and per hop (independent channels at
+  full width). No effect through `processBand()` (mono).
+- `keepTracking`: runs the analysis while the band is idle, so a freeze
+  switched on later captures on its first frame, in tune, instead of passing
+  one hop through first. Alone, it leaves the band bit for bit untouched.
+
+And `retriggerFreeze (band)`: a frozen band captures again on its next frame,
+its synthesis phases carrying on. Realtime safe. For rhythmic freezes (Dede's
+Retrigger mode). Pinned in `core/tests/CoreSpectralEffectsTests.cpp` (6, 7).
+
+---
+
+## New: `fxme::FrequencyShifter` (2026-09-29)
+
+Additive, **no consumer action**. `core/FxmeTools/dsp/FrequencyShifter.h`, in
+the umbrella: a Bode frequency shifter, every frequency moved by the same
+number of Hz (`setShiftHz`, signed, glides over 20 ms). A Hilbert pair from
+two chains of four second-order all-passes (Olli Niemitalo's coefficients)
+and a single-sideband mix with a quadrature oscillator. `prepare (sampleRate,
+numChannels)`, `processFrame (float*)`, `processSample`; stereo shares one
+oscillator. No latency. The mirror sideband is at least 44 dB down from 50 Hz
+to 15 kHz. Pinned in `core/tests/CoreFrequencyShifterTests.cpp`.
+
+---
+
 ## `fxme::BandGate` renamed `fxme::BandDynamicsProcessor` (2026-09-29)
 
 **Breaking, rename only**: `core/FxmeTools/dsp/BandGate.h` is now
