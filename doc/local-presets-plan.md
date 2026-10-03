@@ -1,7 +1,8 @@
 # Local (module) presets and the preset widgets: plan
 
 Status: **phases 1, 2 and 3 done** (2026-10-03; in phase 2, only Dede has
-moved so far); phase 4 planned. Written
+moved so far); **phase 4 started**: FxmeFX done (factory presets drafted,
+to tune by ear); FxmeSampler and MechanOdd to do. Written
 2026-10-03, from a design discussion while working on Dede. Update this file as phases land,
 and record each consumer-visible change in `api-changes.md` as usual.
 
@@ -450,6 +451,43 @@ Dede:
    version bump (Dede is unreleased).
 
 ### Phase 4: FxmeFX, FxmeSampler, MechanOdd
+
+**FxmeFX done 2026-10-03** (steps 1 to 3), with:
+
+- The exception in step 1 **confirmed**: a single-effect FxmeFX plugin has
+  no preset folder of its own; its presets are its effect's, in
+  `FX-Mechanics/Modules/<Effect>/Presets`.
+- `Source/Common/EffectPresets.h`: a library and a target per effect
+  (module = the effect's class name, scope `<prefix>_<Tag>_`), a member of
+  each processor after its APVTS, `getPresets()` to reach the target. Left
+  out of the Pure Data externals (`FXME_PD_BUILD`: no FxmeTools module, no
+  GUI there); all 13 still build.
+- The preset bar lives in `Source/Common/TopBar.h` (`setPresetBank`), at the
+  right end of the title bar, with priority over the text (in narrow windows
+  the version, then the description, give way).
+- Factory presets: `Source/<Effect>/Presets/<Effect>_<Name>.xml`, embedded
+  by `fxmefx_add_module_presets (<target> <Effect>...)`
+  (`cmake/FxmeModulePresets.cmake`; a host outside the repo sets
+  `FXMEFX_ROOT`), namespace `FxmeModulePresets`, which also defines
+  `FXMEFX_HAS_MODULE_PRESETS`. Three per effect, 39 in all, **drafts
+  written by hand from the parameter ranges, not yet listened to**: every
+  key checked against the effects' parameter IDs, values within range.
+  Cab's refer to its IRs by number (alphabetical file order, 1-based): adding
+  an IR file shifts them. Freeze's leave `On` out (it means "frozen"), so a
+  preset load never freezes by itself.
+- ConvolReverb: the external IR travels as its file path in `<Extra>`
+  (`externalIR`); loading re-embeds the file when it still exists, else the
+  reverb falls back to its first built-in IR. The audio itself is not put in
+  the preset (it is in the session); revisit if presets must carry it
+  between machines.
+- Found on the way: the bar's browser was cut off in FxmeFX's small editors;
+  `PresetBarComponent` now fits it to the window (see `api-changes.md`).
+- Checked: all 13 plugins and 13 externals build; FxmeCompressor run as a
+  standalone (scratch build, FxmeFX ships no standalones): bar in the title
+  bar, factory list, a load applying every value.
+
+Still to do in this phase: listen to the draft factory presets and tune
+them, then FxmeSampler and MechanOdd.
 
 1. FxmeFX: per effect, a library named after the effect (`Compressor`,
    `Equalizer`, ... the effect's class name, not its tag) and a target on

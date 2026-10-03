@@ -95,7 +95,9 @@ public:
 
     bool isBrowserButtonVisible() const noexcept     { return browseButton.isVisible(); }
 
-    /** The size of the PresetComponent the button opens (default 320 x 380). */
+    /** The size of the PresetComponent the button opens (default 320 x 380).
+        In a plugin window too small for it, it is shrunk to fit (not below
+        220 x 200). */
     void setBrowserSize (int width, int height)
     {
         browserSize = { juce::jmax (1, width), juce::jmax (1, height) };
@@ -117,7 +119,6 @@ public:
 
         auto browser = std::make_unique<PresetComponent> (manager);
         browser->setAccentColour (hasBrowserAccent ? browserAccent : accent);
-        browser->setSize (browserSize.x, browserSize.y);
 
         // Inside the plugin window when there is one: a callout parented to
         // the desktop misbehaves in some hosts.
@@ -129,6 +130,21 @@ public:
         const auto area = parent != nullptr && parent != this
                               ? parent->getLocalArea (this, anchor)
                               : localAreaToGlobal (anchor);
+
+        // A callout stays inside its parent: in a small plugin window, shrink
+        // the browser to the room above or below the bar (whichever is
+        // larger) rather than let it be cut off. The margin covers the
+        // callout's arrow and border.
+        auto size = browserSize;
+        if (parent != nullptr && parent != this)
+        {
+            constexpr int calloutMargin = 40;
+            const int room = juce::jmax (area.getY(), parent->getHeight() - area.getBottom()) - calloutMargin;
+            size.x = juce::jmin (size.x, parent->getWidth() - calloutMargin);
+            size.y = juce::jmin (size.y, room);
+            size = { juce::jmax (minBrowserSize.x, size.x), juce::jmax (minBrowserSize.y, size.y) };
+        }
+        browser->setSize (size.x, size.y);
 
         juce::CallOutBox::launchAsynchronously (std::move (browser), area,
                                                 parent != this ? parent : nullptr);
@@ -190,6 +206,7 @@ private:
     juce::Colour browserAccent;
     bool hasBrowserAccent = false;
     juce::Point<int> browserSize { 320, 380 };
+    static constexpr juce::Point<int> minBrowserSize { 220, 200 };
     FxmeLookAndFeel lookAndFeel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetBarComponent)

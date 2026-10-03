@@ -11,6 +11,17 @@ project after a break.
 
 ---
 
+## `PresetBarComponent`: the browser fits small plugin windows (2026-10-03)
+
+**No consumer action.** The browser the bar's "..." opens is a callout,
+which stays inside its parent (the plugin editor): in a window too small for
+the requested size (`setBrowserSize`, default 320 x 380) it used to be cut
+off. It now shrinks to the room above or below the bar, whichever is larger,
+and to the editor's width (never below 220 x 200). Big editors (Dede) are
+unchanged. Found with FxmeFX (editors 300 to 400 px high).
+
+---
+
 ## Module presets: `ModulePresetLibrary`, `ModulePresetTarget` (2026-10-03)
 
 Additive, **no consumer action** (one behaviour change in `PresetManager`,
