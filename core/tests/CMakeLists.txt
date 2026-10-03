@@ -32,6 +32,10 @@ add_executable(FxmeCoreImpulseEnergyTests CoreImpulseEnergyTests.cpp)
 target_link_libraries(FxmeCoreImpulseEnergyTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreImpulseEnergyTests COMMAND FxmeCoreImpulseEnergyTests)
 
+add_executable(FxmeCoreAllpassChainTests CoreAllpassChainTests.cpp)
+target_link_libraries(FxmeCoreAllpassChainTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreAllpassChainTests COMMAND FxmeCoreAllpassChainTests)
+
 # ── 6. A band-pass following moving edges (EdgeBandPass) ───────────────────
 add_executable(FxmeCoreEdgeBandPassTests CoreEdgeBandPassTests.cpp)
 target_link_libraries(FxmeCoreEdgeBandPassTests PRIVATE FxmeCore)

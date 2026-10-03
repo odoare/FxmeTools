@@ -11,6 +11,10 @@
          are normalised (and wildly different RMS before).
       4. A stereo IR keeps its left / right balance (one gain).
       5. A silent IR, and empty input, are left alone.
+      6. The pink-weighted measure: 1 for a unit impulse at any sample rate;
+         and on an IR that boosts the lows (as a forest reverb does), pink
+         noise comes out at its input level after normaliseLoudness(), where
+         the flat normalise() leaves it several dB louder.
 
     Exit code 0 when everything passes.
 
@@ -156,6 +160,81 @@ int main()
         check (fxme::ImpulseEnergy::normalise (&p, 1, 64) == 1.0f && silent[0] == 0.0f,
                "a silent IR is left alone (gain 1)");
         check (fxme::ImpulseEnergy::normalise (nullptr, 0, 0) == 1.0f, "no channels: nothing done");
+    }
+
+    // ---- 6. pink-weighted loudness ------------------------------------------
+    {
+        char what[160];
+        for (double sr : { 44100.0, 48000.0, 96000.0 })
+        {
+            std::vector<float> impulse (64, 0.0f);
+            impulse[0] = 1.0f;
+            const float* p = impulse.data();
+            const double e = fxme::ImpulseEnergy::pinkWeightedEnergy (&p, 1, 64, sr);
+            std::snprintf (what, sizeof what, "pink-weighted energy of a unit impulse at %.0f Hz is 1 (%.4f)", sr, e);
+            check (near (e, 1.0, 0.01), what);
+        }
+
+        // Pink noise (Paul Kellet's filter on white noise), 1.5 s at 48 kHz.
+        const double sr = 48000.0;
+        Noise noise;
+        std::vector<float> pink (72000);
+        double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+        for (auto& s : pink)
+        {
+            const double w = noise.next();
+            b0 = 0.99886 * b0 + w * 0.0555179;  b1 = 0.99332 * b1 + w * 0.0750759;
+            b2 = 0.96900 * b2 + w * 0.1538520;  b3 = 0.86650 * b3 + w * 0.3104856;
+            b4 = 0.55000 * b4 + w * 0.5329522;  b5 = -0.7616 * b5 - w * 0.0168980;
+            s = (float) (0.1 * (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362));
+            b6 = w * 0.115926;
+        }
+
+        // Kellet's pink keeps going down to about 9 Hz; music (and the
+        // measure, whose lowest octave starts at 22 Hz) does not: take the
+        // infrasound out with two one-pole high-passes at 20 Hz.
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const double c = std::exp (-2.0 * 3.14159265358979 * 20.0 / 48000.0);
+            double prevIn = 0.0, prevOut = 0.0;
+            for (auto& s : pink)
+            {
+                const double out = c * (prevOut + (double) s - prevIn);
+                prevIn = s;
+                prevOut = out;
+                s = (float) out;
+            }
+        }
+
+        // A dark, reverb-like IR: decaying noise through a one-pole low-pass
+        // at about 300 Hz, so its lows are far above its highs.
+        std::vector<float> dark (2400);
+        Noise n3;
+        n3.state = 4242u;
+        double lp = 0.0;
+        const double k = 1.0 - std::exp (-2.0 * 3.14159265358979 * 300.0 / sr);
+        for (size_t i = 0; i < dark.size(); ++i)
+        {
+            lp += k * ((double) n3.next() - lp);
+            dark[i] = (float) (lp * std::exp (-6.9 * (double) i / (double) dark.size()));
+        }
+
+        const size_t from = dark.size(), to = pink.size();
+        const double inRms = rms (pink, from, to);
+
+        std::vector<float> flat = dark, loud = dark;
+        float* pf = flat.data();
+        float* pl = loud.data();
+        fxme::ImpulseEnergy::normalise (&pf, 1, (int) flat.size());
+        fxme::ImpulseEnergy::normaliseLoudness (&pl, 1, (int) loud.size(), sr);
+
+        const double flatDb = 20.0 * std::log10 (rms (convolve (pink, flat), from, to) / inRms);
+        const double loudDb = 20.0 * std::log10 (rms (convolve (pink, loud), from, to) / inRms);
+
+        std::snprintf (what, sizeof what, "dark IR, flat normalise: pink noise comes out %+.1f dB", flatDb);
+        check (flatDb > 3.0, what);
+        std::snprintf (what, sizeof what, "dark IR, normaliseLoudness: pink noise comes out %+.2f dB", loudDb);
+        check (std::abs (loudDb) < 1.0, what);
     }
 
     std::printf ("\n%s (%d failures)\n", failures ? "TESTS FAILED" : "ALL TESTS PASSED", failures);

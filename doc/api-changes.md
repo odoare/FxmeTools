@@ -11,6 +11,25 @@ project after a break.
 
 ---
 
+## Fix: `fxme::AllpassChain` broke at fs/2 - fc (2026-10-03)
+
+**Behaviour change, no source change.** `setFrequency` computed
+`a = (1 - t) / (1 + t)`; the section `(a + z^-1) / (1 + a z^-1)` needs
+`a = (t - 1) / (t + 1)` (t = tan(pi fc / fs)). The flipped sign mirrors the
+response around fs/4, so each section broke at fs/2 - fc: a phaser swept
+around a few hundred hertz moved its notches near Nyquist and was all but
+inaudible (with Freq at 250 Hz to 1 kHz the dry + wet sum never dipped
+below 57 to 97 %; now two notches per four stages around Freq, as
+designed). DC and Nyquist gains, stage clamping and the API are unchanged.
+Pinned in `core/tests/CoreAllpassChainTests.cpp` (-90 degrees at fc, the
+notches either side of it).
+
+Consumers: FxmeFX's Phaser, and whatever embeds it (FxmeSampler,
+MechanOdd): **it now sounds as a phaser should, so sessions using it change
+sound** (that is the fix). Nothing else uses the class.
+
+---
+
 ## New in core: `fxme::ImpulseEnergy` (2026-10-03)
 
 Additive, **no consumer action**. `core/FxmeTools/dsp/ImpulseEnergy.h`
@@ -23,8 +42,20 @@ input at its RMS level, so every IR plays equally loud. Pinned in
 `core/tests/CoreImpulseEnergyTests.cpp` (two IRs 26 dB apart raw come out
 within 0.03 dB of each other and of the input).
 
-First users: FxmeFX's ConvolReverb and Cab normalise every IR on load: the
-built-in reverb IRs come down by 5 to 16 dB, the cabinet IRs by about 7 dB.
+**Then added, same day: `pinkWeightedEnergy` and `normaliseLoudness (...,
+sampleRate)`**, the measure to use for loudness. Flat energy weights every
+hertz alike (white noise); music is closer to pink, and an IR boosting the
+lows and mids, as reverbs do, still came out loud: the Forest IRs at +5 and
++11 dB on pink noise after a flat normalisation. The pink-weighted energy
+averages ten octave bands (31.5 Hz to 16 kHz, RBJ band-passes, each band's
+ringing included and compared with a unit impulse's in the same band, so 1
+for an impulse at any sample rate). Pinned in the same test file (a dark IR:
++13.1 dB on pink noise with the flat measure, +0.4 dB with this one).
+
+First users: FxmeFX's ConvolReverb and Cab normalise every IR on load, with
+`normaliseLoudness`: the built-in reverb IRs come down by 8 to 24 dB (Forest
+long -23, Council Chamber -24, Forest short -10, the rooms -8 to -10), the
+cabinet IRs by 8 to 15 dB.
 Sessions saved before keep their level: their state version (ConvolReverb
 2, Cab 3) marks them with a `<prefix>_Rev_LegacyIRLevel` /
 `<prefix>_Cab_LegacyIRLevel` state property, which turns the normalisation
