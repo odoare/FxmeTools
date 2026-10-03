@@ -269,7 +269,7 @@ SpectrumRegionEditor::Hit SpectrumRegionEditor::hitTestRegion (juce::Point<float
             if (pass == 0)
             {
                 if (p.getDistanceFrom (gainPanHandle (r, plot)) <= handleRadius + 3.0f)
-                    return { i, Handle::gainPan };
+                    return { i, Handle::pan };
 
                 if (std::abs (p.x - b.getX()) <= edgeGrabPx)
                     return { i, Handle::leftEdge };
@@ -299,7 +299,7 @@ SpectrumRegionEditor::Hit SpectrumRegionEditor::hitTestRegion (juce::Point<float
                         }
                     };
 
-                    consider (Handle::gainPan, gainY);
+                    consider (Handle::gain, gainY);
 
                     // At most one of the two level lines is a candidate. When
                     // both are in reach, the side of their midpoint decides
@@ -353,6 +353,7 @@ void SpectrumRegionEditor::mouseDown (const juce::MouseEvent& e)
     dragHandle = Handle::none;
     dragIndex  = -1;
     dragMoved  = false;
+    copyPending = false;
     creating   = false;
 
     baseGesture = isBaseGesture (e);
@@ -372,6 +373,8 @@ void SpectrumRegionEditor::mouseDown (const juce::MouseEvent& e)
         dragHandle = hit.handle;
         dragStartRegion = regions[(size_t) hit.index];
         dragStartPos = e.position;
+        copyPending = hit.handle == Handle::body && e.mods.isCommandDown()
+                   && onRegionDuplicate != nullptr;
 
         if (onDragStart != nullptr)
             onDragStart (dragIndex, dragHandle);
@@ -430,9 +433,14 @@ void SpectrumRegionEditor::mouseDrag (const juce::MouseEvent& e)
                            yToDb (e.position.y, plot), plot);
             break;
 
-        case Handle::gainPan:
-        {
+        // The line moves up and down only, the handle on it sideways only,
+        // so neither can be nudged while the other is being set.
+        case Handle::gain:
             r.gainDb = yToGain (e.position.y, plot);
+            break;
+
+        case Handle::pan:
+        {
             const auto b = regionBounds (r, plot);
             r.pan = xToPan (e.position.x, b.getX(), b.getRight());
             break;
@@ -440,12 +448,42 @@ void SpectrumRegionEditor::mouseDrag (const juce::MouseEvent& e)
 
         case Handle::body:
         {
+            // A Ctrl-press drags a copy, made on the first real move (a
+            // Ctrl-click alone copies nothing). From then on the copy is the
+            // region dragged; the original stays where it was.
+            if (copyPending)
+            {
+                if (! dragMoved)
+                    return;
+
+                copyPending = false;
+                const int source = dragIndex;
+                const int copy = onRegionDuplicate != nullptr ? onRegionDuplicate (source) : -1;
+
+                if (onDragEnd != nullptr)
+                    onDragEnd (source, Handle::body);
+
+                if (! juce::isPositiveAndBelow (copy, (int) regions.size()))
+                {
+                    dragIndex = -1;
+                    dragHandle = Handle::none;
+                    return;
+                }
+
+                dragIndex = copy;
+                setSelectedRegion (copy);
+                if (onDragStart != nullptr)
+                    onDragStart (copy, Handle::body);
+                r = dragStartRegion = regions[(size_t) copy];
+            }
+
             // Move the whole band: a horizontal drag is a frequency ratio, so
             // the region keeps its width on the log axis.
             const float ratio = xToFreq (e.position.x, plot)
                                     / juce::jmax (1.0e-3f, xToFreq (dragStartPos.x, plot));
             r.lowHz  = dragStartRegion.lowHz  * ratio;
             r.highHz = dragStartRegion.highHz * ratio;
+            snapMovedRegion (r, dragIndex, plot);
             break;
         }
 
@@ -529,37 +567,70 @@ void SpectrumRegionEditor::moveLevelLine (Region& r, const Region& current, bool
         r.ceilingDb = current.ceilingDb;
 }
 
-float SpectrumRegionEditor::snappedEdgeFrequency (float x, int ownIndex, juce::Rectangle<float> plot)
+bool SpectrumRegionEditor::nearestWall (float x, int ownIndex, juce::Rectangle<float> plot,
+                                        Wall& wall) const
 {
+    if (edgeSnapPx <= 0.0f)
+        return false;
+
+    bool found = false;
     float bestDistance = edgeSnapPx;
-    float bestFreq = -1.0f, bestX = -1.0f;
 
-    if (edgeSnapPx > 0.0f)
+    for (int i = 0; i < (int) regions.size(); ++i)
     {
-        for (int i = 0; i < (int) regions.size(); ++i)
-        {
-            const auto& other = regions[(size_t) i];
-            if (i == ownIndex || ! other.active)
-                continue;
+        const auto& other = regions[(size_t) i];
+        if (i == ownIndex || ! other.active)
+            continue;
 
-            for (const float f : { other.lowHz, other.highHz })
+        for (const float f : { other.lowHz, other.highHz })
+        {
+            const float wallX = freqToX (f, plot);
+            const float d = std::abs (x - wallX);
+            if (d <= bestDistance)
             {
-                const float wallX = freqToX (f, plot);
-                const float d = std::abs (x - wallX);
-                if (d <= bestDistance)
-                {
-                    bestDistance = d;
-                    bestFreq = f;
-                    bestX = wallX;
-                }
+                bestDistance = d;
+                wall = { f, wallX, d };
+                found = true;
             }
         }
     }
 
+    return found;
+}
+
+float SpectrumRegionEditor::snappedEdgeFrequency (float x, int ownIndex, juce::Rectangle<float> plot)
+{
     // Stuck to a wall: exactly its frequency, so the two regions meet with
     // no gap and no overlap. Otherwise the pointer's own frequency.
-    snapLineX = bestX;
-    return bestFreq > 0.0f ? bestFreq : xToFreq (x, plot);
+    Wall wall;
+    if (nearestWall (x, ownIndex, plot, wall))
+    {
+        snapLineX = wall.x;
+        return wall.freq;
+    }
+
+    snapLineX = -1.0f;
+    return xToFreq (x, plot);
+}
+
+void SpectrumRegionEditor::snapMovedRegion (Region& r, int ownIndex, juce::Rectangle<float> plot)
+{
+    snapLineX = -1.0f;
+
+    Wall low, high;
+    const bool lowFound  = nearestWall (freqToX (r.lowHz,  plot), ownIndex, plot, low);
+    const bool highFound = nearestWall (freqToX (r.highHz, plot), ownIndex, plot, high);
+    if (! lowFound && ! highFound)
+        return;
+
+    // The nearer of the two borders lands on its wall; the band follows by
+    // the same ratio, so its width on the log axis is kept.
+    const bool useLow = lowFound && (! highFound || low.distance <= high.distance);
+    const float ratio = useLow ? low.freq / juce::jmax (1.0e-3f, r.lowHz)
+                               : high.freq / juce::jmax (1.0e-3f, r.highHz);
+    r.lowHz  *= ratio;
+    r.highHz *= ratio;
+    snapLineX = useLow ? low.x : high.x;
 }
 
 void SpectrumRegionEditor::mouseUp (const juce::MouseEvent& e)
@@ -624,8 +695,11 @@ void SpectrumRegionEditor::mouseMove (const juce::MouseEvent& e)
         case Handle::rightEdge: setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); break;
         case Handle::gate:
         case Handle::ceiling:   setMouseCursor (juce::MouseCursor::UpDownResizeCursor);    break;
-        case Handle::gainPan:   setMouseCursor (juce::MouseCursor::PointingHandCursor);    break;
-        case Handle::body:      setMouseCursor (juce::MouseCursor::DraggingHandCursor);    break;
+        case Handle::gain:      setMouseCursor (juce::MouseCursor::UpDownResizeCursor);    break;
+        case Handle::pan:       setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); break;
+        case Handle::body:      setMouseCursor (e.mods.isCommandDown() && onRegionDuplicate != nullptr
+                                                    ? juce::MouseCursor::CopyingCursor
+                                                    : juce::MouseCursor::DraggingHandCursor);  break;
         case Handle::none:
         default:                setMouseCursor (juce::MouseCursor::NormalCursor);          break;
     }
@@ -640,6 +714,35 @@ void SpectrumRegionEditor::mouseExit (const juce::MouseEvent& e)
         hover = {};
         repaint();
     }
+}
+
+void SpectrumRegionEditor::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Delivered after the second press and release, so a drag that press
+    // may have started on the same handle is already over.
+    if (! isBaseGesture (e))
+    {
+        const auto hit = hitTestRegion (e.position);
+        switch (hit.handle)
+        {
+            case Handle::gate:
+            case Handle::ceiling:
+            case Handle::gain:
+            case Handle::pan:
+                if (onHandleDoubleClicked != nullptr)
+                    onHandleDoubleClicked (hit.index, hit.handle);
+                return;
+
+            case Handle::none:
+            case Handle::leftEdge:
+            case Handle::rightEdge:
+            case Handle::body:
+            default:
+                break;
+        }
+    }
+
+    SpectrumDisplay::mouseDoubleClick (e);
 }
 
 SpectrumRegionEditor::Handle SpectrumRegionEditor::emphasisFor (int index) const noexcept
@@ -747,8 +850,10 @@ void SpectrumRegionEditor::drawRegion (juce::Graphics& g, const Region& r,
                           isEmphasised ? 2.6f : 1.4f);
     }
 
-    // Gain and pan: one segment across the band with the round handle on it.
-    const bool gainEmphasised = emphasis == Handle::gainPan;
+    // Gain and pan: one segment across the band (the gain) with the round
+    // handle on it (the pan), each emphasised on its own.
+    const bool gainEmphasised = emphasis == Handle::gain;
+    const bool panEmphasised  = emphasis == Handle::pan;
     const float gainY = gainToY (r.gainDb, plot);
     g.setColour (gainEmphasised ? emphasised
                                 : r.colour.withAlpha (isSelected ? 0.9f : 0.5f));
@@ -758,12 +863,12 @@ void SpectrumRegionEditor::drawRegion (juce::Graphics& g, const Region& r,
     const auto handle = gainPanHandle (r, plot);
     const auto disc = juce::Rectangle<float> (handleRadius * 2.0f, handleRadius * 2.0f)
                           .withCentre (handle);
-    g.setColour (gainEmphasised ? emphasised : r.colour.brighter (isSelected ? 0.4f : 0.0f));
+    g.setColour (panEmphasised ? emphasised : r.colour.brighter (isSelected ? 0.4f : 0.0f));
     g.fillEllipse (disc);
     g.setColour (getColours().plotBackground);
     g.drawEllipse (disc, 1.2f);
 
-    if (gainEmphasised)
+    if (panEmphasised)
     {
         g.setColour (emphasised);
         g.drawEllipse (disc.expanded (3.0f), 1.5f);
@@ -818,12 +923,12 @@ void SpectrumRegionEditor::drawRegion (juce::Graphics& g, const Region& r,
                     labelBox (ceilingY - 13.0f), juce::Justification::centredRight);
     }
 
-    if ((isSelected && roomy) || gainEmphasised)
+    if ((isSelected && roomy) || gainEmphasised || panEmphasised)
     {
         // The pan only has a read-out while it is the thing being handled; the
         // handle's position already shows it the rest of the time.
-        g.setColour (labelColour (gainEmphasised));
-        g.drawText (dbText (r.gainDb) + (gainEmphasised ? "   pan " + panText (r.pan) : juce::String()),
+        g.setColour (labelColour (gainEmphasised || panEmphasised));
+        g.drawText (panEmphasised ? "pan " + panText (r.pan) : dbText (r.gainDb),
                     labelBox (gainY - 13.0f), juce::Justification::centredLeft);
     }
 

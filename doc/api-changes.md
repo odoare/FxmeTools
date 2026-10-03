@@ -11,6 +11,38 @@ project after a break.
 
 ---
 
+## `SpectrumRegionEditor`: copy-drag, snapping when moved, double-click reset (2026-10-02)
+
+Additive for the API, **no consumer action**, but two behaviours change:
+
+- **Moving a region whole now snaps** too (with `setEdgeSnapPixels`): the
+  nearer of its two borders sticks to another region's border, the band
+  keeping its width. Before, only a dragged border snapped.
+- **A double click on a handle no longer resets the view**: on the gate, the
+  ceiling, the gain line or the pan handle it calls the new
+  `onHandleDoubleClicked (index, handle)` (Dede resets that value to its
+  default). Anywhere else in the plot it still resets the view.
+
+New: `onRegionDuplicate (sourceIndex) -> int`. Ctrl-dragging a body (Cmd on
+macOS) asks the consumer, on the first real move, to copy that region into a
+free slot and return it (-1 refuses); the copy is then the region dragged
+(bracketed by `onDragStart`/`onDragEnd`, its borders through
+`onRegionChanged`). The cursor shows a copy while Ctrl is held over a body.
+Without the callback, Ctrl-drag moves the region as before. Consumers: Dede.
+
+---
+
+## `SpectrumRegionEditor`: gain and pan dragged separately (2026-10-01)
+
+**Breaking, enum only**: `Handle::gainPan` is replaced by `Handle::gain` (the
+horizontal segment: dragging it moves the gain only) and `Handle::pan` (the
+round handle on it: dragging it moves the pan only). Before, either one moved
+both, so setting one nudged the other. Cursors follow (up-down, left-right),
+and the read-out shows the value being dragged. Consumers: only Dede, which
+brackets its host gestures by handle (`rgGain` for gain, `rgPan` for pan).
+
+---
+
 ## `fxme::SpectralBandEffects`: freeze width, retrigger, keep tracking (2026-09-30)
 
 Additive, **no consumer action**: the new fields default to the previous

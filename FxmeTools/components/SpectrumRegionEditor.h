@@ -14,8 +14,9 @@
         can be read straight against the trace it crosses (what rises above the
         segment is what the consumer's gate is meant to pass);
       - a gain and a pan, one horizontal segment with a round handle on it:
-        dragging the handle up and down sets the gain (on its own range, see
-        setGainRange) and left to right sets the pan across the region's width;
+        dragging the segment up and down sets the gain (on its own range, see
+        setGainRange), dragging the handle left and right sets the pan across
+        the region's width. Each moves only its own value;
       - optionally (setCeilingEnabled), a ceiling: a second dashed segment on
         the same dB axis as the gate, the gate's mirror (what rises above it is
         what the consumer's ceiling is meant to remove). The top of its range
@@ -27,7 +28,13 @@
     upper line). The handle a press would grab is drawn emphasised.
 
     Empty space is where new regions are drawn: press and drag sideways, and
-    onRegionCreate is asked for a free slot. Pressing a region selects it, a
+    onRegionCreate is asked for a free slot. Ctrl-dragging a region's body
+    (Cmd on macOS) drags a copy of it instead, through onRegionDuplicate.
+    With setEdgeSnapPixels, a dragged border sticks to the borders of other
+    regions, and so does either border of a region (or a copy) moved whole.
+    Double-clicking the gate, the ceiling, the gain line or the pan handle
+    asks the consumer to reset that value (onHandleDoubleClicked); a double
+    click anywhere else in the plot resets the view, as in SpectrumDisplay. Pressing a region selects it, a
     press without a drag reports a click (open its settings), and Delete or
     Backspace removes the selected one. Panning the view, which would otherwise
     collide with drawing, moves to alt-drag or the middle button.
@@ -78,7 +85,7 @@ public:
         through the drag callbacks; useful to know when reading them. A drag of
         the gate or the ceiling can push the other line along, so a consumer
         bracketing gestures should cover both for either handle. */
-    enum class Handle { none, leftEdge, rightEdge, gate, gainPan, body, ceiling };
+    enum class Handle { none, leftEdge, rightEdge, gate, gain, pan, body, ceiling };
 
     SpectrumRegionEditor();
 
@@ -162,6 +169,19 @@ public:
         values and push them back with setRegion(). */
     std::function<int (float lowHz, float highHz)> onRegionCreate;
 
+    /** A Ctrl-drag (Cmd on macOS) started on region `sourceIndex`'s body:
+        copy it, every setting, into a free slot and return that slot, or -1
+        to refuse (nothing free; the drag then does nothing). The consumer
+        pushes the copy back with setRegion() before returning, as for
+        onRegionCreate; the copy is then the region dragged, its new borders
+        reported through onRegionChanged, bracketed by onDragStart/End. */
+    std::function<int (int sourceIndex)> onRegionDuplicate;
+
+    /** A double click on one of region `index`'s lines or its pan handle
+        (`handle` is gate, ceiling, gain or pan): the consumer usually resets
+        that value to its default. */
+    std::function<void (int index, Handle handle)> onHandleDoubleClicked;
+
     /** Delete or Backspace was pressed with region `index` selected. */
     std::function<void (int index)> onRegionDelete;
 
@@ -181,6 +201,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
 protected:
@@ -212,6 +233,17 @@ private:
         frequency when none is that close. Records the wall's position for
         drawing (snapLineX, -1 when not stuck). */
     float snappedEdgeFrequency (float x, int ownIndex, juce::Rectangle<float> plot);
+
+    /** The border of another active region nearest `x` within edgeSnapPx:
+        its frequency, its x and how far it is, or false when none is that
+        close (or snapping is off). */
+    struct Wall { float freq = -1.0f, x = -1.0f, distance = 0.0f; };
+    bool nearestWall (float x, int ownIndex, juce::Rectangle<float> plot, Wall& wall) const;
+
+    /** A region being moved whole: the band shifted so that whichever of
+        its borders is nearer a wall sits on it exactly, its width kept.
+        Records the wall for drawing, like snappedEdgeFrequency. */
+    void snapMovedRegion (Region& r, int ownIndex, juce::Rectangle<float> plot);
 
     /** Keeps a region's borders apart by at least the minimum ratio, moving
         whichever border was not the one being dragged. */
@@ -251,6 +283,7 @@ private:
     Region dragStartRegion;
     juce::Point<float> dragStartPos;
     bool   dragMoved = false;
+    bool   copyPending = false;      // a Ctrl-press on a body: copy on the first move
 
     // Drawing a new region on empty space.
     bool  creating = false;
