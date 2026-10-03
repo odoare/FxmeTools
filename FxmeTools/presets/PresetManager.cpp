@@ -11,6 +11,7 @@
 */
 
 #include "PresetManager.h"
+#include "ModulePresetLibrary.h"
 
 namespace fxme
 {
@@ -328,14 +329,35 @@ void PresetManager::clearDirtyAsync()
     });
 }
 
-void PresetManager::valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier& property)
+namespace
 {
-    if (property != presetNameProperty && property != presetIsFactoryProperty)
+    /** The module preset targets' bookkeeping (which module preset each
+        instance shows): not an edit of the global preset. A module preset
+        load still is one, through the parameters it sets. */
+    bool isModulePresetBookkeeping (const juce::ValueTree& tree)
+    {
+        return tree.hasType (ModulePresetIds::state) || tree.hasType (ModulePresetIds::target);
+    }
+}
+
+void PresetManager::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property)
+{
+    if (property != presetNameProperty && property != presetIsFactoryProperty
+        && ! isModulePresetBookkeeping (tree))
         markDirty();
 }
 
-void PresetManager::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&)        { markDirty(); }
-void PresetManager::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) { markDirty(); }
+void PresetManager::valueTreeChildAdded (juce::ValueTree&, juce::ValueTree& child)
+{
+    if (! isModulePresetBookkeeping (child))
+        markDirty();
+}
+
+void PresetManager::valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree& child, int)
+{
+    if (! isModulePresetBookkeeping (child))
+        markDirty();
+}
 void PresetManager::valueTreeChildOrderChanged (juce::ValueTree&, int, int)         { markDirty(); }
 
 void PresetManager::valueTreeRedirected (juce::ValueTree&)

@@ -24,6 +24,8 @@
 #include "presets/EmbeddedAudio.cpp"
 #include "presets/EmbeddedImage.cpp"
 #include "presets/PresetManager.cpp"
+#include "presets/ModulePresetLibrary.cpp"
+#include "presets/ModulePresetTarget.cpp"
 #include "components/PresetComponent.cpp"
 #include "image/V4l2CameraSource.cpp"
 #include "image/VideoFileSource.cpp"

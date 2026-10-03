@@ -11,6 +11,42 @@ project after a break.
 
 ---
 
+## Module presets: `ModulePresetLibrary`, `ModulePresetTarget` (2026-10-03)
+
+Additive, **no consumer action** (one behaviour change in `PresetManager`,
+below). Phase 3 of `doc/local-presets-plan.md`, where the design is.
+
+- `presets/ModulePresetLibrary.h/.cpp`: the presets of one kind of module
+  (name, format version, user folder, factory presets from BinaryData, the
+  two lists; read / write / remove / rename; a `ChangeBroadcaster`, plus a
+  `Listener` told of renames). Factory resources are kept only when their
+  root is `FxmeModulePreset` with the library's `module`.
+- `presets/ModulePresetTarget.h/.cpp`: one instance, the APVTS parameters
+  whose ID starts with a prefix (minus an optional key filter). A
+  `PresetBank`, so `PresetBarComponent` / `PresetComponent` work on it.
+  Load sets every parameter in scope (file value, else default; unknown
+  keys ignored; one gesture each); `capture()` / `apply()` in memory;
+  `onWriteExtra` / `onReadExtra` for non-parameter settings;
+  `setCurrentPreset (name, isFactory, isDirty)` for a consumer that copies or
+  resets an instance by other means. Current preset kept in the state under
+  `<ModulePresets><Target id=... name=... factory=.../>`. Dirty from an APVTS
+  listener (atomic, async message), cleared by a load / save and after a
+  state replacement.
+- `ModulePresetIds` (in `ModulePresetLibrary.h`): the file format's and the
+  state bookkeeping's identifiers.
+- **Behaviour change, `PresetManager`**: changes under `<ModulePresets>`
+  (which module preset an instance shows) no longer mark the global preset
+  modified. Nothing used that subtree before, so no plugin sees a
+  difference until it uses module presets.
+- Both new headers are in the umbrella, both `.cpp` in `FxmeTools.cpp`.
+- Tests: `tests/presets/` (`FxmeToolsPresetTests`, no framework to fetch;
+  36 checks, all passing), added from a consumer that has registered the
+  module (Dede: `-DDEDE_BUILD_PRESET_TESTS=ON`).
+
+First consumer: Dede's region presets (module `SpectralRegion`).
+
+---
+
 ## Vendor preset folders and legacy import on `PresetManager` (2026-10-03)
 
 Additive, **no consumer action required**; each plugin moves when it is next

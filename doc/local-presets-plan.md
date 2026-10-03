@@ -1,7 +1,7 @@
 # Local (module) presets and the preset widgets: plan
 
-Status: **phases 1 and 2 done** (2026-10-03; in phase 2, only Dede has
-moved so far); phases 3 and 4 planned. Written
+Status: **phases 1, 2 and 3 done** (2026-10-03; in phase 2, only Dede has
+moved so far); phase 4 planned. Written
 2026-10-03, from a design discussion while working on Dede. Update this file as phases land,
 and record each consumer-visible change in `api-changes.md` as usual.
 
@@ -368,6 +368,34 @@ Moved: Dede.
    own commit with its import line.
 
 ### Phase 3: module presets, first client Dede
+
+**Done 2026-10-03.** As designed, with these details settled on the way:
+
+- `ModulePresetLibrary::rescan()` broadcasts only when the list changed, and
+  the targets rescan before next / previous; the bar's browser rescans when
+  it opens (phase 1).
+- Renames go through a `ModulePresetLibrary::Listener`, so every target
+  showing the renamed preset follows (not only the one that renamed it).
+- `ModulePresetTarget::setCurrentPreset (name, isFactory, isDirty)` covers
+  step 6 (Dede's copy keeps the original's name *and* its modified flag:
+  a copy of a modified region is modified too) and the reset of a slot for
+  a new region (no preset). An empty name removes the `<Target>`.
+- A target's dirty flag is cleared on a state replacement right away and
+  once more asynchronously (JUCE sets the parameters from its own redirect
+  callback, in an unspecified order against ours).
+- `PresetManager` ignores the `<ModulePresets>` subtree in its dirty check
+  (the "risk" below, handled by identifier).
+- The tests live in `tests/presets/` (a console app without a test
+  framework, so nothing is fetched): 36 checks covering the list above,
+  plus a rename followed by two targets, a format version newer than the
+  library's refused, and the global preset's dirty rules.
+- Dede's factory region presets were written by hand rather than saved
+  from the plugin: each sets every delay key (mode, times, feedbacks,
+  levels, send) and the stages it uses, and relies on the defaults for the
+  rest (off). Seven: Slap Back, Dotted Echo, Frozen Wash, Stutter Freeze,
+  Shimmer Climb, Crushed Loop, Tuned Resonator (MIDI).
+- Placement in Dede: the preset bar took the strip heading's "Output"
+  label (first choice), browser 300 x 360.
 
 FxmeTools:
 

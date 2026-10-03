@@ -171,6 +171,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "presets/EmbeddedImage.h"
 #include "presets/PresetBank.h"
 #include "presets/PresetManager.h"
+#include "presets/ModulePresetLibrary.h"
+#include "presets/ModulePresetTarget.h"
 #include "components/PresetComponent.h"
 #include "components/PresetBarComponent.h"
 
