@@ -1,6 +1,7 @@
 # Local (module) presets and the preset widgets: plan
 
-Status: **phase 1 done** (2026-10-03); phases 2 to 4 planned. Written
+Status: **phases 1 and 2 done** (2026-10-03; in phase 2, only Dede has
+moved so far); phases 3 and 4 planned. Written
 2026-10-03, from a design discussion while working on Dede. Update this file as phases land,
 and record each consumer-visible change in `api-changes.md` as usual.
 
@@ -348,6 +349,17 @@ the widgets from `getPresetManager()` exactly as AmbiRR2 does.
 5. Dede: replace its own button and callout with the bar's.
 
 ### Phase 2: vendor folders and import (FxmeTools; opt-in)
+
+**Done 2026-10-03** for steps 1 and 2, as designed, on `PresetManager`
+(statics `vendorFolderName`, `getVendorPresetDirectory`,
+`getModulePresetDirectory`; member `importLegacyUserPresets`, returning the
+number copied). One refinement: the marker is written only when every file
+was copied, so a partial import (a file that could not be copied) is
+retried next time; files already present are always skipped, so a retry
+never duplicates. Dede moved, checked on the developer's real folder.
+Step 3 (the other projects) stays open: tick them off here as they move.
+
+Moved: Dede.
 
 1. `getVendorPresetDirectory`, `getModulePresetDirectory`,
    `importLegacyUserPresets` (with its marker file).

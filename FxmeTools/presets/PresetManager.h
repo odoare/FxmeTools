@@ -11,8 +11,12 @@
         APVTS state type, so other embedded XML assets are ignored.
 
       * User presets — plain XML files in a per-product folder under the
-        platform user-data directory (see getDefaultUserPresetDirectory()).
-        They can be created, overwritten, renamed and deleted at runtime.
+        platform user-data directory. They can be created, overwritten,
+        renamed and deleted at runtime. The FX-Mechanics layout is
+        getVendorPresetDirectory() (<user data>/FX-Mechanics/<Plugin>/Presets);
+        a plugin moving there from an older folder (e.g. its
+        getDefaultUserPresetDirectory()) calls importLegacyUserPresets() once
+        after construction, so its users keep their presets.
 
     Both banks share the same file format: the APVTS state XML, as written by
     apvts.copyState().createXml(). The current preset name (and whether it is
@@ -29,11 +33,15 @@
         MyProcessor()
             : apvts (*this, nullptr, "Parameters", createLayout()),
               presetManager (apvts,
-                             fxme::PresetManager::getDefaultUserPresetDirectory ("MyPlugin"),
+                             fxme::PresetManager::getVendorPresetDirectory ("MyPlugin"),
                              BinaryData::namedResourceList,
                              BinaryData::namedResourceListSize,
                              BinaryData::getNamedResource)
-        {}
+        {
+            // Only for a plugin that kept its presets elsewhere before:
+            presetManager.importLegacyUserPresets (
+                fxme::PresetManager::getDefaultUserPresetDirectory ("MyPlugin"));
+        }
 
     Author: Olivier Doaré, github.com/odoare
     Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
@@ -68,10 +76,41 @@ public:
                    ResourceProvider getNamedResource = nullptr);
     ~PresetManager() override;
 
-    // <user-app-data>/<productName>[/<subProductName>]/Presets
-    // (~/.config on Linux, ~/Library/Application Support on macOS, %APPDATA% on Windows)
+    //==========================================================================
+    // Folders. <user data> is ~/.config on Linux, ~/Library/Application
+    // Support on macOS, %APPDATA% on Windows.
+
+    /** The vendor folder every FX-Mechanics plugin keeps its data under. */
+    static constexpr const char* vendorFolderName = "FX-Mechanics";
+
+    /** <user data>/FX-Mechanics/<pluginName>/Presets: a plugin's own (global)
+        presets. */
+    static juce::File getVendorPresetDirectory (const juce::String& pluginName);
+
+    /** <user data>/FX-Mechanics/Modules/<moduleName>/Presets: the presets of
+        a module shared between plugins (see doc/local-presets-plan.md). */
+    static juce::File getModulePresetDirectory (const juce::String& moduleName);
+
+    /** <user data>/<productName>[/<subProductName>]/Presets: the folder
+        plugins used before the vendor layout. Unchanged, so a plugin still
+        using it keeps finding its users' presets; one moving to the vendor
+        folder passes it to importLegacyUserPresets(). */
     static juce::File getDefaultUserPresetDirectory (const juce::String& productName,
                                                      const juce::String& subProductName = {});
+
+    /** Copies the user presets of an older folder into this manager's user
+        folder, once: every *.xml there with no file of the same name here.
+        Copies, never moves, so an older version of the plugin still installed
+        keeps its own presets. A marker file left in the old folder
+        (importMarkerFileName) stops it happening again, so a preset deleted
+        here does not come back. Quiet on failure (nothing to import, or a
+        folder that cannot be written: nothing happens, and the marker is not
+        written, so it is tried again next time). Rescans and broadcasts when
+        anything was copied. Message thread. Returns how many were copied. */
+    int importLegacyUserPresets (const juce::File& legacyDirectory);
+
+    /** The marker importLegacyUserPresets() leaves in an imported folder. */
+    static constexpr const char* importMarkerFileName = ".imported-to-FX-Mechanics";
 
     //==========================================================================
     // Preset lists

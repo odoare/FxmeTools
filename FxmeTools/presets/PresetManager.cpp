@@ -37,17 +37,85 @@ PresetManager::~PresetManager()
     apvts.state.removeListener (this);
 }
 
+namespace
+{
+    /** ~/.config, ~/Library/Application Support or %APPDATA%. */
+    juce::File userDataRoot()
+    {
+        auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+       #if JUCE_MAC
+        dir = dir.getChildFile ("Application Support");
+       #endif
+        return dir;
+    }
+}
+
 juce::File PresetManager::getDefaultUserPresetDirectory (const juce::String& productName,
                                                          const juce::String& subProductName)
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
-   #if JUCE_MAC
-    dir = dir.getChildFile ("Application Support");
-   #endif
-    dir = dir.getChildFile (productName);
+    auto dir = userDataRoot().getChildFile (productName);
     if (subProductName.isNotEmpty())
         dir = dir.getChildFile (subProductName);
     return dir.getChildFile ("Presets");
+}
+
+juce::File PresetManager::getVendorPresetDirectory (const juce::String& pluginName)
+{
+    return userDataRoot().getChildFile (vendorFolderName)
+                         .getChildFile (pluginName)
+                         .getChildFile ("Presets");
+}
+
+juce::File PresetManager::getModulePresetDirectory (const juce::String& moduleName)
+{
+    return userDataRoot().getChildFile (vendorFolderName)
+                         .getChildFile ("Modules")
+                         .getChildFile (moduleName)
+                         .getChildFile ("Presets");
+}
+
+int PresetManager::importLegacyUserPresets (const juce::File& legacyDirectory)
+{
+    if (! legacyDirectory.isDirectory() || legacyDirectory == userDir)
+        return 0;
+
+    const auto marker = legacyDirectory.getChildFile (importMarkerFileName);
+    if (marker.exists())
+        return 0;
+
+    if (! userDir.createDirectory().wasOk())
+        return 0;   // tried again next time: no marker written
+
+    int copied = 0;
+    bool allCopied = true;
+    for (const auto& file : legacyDirectory.findChildFiles (juce::File::findFiles, false, "*.xml"))
+    {
+        const auto target = userDir.getChildFile (file.getFileName());
+        if (target.exists())
+            continue;   // a preset of that name is already here: keep it
+
+        if (file.copyFileTo (target))
+            ++copied;
+        else
+            allCopied = false;
+    }
+
+    // Only once everything went across: otherwise the next run retries the
+    // rest (and skips what is already here).
+    if (allCopied)
+        marker.replaceWithText ("The user presets of this folder were copied to\n"
+                                + userDir.getFullPathName() + "\n"
+                                "on " + juce::Time::getCurrentTime().toString (true, true) + ".\n"
+                                "Delete this file to copy them again (presets of the same\n"
+                                "name already there are kept).\n");
+
+    if (copied > 0)
+    {
+        rescanUserPresets();
+        sendChangeMessage();
+    }
+
+    return copied;
 }
 
 //==============================================================================

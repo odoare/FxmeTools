@@ -11,6 +11,37 @@ project after a break.
 
 ---
 
+## Vendor preset folders and legacy import on `PresetManager` (2026-10-03)
+
+Additive, **no consumer action required**; each plugin moves when it is next
+worked on. Phase 2 of `doc/local-presets-plan.md`.
+
+- `PresetManager::vendorFolderName` (`"FX-Mechanics"`),
+  `getVendorPresetDirectory (pluginName)` →
+  `<user data>/FX-Mechanics/<pluginName>/Presets`, and
+  `getModulePresetDirectory (moduleName)` →
+  `<user data>/FX-Mechanics/Modules/<moduleName>/Presets`.
+- `importLegacyUserPresets (legacyDir)`: copies (never moves) every `*.xml`
+  of an older folder that has no file of the same name in the manager's
+  user folder, once: it leaves `.imported-to-FX-Mechanics` in the old folder
+  (only when every file went across), so a preset deleted afterwards does
+  not come back. Rescans and broadcasts when it copied anything; returns the
+  count. Call it after constructing the manager on the new folder.
+- `getDefaultUserPresetDirectory` is **unchanged** (changing it would have
+  orphaned every user's presets); it is now documented as the legacy layout.
+
+To move a project: construct its manager on `getVendorPresetDirectory
+("<Name>")` and call `importLegacyUserPresets` with its old folder. Old
+folders per project (the plan has the table): `<Name>/Presets` for most;
+`FxmeSampler/<JucePlugin_Name>/Presets` for FxmeSampler;
+`FXMechanics/<Name>/Presets` (no hyphen) for Localizer and SuperMoTo.
+
+Moved so far: **Dede** (from `Dede/Presets`; checked on a real folder: four
+presets copied, the old folder intact with its marker, nothing copied again
+on the next run).
+
+---
+
 ## Preset widgets on `fxme::PresetBank`; optional browse button on the bar (2026-10-03)
 
 **No consumer action**: every existing call site compiles unchanged (checked
