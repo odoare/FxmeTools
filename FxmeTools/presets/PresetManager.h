@@ -21,7 +21,8 @@
 
     The manager broadcasts a change message whenever the preset lists, the
     current preset or the dirty flag change; GUI code (e.g. PresetComponent)
-    listens and refreshes itself.
+    listens and refreshes itself. It is a PresetBank, the interface the
+    preset widgets work on (so they also serve module presets).
 
     Typical processor setup:
 
@@ -44,21 +45,16 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "PresetBank.h"
 
 namespace fxme
 {
 
-class PresetManager : public juce::ChangeBroadcaster,
+class PresetManager : public PresetBank,
                       private juce::ValueTree::Listener
 {
 public:
-    struct Preset
-    {
-        juce::String name;
-        bool isFactory = false;
-        juce::File file;             // user presets only
-        juce::String resourceName;   // factory presets only (BinaryData symbol, e.g. "Cool_Preset_xml")
-    };
+    // PresetManager::Preset is fxme::Preset (inherited alias), as before.
 
     // Signature of BinaryData::getNamedResource.
     using ResourceProvider = const char* (*) (const char*, int&);
@@ -79,25 +75,23 @@ public:
 
     //==========================================================================
     // Preset lists
-    const std::vector<Preset>& getFactoryPresets() const noexcept { return factoryPresets; }
-    const std::vector<Preset>& getUserPresets()    const noexcept { return userPresets; }
-    juce::File getUserPresetDirectory() const { return userDir; }
-    void rescanUserPresets();
+    const std::vector<Preset>& getFactoryPresets() const noexcept override { return factoryPresets; }
+    const std::vector<Preset>& getUserPresets()    const noexcept override { return userPresets; }
+    juce::File getUserPresetDirectory() const override { return userDir; }
+    void rescanUserPresets() override;
 
     //==========================================================================
-    // Loading
-    bool loadPreset (const Preset& preset);
-    bool loadFactoryPreset (int index);
-    bool loadUserPreset (int index);
-    bool loadNext();       // walks factory then user presets, wrapping around
-    bool loadPrevious();
+    // Loading. loadFactoryPreset (index), loadUserPreset (index), loadNext()
+    // and loadPrevious() (factory then user presets, wrapping around) come
+    // from PresetBank.
+    bool loadPreset (const Preset& preset) override;
 
     //==========================================================================
     // User bank management. Names are free text; the file name is a legalised
     // version of it, the display name round-trips via an XML attribute.
-    bool saveUserPreset (const juce::String& name);   // creates or overwrites
-    bool deleteUserPreset (const Preset& preset);
-    bool renameUserPreset (const Preset& preset, const juce::String& newName);
+    bool saveUserPreset (const juce::String& name) override;   // creates or overwrites
+    bool deleteUserPreset (const Preset& preset) override;
+    bool renameUserPreset (const Preset& preset, const juce::String& newName) override;
 
     //==========================================================================
     // Side-state hooks, for processors that keep non-parameter data outside
@@ -122,11 +116,11 @@ public:
 
     //==========================================================================
     // Current preset info
-    juce::String getCurrentPresetName() const;
-    bool currentPresetIsFactory() const;
-    int  getCurrentFactoryIndex() const;   // -1 if the current preset is not a factory preset
-    int  getCurrentUserIndex() const;      // -1 if the current preset is not a user preset
-    bool isDirty() const noexcept { return dirty.load(); }   // state edited since last load/save
+    // (getCurrentFactoryIndex() and getCurrentUserIndex(), -1 when the
+    // current preset is not of that kind, come from PresetBank.)
+    juce::String getCurrentPresetName() const override;
+    bool currentPresetIsFactory() const override;
+    bool isDirty() const noexcept override { return dirty.load(); }   // state edited since last load/save
 
     // State properties used to persist the current preset identity.
     static const juce::Identifier presetNameProperty;       // "presetName"
@@ -135,7 +129,6 @@ public:
 private:
     void buildFactoryList (const char* const* list, int size);
     bool applyStateXml (const juce::XmlElement& xml, const Preset& preset);
-    bool step (int delta);
     void markDirty();
     void clearDirtyAsync();
 

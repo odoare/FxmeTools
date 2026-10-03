@@ -125,41 +125,6 @@ bool PresetManager::loadPreset (const Preset& preset)
     return xml != nullptr && applyStateXml (*xml, preset);
 }
 
-bool PresetManager::loadFactoryPreset (int index)
-{
-    return juce::isPositiveAndBelow (index, (int) factoryPresets.size())
-        && loadPreset (factoryPresets[(size_t) index]);
-}
-
-bool PresetManager::loadUserPreset (int index)
-{
-    return juce::isPositiveAndBelow (index, (int) userPresets.size())
-        && loadPreset (userPresets[(size_t) index]);
-}
-
-bool PresetManager::loadNext()     { return step (+1); }
-bool PresetManager::loadPrevious() { return step (-1); }
-
-bool PresetManager::step (int delta)
-{
-    const int numFactory = (int) factoryPresets.size();
-    const int total      = numFactory + (int) userPresets.size();
-    if (total == 0)
-        return false;
-
-    int current = -1;
-    if (const int fi = getCurrentFactoryIndex(); fi >= 0)
-        current = fi;
-    else if (const int ui = getCurrentUserIndex(); ui >= 0)
-        current = numFactory + ui;
-
-    const int next = current < 0 ? (delta > 0 ? 0 : total - 1)
-                                 : (current + delta + total) % total;
-
-    return loadPreset (next < numFactory ? factoryPresets[(size_t) next]
-                                         : userPresets[(size_t) (next - numFactory)]);
-}
-
 bool PresetManager::applyStateXml (const juce::XmlElement& xml, const Preset& preset)
 {
     if (! xml.hasTagName (apvts.state.getType()))
@@ -271,28 +236,6 @@ juce::String PresetManager::getCurrentPresetName() const
 bool PresetManager::currentPresetIsFactory() const
 {
     return (bool) apvts.state.getProperty (presetIsFactoryProperty, false);
-}
-
-int PresetManager::getCurrentFactoryIndex() const
-{
-    if (! currentPresetIsFactory())
-        return -1;
-    const auto name = getCurrentPresetName();
-    for (size_t i = 0; i < factoryPresets.size(); ++i)
-        if (factoryPresets[i].name == name)
-            return (int) i;
-    return -1;
-}
-
-int PresetManager::getCurrentUserIndex() const
-{
-    if (currentPresetIsFactory())
-        return -1;
-    const auto name = getCurrentPresetName();
-    for (size_t i = 0; i < userPresets.size(); ++i)
-        if (userPresets[i].name == name)
-            return (int) i;
-    return -1;
 }
 
 //==============================================================================

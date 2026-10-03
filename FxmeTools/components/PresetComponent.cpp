@@ -15,8 +15,8 @@
 namespace fxme
 {
 
-PresetComponent::PresetComponent (PresetManager& managerToUse)
-    : manager (managerToUse)
+PresetComponent::PresetComponent (PresetBank& bankToUse)
+    : manager (bankToUse)
 {
     manager.addChangeListener (this);
 

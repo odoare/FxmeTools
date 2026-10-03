@@ -169,6 +169,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 // tree as FLAC+Base64 so presets and sessions are self-contained.
 #include "presets/EmbeddedAudio.h"
 #include "presets/EmbeddedImage.h"
+#include "presets/PresetBank.h"
 #include "presets/PresetManager.h"
 #include "components/PresetComponent.h"
 #include "components/PresetBarComponent.h"

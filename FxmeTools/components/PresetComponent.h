@@ -7,7 +7,8 @@
     "Presets" tab. Shows the current preset name (with a dirty marker), a
     prev/next stepper, a sectioned list of factory and user presets
     (click to load), and Save / Save As / Rename / Delete buttons operating
-    on the user bank. All file handling is delegated to a PresetManager.
+    on the user bank. All file handling is delegated to a PresetBank: the
+    plugin's PresetManager, or any other bank (module presets).
 
     Usage (editor side):
 
@@ -25,7 +26,8 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "../presets/PresetManager.h"
+#include "../presets/PresetBank.h"
+#include "../presets/PresetManager.h"   // not needed here; kept for code that relied on it
 #include "../lookandfeels/FxmeLookAndFeel.h"
 
 namespace fxme
@@ -36,7 +38,7 @@ class PresetComponent : public juce::Component,
                         private juce::ListBoxModel
 {
 public:
-    explicit PresetComponent (PresetManager& managerToUse);
+    explicit PresetComponent (PresetBank& bankToUse);
     ~PresetComponent() override;
 
     void setAccentColour (juce::Colour newAccent);
@@ -73,7 +75,7 @@ private:
     void selectedRowsChanged (int lastRowSelected) override;
     void deleteKeyPressed (int lastRowSelected) override;
 
-    PresetManager& manager;
+    PresetBank& manager;
 
     std::vector<Row> rows;
 

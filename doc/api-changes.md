@@ -11,6 +11,39 @@ project after a break.
 
 ---
 
+## Preset widgets on `fxme::PresetBank`; optional browse button on the bar (2026-10-03)
+
+**No consumer action**: every existing call site compiles unchanged (checked
+by building Dede, and AmbiRR2 unmodified against this FxmeTools). Phase 1
+of `doc/local-presets-plan.md`.
+
+- New `presets/PresetBank.h`: the interface the preset widgets need (lists,
+  load, next / previous, save / rename / delete, current name, dirty flag;
+  a `ChangeBroadcaster`). `loadFactoryPreset`, `loadUserPreset`,
+  `loadNext`, `loadPrevious`, `getCurrentFactoryIndex` and
+  `getCurrentUserIndex` have default implementations there.
+- `PresetManager` now derives from `PresetBank` (instead of
+  `ChangeBroadcaster` directly). Its public API is the same; the six
+  members above are inherited instead of its own, with the same behaviour.
+- `Preset` moved out of the class to `fxme::Preset`; `PresetManager::Preset`
+  still names it.
+- `PresetBarComponent` and `PresetComponent` take a `PresetBank&`. Passing
+  a `PresetManager` works as before. Their headers still include
+  `PresetManager.h`, for code that relied on getting it through them.
+- `PresetBarComponent` gains an optional browse button ("..." at its right
+  end, inside the bar), **off by default**: `setBrowserButtonVisible (true)`,
+  `setBrowserSize (w, h)` (default 320 x 380), `setBrowserAccentColour`,
+  and `showBrowser()`. It opens a `PresetComponent` on the same bank in a
+  `CallOutBox` anchored on the button, parented to the plugin editor (else
+  the top-level component), after a rescan of the user folder.
+  `PresetBarComponent.h` now includes `PresetComponent.h`.
+
+Per project: nothing to do. To get the browse button, turn it on and widen
+the bar by one height (its buttons are square). Dede did, replacing its own
+button and callout.
+
+---
+
 ## `SpectrumRegionEditor`: copy-drag, snapping when moved, double-click reset (2026-10-02)
 
 Additive for the API, **no consumer action**, but two behaviours change:
