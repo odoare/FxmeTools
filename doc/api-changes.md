@@ -11,6 +11,30 @@ project after a break.
 
 ---
 
+## New in core: `fxme::ImpulseEnergy` (2026-10-03)
+
+Additive, **no consumer action**. `core/FxmeTools/dsp/ImpulseEnergy.h`
+(JUCE-free, header-only): `meanChannelEnergy` (sum of squares, averaged
+over channels), `gainFor`, and `normalise (channels, numChannels,
+numSamples, targetEnergy = 1)`, which scales an IR in place to unit energy
+with one gain for all channels (a stereo IR keeps its balance) and leaves a
+silent one alone. A convolution with a unit-energy IR leaves a broadband
+input at its RMS level, so every IR plays equally loud. Pinned in
+`core/tests/CoreImpulseEnergyTests.cpp` (two IRs 26 dB apart raw come out
+within 0.03 dB of each other and of the input).
+
+First users: FxmeFX's ConvolReverb and Cab normalise every IR on load: the
+built-in reverb IRs come down by 5 to 16 dB, the cabinet IRs by about 7 dB.
+Sessions saved before keep their level: their state version (ConvolReverb
+2, Cab 3) marks them with a `<prefix>_Rev_LegacyIRLevel` /
+`<prefix>_Cab_LegacyIRLevel` state property, which turns the normalisation
+off for that session, in every later save too. A plugin embedding these
+effects (FxmeSampler) does the same from its own state version with
+`markLegacyIRLevel`, `hasLegacyIRLevel` and `setIRNormalisation`; until it
+does, its old sessions get the normalised (quieter) level.
+
+---
+
 ## `PresetBarComponent`: the browser fits small plugin windows (2026-10-03)
 
 **No consumer action.** The browser the bar's "..." opens is a callout,
