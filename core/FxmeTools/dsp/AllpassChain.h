@@ -7,8 +7,13 @@
     unit gain but delays its phase by 0 to 180 degrees, crossing 90 degrees at
     the break frequency:
 
-        H(z) = (a + z^-1) / (1 + a·z^-1),   a = (1 - t) / (1 + t),
+        H(z) = (a + z^-1) / (1 + a·z^-1),   a = (t - 1) / (t + 1),
                                             t = tan(pi·fc/fs)
+
+    (Until 2026-10-03 the coefficient's sign was flipped, a = (1 - t)/(1 + t),
+    which mirrors the response around fs/4: the sections broke at fs/2 - fc,
+    so a sweep around a few hundred hertz sat near Nyquist and the phaser
+    barely did anything. CoreAllpassChainTests pins the -90 degrees at fc.)
 
     Summed with the dry signal, the cascade produces one notch per pair of
     sections; sweeping fc with an LFO moves the notches, which is the whole
@@ -75,7 +80,7 @@ public:
     {
         const float fc = std::clamp (hz, 20.0f, nyquistGuard);
         const float t  = std::tan (3.14159265358979f * fc / (float) sr);
-        a = (1.0f - t) / (1.0f + t);
+        a = (t - 1.0f) / (t + 1.0f);
     }
 
     float process (float x) noexcept
