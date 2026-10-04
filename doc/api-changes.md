@@ -11,6 +11,29 @@ project after a break.
 
 ---
 
+## `SplashOverlay`: a link row, and staying until clicked; `TopBar`: tighter decoration hit area (2026-10-04)
+
+Additive, **no consumer action**; existing calls behave as before.
+
+- `SplashOverlay::setLink (text, url, logo = {})`: a row under the artwork,
+  an optional small logo then the text, both opening `url` in the browser
+  without dismissing the splash (the text is underlined on hover);
+  `setLinkColour`. `show (holdMs)` with a negative `holdMs` stays until
+  clicked (an about box), and stops repainting once faded in.
+- `TopBar`: the decoration's click area is the image as drawn, no longer
+  the whole gap around it, so a click on empty header next to it does not
+  fire `onLogoClicked`.
+- `TopBar`: the "FX-Mechanics" after the version is a link to
+  fx-mechanics.com (brighter and underlined under the pointer).
+  **Every plugin using `TopBar` gets it** when it updates FxmeTools;
+  `setCompanyUrl ({})` turns it back into plain text, `setCompanyUrl (url)`
+  points it elsewhere.
+
+First user: Dede (its splash, with a link to fx-mechanics.com as in
+SuperMoTo, opened from the top bar's logo and icon).
+
+---
+
 ## Fix: `fxme::AllpassChain` broke at fs/2 - fc (2026-10-03)
 
 **Behaviour change, no source change.** `setFrequency` computed

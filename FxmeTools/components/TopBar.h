@@ -24,6 +24,10 @@
     per-plugin (each plugin embeds its own BinaryData). Colours default to the
     house palette and can be overridden with the setters.
 
+    The "FX-Mechanics" of the version string is a link to the company site
+    (underlined while the pointer is on it); setCompanyUrl ({}) turns that
+    off.
+
     Author: Olivier Doaré, github.com/odoare
     Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
     AGPL Version 3.0, or under commercial terms available from the author.
@@ -51,6 +55,10 @@ public:
     }
 
     void setAccentColour (juce::Colour c)     { accent = c; repaint(); }
+
+    /** Where a click on "FX-Mechanics" (right, after the version) goes;
+        fx-mechanics.com by default. An empty URL makes it plain text. */
+    void setCompanyUrl (const juce::URL& url) { companyUrl = url; repaint(); }
     void setBackgroundColour (juce::Colour c) { background = c; repaint(); }
 
     /** Optional artwork centred in whatever space is left between the blurb
@@ -69,15 +77,33 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (onLogoClicked != nullptr && isOverArtwork (e.getPosition()))
+        if (isOverCompany (e.getPosition()))
+            companyUrl.launchInDefaultBrowser();
+        else if (onLogoClicked != nullptr && isOverArtwork (e.getPosition()))
             onLogoClicked();
     }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        setMouseCursor (onLogoClicked != nullptr && isOverArtwork (e.getPosition())
+        const bool overCompany = isOverCompany (e.getPosition());
+        if (overCompany != companyHot)
+        {
+            companyHot = overCompany;
+            repaint (companyHit.expanded (2));
+        }
+
+        setMouseCursor (overCompany || (onLogoClicked != nullptr && isOverArtwork (e.getPosition()))
                         ? juce::MouseCursor::PointingHandCursor
                         : juce::MouseCursor::NormalCursor);
+    }
+
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        if (companyHot)
+        {
+            companyHot = false;
+            repaint (companyHit.expanded (2));
+        }
     }
 
     /** Parks externally-owned controls (a level-meter strip, the compact
@@ -165,11 +191,29 @@ public:
         g.drawText (name, area.removeFromLeft (nameWidth),
                     juce::Justification::centredLeft);
 
-        // Version, right.
-        g.setColour (dimText);
-        g.setFont (juce::Font (juce::FontOptions (12.0f)));
-        g.drawText ("v" + version + "  -  FX-Mechanics",
-                    area.removeFromRight (kVersionWidth), juce::Justification::centredRight);
+        // Version, right, and the company name after it: a link when there
+        // is a URL (brighter and underlined under the pointer).
+        {
+            const juce::Font font (juce::FontOptions (12.0f));
+            g.setFont (font);
+            auto versionArea = area.removeFromRight (kVersionWidth);
+
+            const juce::String company ("FX-Mechanics");
+            const int companyW = juce::GlyphArrangement::getStringWidthInt (font, company) + 1;
+            auto companyArea = versionArea.removeFromRight (companyW);
+            const bool isLink = companyUrl.isWellFormed();
+            companyHit = isLink ? companyArea.withSizeKeepingCentre (companyW, (int) font.getHeight() + 4)
+                                : juce::Rectangle<int>();
+
+            g.setColour (dimText);
+            g.drawText ("v" + version + "  -  ", versionArea, juce::Justification::centredRight);
+
+            g.setColour (isLink && companyHot ? text : dimText);
+            g.drawText (company, companyArea, juce::Justification::centredRight);
+            if (isLink && companyHot)
+                g.fillRect (companyArea.getX(), companyArea.getCentreY() + (int) (font.getHeight() * 0.5f),
+                            companyW - 1, 1);
+        }
 
         // Right controls (if any) sit between the version and the blurb;
         // keep the blurb clear of them.
@@ -191,12 +235,16 @@ public:
         // of overflowing into either.
         if (decoration.isValid() && decoration.getHeight() > 0)
         {
-            auto gap = area.reduced (kDecorationGap, 0);
-            decorationHit = gap.getWidth() > 0 ? gap : juce::Rectangle<int>();
-            if (gap.getWidth() > 0)
-                g.drawImage (decoration, gap.toFloat(),
-                             juce::RectanglePlacement::centred
-                           | juce::RectanglePlacement::onlyReduceInSize);
+            const auto gap = area.reduced (kDecorationGap, 0);
+            const juce::RectanglePlacement placement (juce::RectanglePlacement::centred
+                                                    | juce::RectanglePlacement::onlyReduceInSize);
+            // The hit area is the image as drawn, not the whole gap: a click
+            // on empty header next to it does nothing.
+            decorationHit = gap.getWidth() > 0
+                ? placement.appliedTo (decoration.getBounds().toFloat(), gap.toFloat()).getSmallestIntegerContainer()
+                : juce::Rectangle<int>();
+            if (! decorationHit.isEmpty())
+                g.drawImage (decoration, decorationHit.toFloat(), placement);
         }
         else
         {
@@ -216,6 +264,11 @@ private:
         return total;
     }
 
+    bool isOverCompany (juce::Point<int> p) const
+    {
+        return companyUrl.isWellFormed() && companyHit.contains (p);
+    }
+
     bool isOverArtwork (juce::Point<int> p) const
     {
         return logoHit.contains (p) || decorationHit.contains (p);
@@ -229,6 +282,9 @@ private:
     juce::String name, blurb, version;
     juce::Image logo, decoration;
     juce::Rectangle<int> logoHit, decorationHit;   // set while painting them
+    juce::Rectangle<int> companyHit;               // "FX-Mechanics", as last painted
+    juce::URL companyUrl { "https://fx-mechanics.com" };
+    bool companyHot = false;
 
     std::vector<std::pair<juce::Component*, int>> rightControls;
 
