@@ -71,6 +71,11 @@ add_executable(FxmeCoreFrequencyShifterTests CoreFrequencyShifterTests.cpp)
 target_link_libraries(FxmeCoreFrequencyShifterTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreFrequencyShifterTests COMMAND FxmeCoreFrequencyShifterTests)
 
+# ── 6h. Dynamic EQ: Regalia-Mitra sections, SVF cascades, gain computer ───
+add_executable(FxmeCoreDynamicEqTests CoreDynamicEqTests.cpp)
+target_link_libraries(FxmeCoreDynamicEqTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreDynamicEqTests COMMAND FxmeCoreDynamicEqTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -103,7 +108,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreDynamicEqTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

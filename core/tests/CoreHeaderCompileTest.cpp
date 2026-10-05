@@ -54,6 +54,15 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/CracksGenerator.h>)
  #include <FxmeTools/dsp/CracksGenerator.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/TptSvf.h>)
+ #include <FxmeTools/dsp/TptSvf.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/RegaliaMitraEq.h>)
+ #include <FxmeTools/dsp/RegaliaMitraEq.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/DynamicGainComputer.h>)
+ #include <FxmeTools/dsp/DynamicGainComputer.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/DelayLine.h>)
  #include <FxmeTools/dsp/DelayLine.h>
 #endif

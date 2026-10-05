@@ -11,6 +11,56 @@ project after a break.
 
 ---
 
+## New: dynamic EQ building blocks in core; dynamics meter, level meter, A/B in the module (2026-10-05)
+
+Additive, **no consumer action**. Nothing existing changed.
+
+Core (`core/FxmeTools/dsp/`, JUCE-free, header-only, realtime safe):
+
+- `RegaliaMitraEq.h`: `fxme::RegaliaMitraEq`, a bell (second-order allpass
+  as a Gray-Markel lattice) and low / high shelves (second-order SVF) in the
+  Regalia-Mitra form, the gain a scalar outside the recursion, so it can move
+  every sample (a dynamic EQ). Zolzer's cut correction makes a cut the exact
+  mirror of the boost of the same size; the correction term is continuous at
+  0 dB and glides over 0.5 ms (`setCorrectionSmoothing`). Frequency / Q glide
+  over 20 ms. Channels share the coefficients: `advance (gain)` once per
+  sample, then `process (channel, x)`. `magnitude()` / `magnitudeDb()` give
+  the exact response for drawing.
+- `TptSvf.h`: `fxme::TptSvf`, the trapezoidal SVF (Cytomic form) with the
+  analog-prototype responses, and `fxme::SvfPassCascade`, 12 / 24 / 48
+  dB/oct Butterworth high- / low-passes with a gliding cutoff and a
+  resonance. Use it rather than `fxme::Biquad` wherever a cutoff moves per
+  sample.
+- `DynamicGainComputer.h`: `fxme::LevelDetector` (peak, or RMS over a time
+  constant; linked stereo), `fxme::GainComputer` (compress, expand, upward
+  compress, upward expand; quadratic knee; range clamp; infinite ratio) and
+  `fxme::GainBallistics` (attack / release in dB). Not to be confused with
+  `BandDynamics.h`, which is the gate / ceiling pair of the band splitters.
+- Pinned in `core/tests/CoreDynamicEqTests.cpp` (42 checks): boost / cut
+  mirrors within 0.0001 dB for the three shapes, running filters against
+  `magnitude()`, transparency at 0 dB, no click when the gain ramps through
+  0 dB in 2 ms (also with a frequency jump), the cascades' -3 dB points and
+  slopes, every gain-computer mode and its knee, the ballistics' time
+  constants at 44.1 and 192 kHz, the detector's levels.
+
+Module:
+
+- `components/DynamicsMeter.h`: a dynamics stage's meter, the detector level
+  against a threshold marker on the same dBFS scale (draggable:
+  `onThresholdDragStart` / `onThresholdDrag` / `onThresholdDragEnd`) and a
+  bipolar gain-change bar. Push model (`update()` from a timer).
+- `components/StereoLevelMeter.h`: a compact 1 / 2 channel RMS meter with
+  held peaks. Push model.
+- `presets/AbComparison.h` + `components/AbCompareBar.h`: A/B of the whole
+  APVTS state (owned by the processor; the widget is "A", "B" and a copy
+  button).
+
+All of them are in the module umbrella `FxmeTools.h`.
+
+First user: Dynette (the dynamic EQ these were written for).
+
+---
+
 ## `SplashOverlay`: a link row, and staying until clicked; `TopBar`: tighter decoration hit area (2026-10-04)
 
 Additive, **no consumer action**; existing calls behave as before.
@@ -1570,6 +1620,7 @@ Their own `.gitmodules` names FxmeTools.
 | AmbiRR2 | `lib/FxmeTools` | CMake safe, **never built** | — |
 | Bloom | `lib/FxmeTools` | CMake safe, **never built** | — |
 | Dede | `lib/FxmeTools` | done (wired by hand) | 2026-08 |
+| Dynette | `lib/FxmeTools` | done (wired by the helper), **not built yet** | — |
 | ModalDish (was FemPlate) | `lib/FxmeTools` | done | 2026-08 |
 | FxmeFX | `lib/FxmeTools` | done (Pd externals needed core) | 2026-08 |
 | Localizer | `lib/FxmeTools` | CMake safe, **never built** | — |

@@ -90,6 +90,9 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/LevelMatcher.h>
 #include <FxmeTools/dsp/BandDynamics.h>
 #include <FxmeTools/dsp/BandDynamicsProcessor.h>
+#include <FxmeTools/dsp/TptSvf.h>
+#include <FxmeTools/dsp/RegaliaMitraEq.h>
+#include <FxmeTools/dsp/DynamicGainComputer.h>
 #include <FxmeTools/dsp/FilterBankSplitter.h>
 #include <FxmeTools/dsp/RmsMeter.h>
 #include <FxmeTools/dsp/VuMeter.h>
@@ -126,6 +129,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/ComponentSnapshot.h"
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
+#include "components/DynamicsMeter.h"
+#include "components/StereoLevelMeter.h"
 #include "components/InfoButton.h"
 #include "components/ChecklistPopup.h"
 #include "components/TextEntryFocusFixer.h"
@@ -175,6 +180,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "presets/ModulePresetTarget.h"
 #include "components/PresetComponent.h"
 #include "components/PresetBarComponent.h"
+#include "presets/AbComparison.h"
+#include "components/AbCompareBar.h"
 
 // Note: dsp/FirFilter.h is intentionally NOT included here — it depends on WDL.
 // Include it directly (<FxmeTools/dsp/FirFilter.h>) where needed.
