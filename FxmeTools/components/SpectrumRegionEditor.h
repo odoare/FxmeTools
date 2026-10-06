@@ -28,7 +28,9 @@
     upper line). The handle a press would grab is drawn emphasised.
 
     Empty space is where new regions are drawn: press and drag sideways, and
-    onRegionCreate is asked for a free slot. Ctrl-dragging a region's body
+    onRegionCreate is asked for a free slot. Shift-dragging draws one anywhere,
+    over existing regions too, so a range already fully covered can still take
+    a new one. Ctrl-dragging a region's body
     (Cmd on macOS) drags a copy of it instead, through onRegionDuplicate.
     With setEdgeSnapPixels, a dragged border sticks to the borders of other
     regions, and so does either border of a region (or a copy) moved whole.
@@ -164,7 +166,7 @@ public:
         dragging; the region carries the new values. */
     std::function<void (int index, const Region& region)> onRegionChanged;
 
-    /** A region was drawn on empty space. Return the slot that took it, or -1
+    /** A region was drawn on empty space, or anywhere with Shift. Return the slot that took it, or -1
         to refuse (nothing free). The consumer is expected to set that slot's
         values and push them back with setRegion(). */
     std::function<int (float lowHz, float highHz)> onRegionCreate;

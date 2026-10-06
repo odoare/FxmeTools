@@ -365,7 +365,9 @@ void SpectrumRegionEditor::mouseDown (const juce::MouseEvent& e)
 
     grabKeyboardFocus();
 
-    const auto hit = hitTestRegion (e.position);
+    // Shift draws a new region wherever the press lands, over other regions
+    // too: once they cover the whole range there is no empty space left.
+    const auto hit = e.mods.isShiftDown() ? Hit {} : hitTestRegion (e.position);
     if (hit.index >= 0)
     {
         setSelectedRegion (hit.index);
@@ -381,7 +383,7 @@ void SpectrumRegionEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Empty space: start drawing a new region.
+    // Empty space (or a Shift-press): start drawing a new region.
     const auto plot = getPlotArea();
     if (! plot.contains (e.position))
         return;
@@ -682,7 +684,7 @@ void SpectrumRegionEditor::mouseMove (const juce::MouseEvent& e)
 {
     SpectrumDisplay::mouseMove (e);
 
-    const auto hit = hitTestRegion (e.position);
+    const auto hit = e.mods.isShiftDown() ? Hit {} : hitTestRegion (e.position);
     if (hit.index != hover.index || hit.handle != hover.handle)
     {
         hover = hit;
