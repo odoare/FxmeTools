@@ -76,6 +76,11 @@ add_executable(FxmeCoreDynamicEqTests CoreDynamicEqTests.cpp)
 target_link_libraries(FxmeCoreDynamicEqTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreDynamicEqTests COMMAND FxmeCoreDynamicEqTests)
 
+# ── 6i. Synth building blocks: wavetables, envelopes, curves, voices ────
+add_executable(FxmeCoreSynthTests CoreSynthTests.cpp)
+target_link_libraries(FxmeCoreSynthTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreSynthTests COMMAND FxmeCoreSynthTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -108,7 +113,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreDynamicEqTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreDynamicEqTests FxmeCoreSynthTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

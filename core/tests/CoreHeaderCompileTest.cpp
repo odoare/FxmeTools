@@ -167,6 +167,51 @@
  #include <FxmeTools/dsp/Reverb.h>
 #endif
 
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/LookaheadLimiter.h>)
+ #include <FxmeTools/dsp/LookaheadLimiter.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/MinMaxPyramid.h>)
+ #include <FxmeTools/dsp/MinMaxPyramid.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/MultiModeFilter.h>)
+ #include <FxmeTools/dsp/MultiModeFilter.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/StereoTap.h>)
+ #include <FxmeTools/dsp/StereoTap.h>
+#endif
+
+// -- synth ----------------------------------------------------------------
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/BreakpointCurve.h>)
+ #include <FxmeTools/synth/BreakpointCurve.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/CurveAdsr.h>)
+ #include <FxmeTools/synth/CurveAdsr.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/ModGraph.h>)
+ #include <FxmeTools/synth/ModGraph.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/ModMatrix.h>)
+ #include <FxmeTools/synth/ModMatrix.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/ModulationLfo.h>)
+ #include <FxmeTools/synth/ModulationLfo.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/VoiceAllocator.h>)
+ #include <FxmeTools/synth/VoiceAllocator.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/WavetableBuilder.h>)
+ #include <FxmeTools/synth/WavetableBuilder.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/WavetableCache.h>)
+ #include <FxmeTools/synth/WavetableCache.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/WavetableReader.h>)
+ #include <FxmeTools/synth/WavetableReader.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/WavetableSet.h>)
+ #include <FxmeTools/synth/WavetableSet.h>
+#endif
+
 // -- midi -----------------------------------------------------------------
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/ChordName.h>)
  #include <FxmeTools/midi/ChordName.h>

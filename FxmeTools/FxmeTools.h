@@ -104,6 +104,23 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/PitchShifter.h>
 #include <FxmeTools/dsp/SplicePitchShifter.h>
 #include <FxmeTools/dsp/FrequencyShifter.h>
+#include <FxmeTools/dsp/MultiModeFilter.h>
+#include <FxmeTools/dsp/LookaheadLimiter.h>
+#include <FxmeTools/dsp/StereoTap.h>
+#include <FxmeTools/dsp/MinMaxPyramid.h>
+
+// Synth building blocks (core): wavetables, envelopes, LFO, curves,
+// voice allocation, modulation matrix arithmetic, oscillator graph.
+#include <FxmeTools/synth/WavetableSet.h>
+#include <FxmeTools/synth/WavetableBuilder.h>
+#include <FxmeTools/synth/WavetableCache.h>
+#include <FxmeTools/synth/WavetableReader.h>
+#include <FxmeTools/synth/CurveAdsr.h>
+#include <FxmeTools/synth/ModulationLfo.h>
+#include <FxmeTools/synth/BreakpointCurve.h>
+#include <FxmeTools/synth/VoiceAllocator.h>
+#include <FxmeTools/synth/ModMatrix.h>
+#include <FxmeTools/synth/ModGraph.h>
 #include <FxmeTools/dsp/GrainLooper.h>
 #include <FxmeTools/dsp/Waveshapers.h>
 #include <FxmeTools/dsp/Saturator.h>
@@ -139,6 +156,9 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplashOverlay.h"
 #include "components/SphereView.h"
 #include "components/AccentToggle.h"
+#include "components/GearButton.h"
+#include "components/Vectorscope.h"
+#include "components/BreakpointCurveEditor.h"
 #include "components/ScaleKeyboardComponent.h"
 #include "components/TextEntryFocusFixer.h"
 

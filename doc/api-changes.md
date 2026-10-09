@@ -11,6 +11,66 @@ project after a break.
 
 ---
 
+## New: synth building blocks in core; vectorscope, gear button, curve editor in the module (2026-10-09)
+
+Additive, **no consumer action**. Nothing existing changed. Written for
+Camshaft (range wavetable synth); everything is generic.
+
+Core (`core/FxmeTools/synth/`, a new folder, JUCE-free):
+
+- `WavetableSet.h`: a band-limited single-cycle table as an 11-level mipmap
+  (2048 samples, one level per octave, guard samples for 8-tap readers),
+  1 or 2 channels; `levelFor (freq, sampleRate)` picks the level.
+- `WavetableBuilder.h/.cpp`: a range of a buffer (`WavetableSource`) turned
+  into a `WavetableSet`: optional snap to zero crossings or to a whole
+  number of detected periods (`detectPeriod`, normalised autocorrelation by
+  FFT), loop overlap (linear / equal power), resampling to a power-of-two
+  work length, one forward FFT and one inverse FFT per level. Off the
+  audio thread (it allocates on first use).
+- `WavetableCache.h/.cpp`: a fixed pool of sets built by a worker thread
+  (`WavetableWorker`, a `std::thread`) and read by the audio thread with no
+  lock: quantised keys, per-slot sequence counter + reference count, a slot
+  held by a reader is never rebuilt, LRU recycling, and per-stream "latest
+  request wins" so a swept position costs one build per worker cycle.
+- `WavetableReader.h`: linear / 4-point Hermite / 8-tap windowed sinc reads.
+- `CurveAdsr.h`: ADSR with a curvature per segment, per sample or per
+  control block, retrigger from the current level.
+- `ModulationLfo.h`: an LFO with S&H and smooth random on top of `Lfo`'s
+  shapes, start phase, delay, fade-in, uni/bipolar, Hz or beats, PPQ lock.
+- `BreakpointCurve.h`: `CurveShape` (breakpoints, per-segment curvature,
+  sustain region hold / loop, release region), `SharedCurveShape`
+  (lock-free hand-over to the audio thread), `CurvePlayer`.
+- `VoiceAllocator.h`: poly (released voices stolen first, then the oldest),
+  mono and legato with a last-note-priority stack, sustain pedal.
+- `ModMatrix.h`: route arithmetic (source x depth x via into a normalised
+  offset) and `RouteSet`, routes as atomics for a lock-free hand-over.
+- `ModGraph.h`: up to 16 nodes; refuses cycles (self-loops allowed as
+  feedback), topological order.
+
+Core (`core/FxmeTools/dsp/`): `MultiModeFilter.h` (LP / HP 12 and 24, band
+pass, notch, peak, shelves and a 3-formant vowel filter, all on the TPT SVF
+so they can be modulated), `LookaheadLimiter.h` (brick-wall, provably never
+over the ceiling, constant latency), `StereoTap.h` (aligned stereo ring for
+displays), `MinMaxPyramid.h` (waveform overview at any zoom).
+
+Pinned in `core/tests/CoreSynthTests.cpp` (58 checks), and the new headers
+are in `CoreHeaderCompileTest.cpp`.
+
+Module (`FxmeTools/components/`):
+
+- `Vectorscope.h`: Lissajous scope over a `StereoTap`, with a fading trail.
+- `GearButton.h`: the settings gear Dede and MechanOdd each draw locally
+  (`fxme::GearButton`, `setAccent`). Those local copies can switch to it
+  whenever they are next touched; nothing forces it.
+- `BreakpointCurveEditor.h`: draws and edits a `CurveShape` (points,
+  curvature handles, sustain markers, live playheads).
+
+All of them are in the module umbrella `FxmeTools.h`.
+
+First user: Camshaft.
+
+---
+
 ## New: dynamic EQ building blocks in core; dynamics meter, level meter, A/B in the module (2026-10-05)
 
 Additive, **no consumer action**. Nothing existing changed.
@@ -1638,6 +1698,7 @@ straight into their own target by path, so they inherit its source changes too.
 
 | project | FxmeFX at | reaches FxmeTools as | state | last built against the split |
 |---|---|---|---|---|
+| Camshaft | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | new (2026-10-09), wired by the helper, **not built yet** | — |
 | FlowSynth | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
 | FxmeSampler | `FxmeFX` | `FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
 | Mechanodd | `lib/FxmeFX` | `lib/FxmeFX/lib/FxmeTools` | done | 2026-08-20 |
