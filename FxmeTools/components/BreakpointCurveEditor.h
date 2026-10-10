@@ -9,18 +9,26 @@
     Gestures:
       drag a point                 move it (the first and last stay at the
                                    edges; x stays between its neighbours)
-      shift + drag                 snap to a 1/16 grid
+      shift + drag                 snap to a 1/16 grid (in time, to the time
+                                   grid when one is set)
+      alt + drag                   free, even with time-grid snapping on
       double-click empty space     add a point there
       double-click a point         remove it (not the first or last)
       drag a segment's mid handle  bend the segment (up: slow start)
       double-click a mid handle    straighten the segment
       drag a sustain marker        move the region's start / end (snaps to
-                                   points); shown while the sustain is on
+                                   points); shown while the sustain is on,
+                                   as tabs in a band above the plot (clear
+                                   of the points), joined by a line that
+                                   shows the mode: an arrow for a loop, two
+                                   for back and forth, none for a hold
 
     The shape is the caller's: setShape() shows one, onChange receives every
     edit (call it the single source of truth and write it back wherever the
     shape lives, a ValueTree say). setPlayheads() draws markers at live
-    positions (normalised time). onPointHeld reports the point being held
+    positions (normalised time). setTimeGrid() replaces the default eighths
+    with a grid of the caller's (a curve lasting a number of beats, say),
+    optionally snapping the points' time to it. onPointHeld reports the point being held
     and its value while a point is pressed or dragged (index -1 when it is
     let go), for a caller that shows what that value does elsewhere.
     Colours via setColours().
@@ -75,6 +83,22 @@ public:
 
     const CurveShape& getShape() const noexcept { return shape; }
 
+    /** Time grid: lines every `step` (normalised time), stronger every
+        `majorStep` (0: none), and with `snap` the points dragged or added
+        land on it (alt held: free). step <= 0: the default eighths, no
+        snapping. Lines closer than 4 pixels are left out (the major ones
+        stay). */
+    void setTimeGrid (double step, double majorStep, bool snap)
+    {
+        if (std::abs (step - gridStep) > 1.0e-12 || std::abs (majorStep - gridMajor) > 1.0e-12 || snap != gridSnap)
+        {
+            gridStep = step;
+            gridMajor = majorStep;
+            gridSnap = snap;
+            repaint();
+        }
+    }
+
     /** Live playhead positions in normalised time (empty: none). */
     void setPlayheads (const std::vector<float>& positions)
     {
@@ -93,11 +117,26 @@ public:
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
 
         g.setColour (colours.grid);
-        for (int i = 1; i < 8; ++i)
+        if (gridStep > 0.0)
         {
-            const float x = r.getX() + r.getWidth() * (float) i / 8.0f;
-            g.drawVerticalLine ((int) x, r.getY(), r.getBottom());
+            auto lines = [&] (double step, juce::Colour c)
+            {
+                if (step <= 0.0 || step * (double) r.getWidth() < 4.0)
+                    return;
+                g.setColour (c);
+                for (int k = 1; (double) k * step < 1.0 - 1.0e-9; ++k)
+                    g.drawVerticalLine ((int) toX ((float) ((double) k * step)), r.getY(), r.getBottom());
+            };
+            lines (gridStep, colours.grid);
+            lines (gridMajor, colours.grid.withMultipliedAlpha (2.5f));
+            g.setColour (colours.grid);
         }
+        else
+            for (int i = 1; i < 8; ++i)
+            {
+                const float x = r.getX() + r.getWidth() * (float) i / 8.0f;
+                g.drawVerticalLine ((int) x, r.getY(), r.getBottom());
+            }
         for (int i = 1; i < 4; ++i)
         {
             const float y = r.getY() + r.getHeight() * (float) i / 4.0f;
@@ -110,11 +149,27 @@ public:
             const float x1 = toX (shape.x[(size_t) shape.sustainEnd]);
             g.setColour (colours.sustain);
             g.fillRect (juce::Rectangle<float> (x0, r.getY(), juce::jmax (2.0f, x1 - x0), r.getHeight()));
+
+            // The markers: tabs above the plot, lines down through it.
+            const auto band = markerBand();
             g.setColour (colours.sustain.withAlpha (0.9f));
-            g.drawVerticalLine ((int) x0, r.getY(), r.getBottom());
-            g.drawVerticalLine ((int) x1, r.getY(), r.getBottom());
-            g.fillRect (juce::Rectangle<float> (x0 - 4.0f, r.getY(), 8.0f, 6.0f));
-            g.fillRect (juce::Rectangle<float> (x1 - 4.0f, r.getY(), 8.0f, 6.0f));
+            g.drawVerticalLine ((int) x0, band.getBottom(), r.getBottom());
+            g.drawVerticalLine ((int) x1, band.getBottom(), r.getBottom());
+            g.fillRect (juce::Rectangle<float> (x0 - 4.0f, band.getY(), 8.0f, band.getHeight()));
+            g.fillRect (juce::Rectangle<float> (x1 - 4.0f, band.getY(), 8.0f, band.getHeight()));
+
+            // The mode, between the tabs.
+            if (shape.sustainLoop && x1 - x0 > 20.0f)
+            {
+                const float y = band.getCentreY(), a = 4.0f;
+                const float l = x0 + 6.0f, rr = x1 - 6.0f;
+                g.drawLine (l, y, rr, y, 1.0f);
+                juce::Path heads;
+                heads.addTriangle (rr, y, rr - a, y - a * 0.75f, rr - a, y + a * 0.75f);
+                if (shape.sustainPingPong)
+                    heads.addTriangle (l, y, l + a, y - a * 0.75f, l + a, y + a * 0.75f);
+                g.fillPath (heads);
+            }
         }
 
         // The curve, sampled per pixel.
@@ -202,13 +257,10 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override
     {
         const auto r = plotArea();
-        float t = juce::jlimit (0.0f, 1.0f, (e.position.x - r.getX()) / r.getWidth());
+        float t = snapTime (juce::jlimit (0.0f, 1.0f, (e.position.x - r.getX()) / r.getWidth()), e.mods);
         float v = juce::jlimit (0.0f, 1.0f, (r.getBottom() - e.position.y) / r.getHeight());
         if (e.mods.isShiftDown())
-        {
-            t = std::round (t * 16.0f) / 16.0f;
             v = std::round (v * 16.0f) / 16.0f;
-        }
 
         switch (dragging)
         {
@@ -269,8 +321,10 @@ public:
         else
         {
             const auto r = plotArea();
-            addPoint (juce::jlimit (0.0f, 1.0f, (e.position.x - r.getX()) / r.getWidth()),
-                      juce::jlimit (0.0f, 1.0f, (r.getBottom() - e.position.y) / r.getHeight()));
+            float v = juce::jlimit (0.0f, 1.0f, (r.getBottom() - e.position.y) / r.getHeight());
+            if (e.mods.isShiftDown())
+                v = std::round (v * 16.0f) / 16.0f;
+            addPoint (snapTime (juce::jlimit (0.0f, 1.0f, (e.position.x - r.getX()) / r.getWidth()), e.mods), v);
         }
         shape.sanitise();
         changed();
@@ -279,7 +333,12 @@ public:
 private:
     enum class Drag { none, point, curvature, sustainStart, sustainEnd };
 
-    juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().reduced (8.0f, 10.0f); }
+    juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().withTrimmedTop (8.0f).reduced (8.0f, 10.0f); }
+    juce::Rectangle<float> markerBand() const
+    {
+        const auto r = plotArea();
+        return { r.getX(), r.getY() - 14.0f, r.getWidth(), 10.0f };
+    }
     float toX (float t) const { const auto r = plotArea(); return r.getX() + t * r.getWidth(); }
     float toY (float v) const { const auto r = plotArea(); return r.getBottom() - v * r.getHeight(); }
 
@@ -289,6 +348,20 @@ private:
     {
         const float t = 0.5f * (shape.x[(size_t) i] + shape.x[(size_t) i + 1]);
         return { toX (t), toY (shape.valueAt (t)) };
+    }
+
+    /** A time on the time grid when it snaps (not with alt), on the 1/16
+        grid with shift, else as is. */
+    float snapTime (float t, const juce::ModifierKeys& mods) const
+    {
+        if (gridSnap && gridStep > 0.0 && ! mods.isAltDown())
+            return juce::jlimit (0.0f, 1.0f, (float) (std::round ((double) t / gridStep) * gridStep));
+        if (mods.isShiftDown())
+        {
+            const double step = gridStep > 0.0 ? gridStep : 1.0 / 16.0;
+            return juce::jlimit (0.0f, 1.0f, (float) (std::round ((double) t / step) * step));
+        }
+        return t;
     }
 
     int hitPoint (juce::Point<float> p) const
@@ -309,7 +382,8 @@ private:
 
     int hitSustainMarker (juce::Point<float> p) const
     {
-        if (! shape.sustainEnabled || p.y > plotArea().getY() + 10.0f)
+        const auto band = markerBand();
+        if (! shape.sustainEnabled || p.y < band.getY() - 2.0f || p.y > band.getBottom() + 2.0f)
             return -1;
         if (std::abs (p.x - toX (shape.x[(size_t) shape.sustainStart])) < 6.0f) return 0;
         if (std::abs (p.x - toX (shape.x[(size_t) shape.sustainEnd])) < 6.0f)   return 1;
@@ -373,6 +447,8 @@ private:
     Drag dragging = Drag::none;
     int dragIndex = -1, hoverPoint = -1, hoverHandle = -1;
     float dragStartCurve = 0.0f;
+    double gridStep = 0.0, gridMajor = 0.0;
+    bool gridSnap = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BreakpointCurveEditor)
 };

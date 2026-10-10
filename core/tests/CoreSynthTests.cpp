@@ -16,7 +16,8 @@
          small error.
       5. CurveAdsr: segment times, sustain, release to idle, retrigger from
          the current level.
-      6. BreakpointCurve: sustain loop stays in its region; release plays to
+      6. BreakpointCurve: sustain loop (and back and forth) stays in its
+         region; host-timeline positions; release plays to
          the end; no release region keeps looping.
       7. VoiceAllocator: idle voices first, released stolen before held,
          mono note stack, legato glides.
@@ -409,6 +410,51 @@ static void testCurve()
     pl.advance (copy, 0.3);
     pl.noteOff (copy);
     check (! pl.isReleasing(), "without release, note-off does nothing");
+
+    // Back and forth: reaches the end, turns back to the start, moves
+    // continuously (no wrap jump), stays in the region.
+    copy.releaseEnabled = true;
+    copy.sustainPingPong = true;
+    shared.write (copy);
+    check (shared.readIfChanged (copy, seen) && copy.sustainPingPong, "back-and-forth flag handed over");
+    pl.noteOn();
+    double prev = 0.0, maxStep = 0.0, lowest = 1.0;
+    inRegion = true;
+    bool turned = false;
+    for (int i = 0; i < 200; ++i)
+    {
+        pl.advance (copy, 0.013);
+        const double p = pl.getPosition();
+        if (i > 0)
+            maxStep = std::max (maxStep, std::abs (p - prev));
+        if (i > 30)
+        {
+            inRegion = inRegion && p >= 0.25 - 1e-9 && p <= 0.5 + 1e-9;
+            lowest = std::min (lowest, p);
+            turned = turned || p < prev;
+        }
+        prev = p;
+    }
+    check (inRegion && turned && lowest < 0.26, "back and forth stays in its region and goes both ways");
+    check (maxStep <= 0.013 + 1e-9, "back and forth never jumps");
+    pl.noteOff (copy);
+    for (int i = 0; i < 100; ++i)
+        pl.advance (copy, 0.013);
+    check (pl.isFinished(), "back and forth released plays to the end");
+
+    // On the host's timeline: the start once, then the sustain region.
+    using P = fxme::CurvePlayer;
+    copy.sustainPingPong = false;
+    check (std::abs (P::positionAfter (copy, 0.2) - 0.2) < 1e-12, "host time: plays the start");
+    check (std::abs (P::positionAfter (copy, 0.6) - 0.35) < 1e-12, "host time: then loops the sustain region");
+    check (std::abs (P::positionAfter (copy, 100.6) - 0.35) < 1e-9, "host time: and keeps looping it");
+    copy.sustainPingPong = true;
+    check (std::abs (P::positionAfter (copy, 0.6) - 0.4) < 1e-12, "host time: back and forth turns back at the end");
+    check (std::abs (P::positionAfter (copy, 0.85) - 0.35) < 1e-12, "host time: then forwards again");
+    copy.sustainLoop = false;
+    check (std::abs (P::positionAfter (copy, 7.0) - 0.5) < 1e-12, "host time: hold stays at the sustain end");
+    copy.sustainEnabled = false;
+    check (std::abs (P::positionAfter (copy, 2.25) - 0.25) < 1e-12, "host time: no sustain, the curve repeats");
 }
 
 static void testAllocator()

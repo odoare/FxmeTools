@@ -11,6 +11,42 @@ project after a break.
 
 ---
 
+## New: `BreakpointCurveEditor::setTimeGrid` (2026-10-10)
+
+Additive. **No consumer action** (without a call, the editor draws its eighths
+and shift snaps to sixteenths as before).
+
+`setTimeGrid (step, majorStep, snap)`: vertical lines every `step` of normalised
+time (stronger every `majorStep`) instead of the eighths, and with `snap` the
+points dragged or added (double-click) land on the grid; alt held moves freely.
+Shift snaps the time to that grid too when one is set, the value to sixteenths
+as before. Camshaft gives it the beat grid of a curve whose duration is in
+beats.
+
+---
+
+## New: back-and-forth sustain, host-timeline curve positions; curve editor markers above the plot (2026-10-10)
+
+Additive. **No consumer action** (Camshaft is the only user of these classes).
+
+- `CurveShape::sustainPingPong` (default false, so existing shapes behave as
+  before): with `sustainLoop`, the sustain region is played back and forth (from
+  its end back to its start, then forwards) instead of wrapping.
+  `SharedCurveShape` carries it (flag bit 8).
+- `CurvePlayer::setElapsed (shape, elapsed)` and the static `positionAfter()`:
+  the position of a note held for `elapsed` (the start once, then the sustain
+  region looped, back and forth or held; the whole curve repeated without a
+  sustain region). For curves on the host's timeline, which `setPosition()`
+  (raw wrapped position) used to repeat whole, ignoring the sustain.
+- `BreakpointCurveEditor`: the sustain markers are tabs in a band above the
+  plot, clear of the points (the plot is 8 px lower), joined by a line showing
+  the mode (an arrow for a loop, two for back and forth).
+
+Pinned in `CoreSynthTests.cpp`: back and forth stays in its region, goes both
+ways, never jumps, releases to the end; the host-timeline positions.
+
+---
+
 ## New: `BreakpointCurveEditor::onPointHeld` (2026-10-10)
 
 Additive. **No consumer action.**

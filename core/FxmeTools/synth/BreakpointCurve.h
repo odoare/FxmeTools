@@ -17,15 +17,20 @@
       - Without a sustain region the curve plays once and holds its last
         value.
       - With one, while the note is held it loops between the sustain start
-        and end points, or holds the value at the end point (sustainLoop
-        false).
+        and end points (forwards, or back and forth when sustainPingPong is
+        set: from the end point back to the start, then forwards again), or
+        holds the value at the end point (sustainLoop false).
       - On note-off, with a release region enabled, the playhead leaves the
         sustain region (from its end if it was looping or holding there) and
         plays to the end; isReleasing() is true until it gets there, so a
         voice can wait for it. Without a release region note-off changes
         nothing: the curve keeps looping or holding.
-      - setPosition() places the playhead directly, for a curve following the
-        host's timeline (the owner computes the position from the PPQ).
+      - setElapsed() places the playhead where a note held for that long
+        would have it (the start once, then the sustain region looped, back
+        and forth, or held; without a sustain region the whole curve
+        repeats), for a curve following the host's timeline: the owner
+        computes the elapsed time from the PPQ. setPosition() places it at a
+        raw position.
 
     The segment shape is CurveAdsr::shape. Header-only, no allocation,
     realtime safe.
@@ -57,6 +62,7 @@ struct CurveShape
 
     bool sustainEnabled = false;
     bool sustainLoop = true;
+    bool sustainPingPong = false;   // with sustainLoop: back and forth instead of wrapping
     int sustainStart = 0, sustainEnd = 1;
     bool releaseEnabled = false;
 
@@ -124,7 +130,8 @@ public:
             ys[(std::size_t) i].store (s.y[(std::size_t) i], std::memory_order_relaxed);
             cs[(std::size_t) i].store (s.curve[(std::size_t) i], std::memory_order_relaxed);
         }
-        flags.store ((s.sustainEnabled ? 1 : 0) | (s.sustainLoop ? 2 : 0) | (s.releaseEnabled ? 4 : 0),
+        flags.store ((s.sustainEnabled ? 1 : 0) | (s.sustainLoop ? 2 : 0) | (s.releaseEnabled ? 4 : 0)
+                         | (s.sustainPingPong ? 8 : 0),
                      std::memory_order_relaxed);
         regions.store ((s.sustainStart & 0xff) | ((s.sustainEnd & 0xff) << 8), std::memory_order_relaxed);
 
@@ -158,6 +165,7 @@ public:
         tmp.sustainEnabled = (f & 1) != 0;
         tmp.sustainLoop = (f & 2) != 0;
         tmp.releaseEnabled = (f & 4) != 0;
+        tmp.sustainPingPong = (f & 8) != 0;
         tmp.sustainStart = r & 0xff;
         tmp.sustainEnd = (r >> 8) & 0xff;
         tmp.sanitise();
@@ -181,6 +189,7 @@ public:
         t = 0.0;
         released = false;
         finished = false;
+        bouncing = false;
     }
 
     void noteOff (const CurveShape& shape) noexcept
@@ -188,6 +197,7 @@ public:
         if (released)
             return;
         released = true;
+        bouncing = false;
 
         if (! (shape.sustainEnabled && shape.releaseEnabled))
         {
@@ -206,17 +216,35 @@ public:
     {
         if (! finished)
         {
+            const bool sustaining = shape.sustainEnabled && ! released;
+            const double s0 = (double) shape.x[(std::size_t) shape.sustainStart];
+            const double s1 = (double) shape.x[(std::size_t) shape.sustainEnd];
+            const double length = s1 - s0;
+            const bool pingPong = sustaining && shape.sustainLoop && shape.sustainPingPong && length > 1.0e-6;
+
+            if (bouncing && pingPong)
+            {
+                // Back and forth: an unfolded phase over twice the region,
+                // the first half going backwards from its end.
+                bounce = std::fmod (bounce + dt, 2.0 * length);
+                t = s1 - (bounce < length ? bounce : 2.0 * length - bounce);
+                return shape.valueAt ((float) t);
+            }
+            bouncing = false;
             t += dt;
 
-            const bool sustaining = shape.sustainEnabled && ! released;
             if (sustaining)
             {
-                const double s0 = (double) shape.x[(std::size_t) shape.sustainStart];
-                const double s1 = (double) shape.x[(std::size_t) shape.sustainEnd];
                 if (t >= s1)
                 {
-                    if (shape.sustainLoop && s1 - s0 > 1.0e-6)
-                        t = s0 + std::fmod (t - s0, s1 - s0);
+                    if (pingPong)
+                    {
+                        bouncing = true;
+                        bounce = std::fmod (t - s1, 2.0 * length);
+                        t = s1 - (bounce < length ? bounce : 2.0 * length - bounce);
+                    }
+                    else if (shape.sustainLoop && length > 1.0e-6)
+                        t = s0 + std::fmod (t - s0, length);
                     else
                         t = s1;
                 }
@@ -230,11 +258,42 @@ public:
         return shape.valueAt ((float) t);
     }
 
-    /** Places the playhead at normalised position `position` (host sync). */
+    /** Places the playhead at normalised position `position` (wrapped). */
     float setPosition (const CurveShape& shape, double position) noexcept
     {
         t = position - std::floor (position);
         return shape.valueAt ((float) t);
+    }
+
+    /** Places the playhead where a note held for `elapsed` (normalised
+        time, from the curve's start) would have it: the curve up to the
+        sustain end once, then the sustain region looped, back and forth or
+        held; without a sustain region, the whole curve repeated. For a
+        curve on the host's timeline (no note-off: the sustain never ends). */
+    float setElapsed (const CurveShape& shape, double elapsed) noexcept
+    {
+        t = positionAfter (shape, elapsed);
+        return shape.valueAt ((float) t);
+    }
+
+    static double positionAfter (const CurveShape& shape, double elapsed) noexcept
+    {
+        if (! shape.sustainEnabled)
+            return elapsed - std::floor (elapsed);
+        const double s0 = (double) shape.x[(std::size_t) shape.sustainStart];
+        const double s1 = (double) shape.x[(std::size_t) shape.sustainEnd];
+        const double length = s1 - s0;
+        if (elapsed < s1)
+            return elapsed > 0.0 ? elapsed : 0.0;
+        if (! shape.sustainLoop || length <= 1.0e-6)
+            return s1;
+        const double over = elapsed - s1;
+        if (shape.sustainPingPong)
+        {
+            const double u = std::fmod (over, 2.0 * length);
+            return s1 - (u < length ? u : 2.0 * length - u);
+        }
+        return s0 + std::fmod (over, length);
     }
 
     /** True while a release region is playing out after note-off. */
@@ -243,8 +302,8 @@ public:
     double getPosition() const noexcept { return t; }
 
 private:
-    double t = 0.0;
-    bool released = false, finished = false;
+    double t = 0.0, bounce = 0.0;
+    bool released = false, finished = false, bouncing = false;
 };
 
 } // namespace fxme
