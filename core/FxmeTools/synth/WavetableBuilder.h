@@ -26,6 +26,9 @@
          harmonics that level allows (WavetableSet::maxHarmonic).
 
     DC is removed (a table with an offset would put a step on every note-on).
+    Each set is phase-aligned (WavetableSet.h): rotated so its lowest strong
+    harmonic starts as a sine at phase 0, the same rotation for both channels,
+    so sets cut from nearby positions crossfade without cancelling.
     The set keeps the source's amplitude: a quiet range gives a quiet wave.
 
     Not realtime: it allocates its work buffers on first use and runs FFTs of
@@ -126,7 +129,8 @@ private:
     void makeCycle (const float* src, int sourceLength, int start, int length, int overlapSamples,
                     WavetableBuildSettings::OverlapShape shape);
     void resampleCycle (int workSize);
-    void buildLevels (int workOrder, int harmonicLimit, float* const* tables);
+    void buildLevels (int workOrder, int harmonicLimit, float* const* tables, bool computeAlignment);
+    double alignTurns = 0.0;    // rotation applied to every channel of the set being built
 
     std::vector<float> cycle;               // the looped cycle, length cycleLength
     int cycleLength = 0;

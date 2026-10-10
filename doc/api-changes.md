@@ -11,6 +11,63 @@ project after a break.
 
 ---
 
+## New: live range reading (`MipmappedBuffer`, `RangeLoop`, `SourceAnalysis`); `ModulationLfo::noteOn` timing (2026-10-09)
+
+Additive, plus one behaviour change in code only Camshaft uses so far. **No
+consumer action.**
+
+- `synth/MipmappedBuffer.h/.cpp`: a recording as an octave pyramid (63-tap
+  windowed-sinc decimation), read at any speed without aliasing:
+  `levelForSpeed()`, `read()`, `readBlended()` (fractional level, two octaves
+  blended). Positions are always level-0 samples.
+- `RangeLoop` (same header): a range of it read as one cycle of a loop, the
+  overlap crossfaded live, `wrapStep()` + `polyBlep()` for a loop with no
+  overlap. Every value may change per sample: a moving range is a continuous
+  scan. This is what Camshaft uses instead of `WavetableCache`, whose
+  table switching could not be made glitch-free on real audio (the cache stays,
+  tested, unused).
+- `synth/SourceAnalysis.h/.cpp`: rising zero crossings and a period track of a
+  recording, computed once, looked up on the audio thread.
+- `WavetableReader::interpolate()`: the linear / cubic / sinc kernel on any
+  guarded buffer (the pyramid uses it).
+- **Behaviour:** `ModulationLfo::noteOn()` no longer sets the phase itself; the
+  next `advance()` does, from the parameters current then. A caller restarting
+  the LFO before setting that block's parameters (the natural order at a
+  note-on) used to get the previous note's start phase.
+
+Pinned in `CoreSynthTests.cpp`: the pyramid does not alias at speed 8, its
+levels line up with level 0, an overlapped loop wraps without a step, the
+period track and zero crossings, the LFO start phase set after `noteOn`, no
+phase drift, host-locked phase.
+
+---
+
+## Fix: `EmbeddedAudio::createReader` read freed memory (2026-10-09)
+
+**Silent bug, fixed; no consumer action** beyond picking up the new pointer.
+
+For version 1 payloads (every embed since the float WAV format) the inflate
+stream was built on `decoded.getMemoryBlock()`, which returns a copy by value,
+without keeping a copy: the stream read a destroyed temporary. Small payloads
+usually survived; large ones (a long sample, a long IR) failed to load, or
+loaded garbage, intermittently. It now reads the decoded bytes directly.
+
+Affected: every `createReader` caller: FxmeFX's ConvolReverb external IRs (so
+FxmeFX, MechanOdd, FxmeSampler, FlowSynth), `dsp/FirFilter.h`, SuperMoTo, and
+Camshaft's imported audio (where it showed as "a new file does not load, the
+built-in source keeps playing"). Embedding was never affected: what is already
+stored in sessions and presets is fine and now reads back reliably.
+
+Also in the synth core, behaviour of new code only (first user Camshaft):
+`WavetableBuilder` now phase-aligns every set (rotated so its lowest strong
+harmonic starts as a sine at phase 0; `WavetableSet::alignment` records it),
+so sets cut from neighbouring positions crossfade without combing; and
+`WavetableCache::distance()` exposes the key measure, so a voice can move to a
+closer ready set while the exact one is being built. Pinned in
+`CoreSynthTests.cpp`.
+
+---
+
 ## New: synth building blocks in core; vectorscope, gear button, curve editor in the module (2026-10-09)
 
 Additive, **no consumer action**. Nothing existing changed. Written for

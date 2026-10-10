@@ -23,6 +23,14 @@
     but can lose an octave of top harmonics. levelBias = 0.5 sits between the
     two, the usual compromise for wavetable synths.
 
+    Phase alignment: the builder rotates each set so that its lowest strong
+    harmonic starts as a sine at phase 0 (see WavetableBuilder). Two sets cut
+    from neighbouring positions of the same sound then line up, and a
+    crossfade between them does not comb. `alignment` records the rotation:
+    reading the set at phase p gives the original cycle at p + alignment
+    (cycles), which is what a display mapping the phase back to the source
+    needs.
+
     Plain data, allocated once (allocate()) on a non-audio thread; reading is
     realtime safe.
 
@@ -109,6 +117,7 @@ struct WavetableSet
 
     std::vector<float> data;
     int numChannels = 1;
+    double alignment = 0.0;   // cycles, see the file comment
 };
 
 } // namespace fxme

@@ -112,7 +112,6 @@ int WavetableCache::acquireNearest (const Key& key) noexcept
     double bestDistance = std::numeric_limits<double>::max();
     Key bestKey;
 
-    const double lenLog = std::log2 ((double) jmax (1, key.length()));
     for (int i = 0; i < (int) slots.size(); ++i)
     {
         const auto& s = *slots[(std::size_t) i];
@@ -122,13 +121,7 @@ int WavetableCache::acquireNearest (const Key& key) noexcept
         if (! k.isValid())
             continue;
 
-        // Position distance in widths, width distance in octaves; another
-        // generation (an older source) only when nothing current is ready.
-        const double width = (double) jmax (1, key.length());
-        double d = std::abs ((double) (k.centre() - key.centre())) / width
-                 + std::abs (std::log2 ((double) jmax (1, k.length())) - lenLog);
-        if (k.generation() != key.generation())
-            d += 1.0e6;
+        const double d = distance (k, key);
 
         if (d < bestDistance)
         {
@@ -141,6 +134,22 @@ int WavetableCache::acquireNearest (const Key& key) noexcept
     if (best >= 0 && tryHold (*slots[(std::size_t) best], bestKey))
         return best;
     return -1;
+}
+
+double WavetableCache::distance (const Key& from, const Key& to) noexcept
+{
+    if (! from.isValid() || ! to.isValid())
+        return std::numeric_limits<double>::max();
+    // Position distance in widths, width distance in octaves; another
+    // generation (an older source) only when nothing current is ready.
+    const double width = (double) jmax (1, to.length());
+    double d = std::abs ((double) (from.centre() - to.centre())) / width
+             + std::abs (std::log2 ((double) jmax (1, from.length())) - std::log2 ((double) jmax (1, to.length())))
+             + 0.01 * std::abs ((double) (from.overlapPermille() - to.overlapPermille())) / 10.0
+             + (from.overlapShape() != to.overlapShape() || from.snap() != to.snap() ? 0.5 : 0.0);
+    if (from.generation() != to.generation())
+        d += 1.0e6;
+    return d;
 }
 
 void WavetableCache::release (int slot) noexcept

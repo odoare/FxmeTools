@@ -46,28 +46,34 @@ public:
         int i = (int) pos;
         const float f = (float) (pos - (double) i);
         i &= WavetableSet::tableSize - 1;
+        return interpolate (table, i, f, mode);
+    }
 
+    /** Between x[i] and x[i + 1] at fraction f. The taps x[i - 3] .. x[i + 4]
+        must be readable (guard samples). Shared with MipmappedBuffer. */
+    static float interpolate (const float* x, int i, float f, Interpolation mode) noexcept
+    {
         switch (mode)
         {
             case Interpolation::linear:
-                return table[i] + f * (table[i + 1] - table[i]);
+                return x[i] + f * (x[i + 1] - x[i]);
 
             case Interpolation::sinc:
             {
                 const auto& k = kernel();
                 const int p = (int) (f * (float) sincPhases);
                 const float* c = k.data() + p * sincTaps;
-                const float* x = table + i - (sincTaps / 2 - 1);
+                const float* xs = x + i - (sincTaps / 2 - 1);
                 float acc = 0.0f;
                 for (int t = 0; t < sincTaps; ++t)
-                    acc += c[t] * x[t];
+                    acc += c[t] * xs[t];
                 return acc;
             }
 
             case Interpolation::cubic:
             default:
             {
-                const float y0 = table[i - 1], y1 = table[i], y2 = table[i + 1], y3 = table[i + 2];
+                const float y0 = x[i - 1], y1 = x[i], y2 = x[i + 1], y3 = x[i + 2];
                 const float c1 = 0.5f * (y2 - y0);
                 const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
                 const float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);

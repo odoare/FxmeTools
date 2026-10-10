@@ -187,6 +187,12 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/synth/CurveAdsr.h>)
  #include <FxmeTools/synth/CurveAdsr.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/MipmappedBuffer.h>)
+ #include <FxmeTools/synth/MipmappedBuffer.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/synth/SourceAnalysis.h>)
+ #include <FxmeTools/synth/SourceAnalysis.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/synth/ModGraph.h>)
  #include <FxmeTools/synth/ModGraph.h>
 #endif

@@ -138,6 +138,12 @@ public:
         nearest position and width), or -1 when nothing is ready. */
     int acquireNearest (const Key& key) noexcept;
 
+    /** How far apart two keys are: centre distance in widths of `to`, plus
+        width distance in octaves; a different generation counts as very far.
+        The measure acquireNearest() uses, for a caller deciding whether a
+        ready set is closer than the one it plays. */
+    static double distance (const Key& from, const Key& to) noexcept;
+
     /** Asks the worker to build `key`. Cheap and lock-free; asking again for
         a key already queued from the same stream is ignored. */
     void request (const Key& key, int stream) noexcept;

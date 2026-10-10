@@ -131,7 +131,11 @@ std::unique_ptr<juce::AudioFormatReader> EmbeddedAudio::createReader (const juce
 
     juce::MemoryBlock wavBytes;
     {
-        juce::MemoryInputStream packed (decoded.getMemoryBlock(), false);
+        // Straight over the decoded bytes, which live until the end of this
+        // function. (getMemoryBlock() returns a copy by value: a stream built
+        // on it without keeping a copy pointed at a destroyed temporary, and
+        // large payloads failed to inflate, or inflated garbage.)
+        juce::MemoryInputStream packed (decoded.getData(), decoded.getDataSize(), false);
         juce::GZIPDecompressorInputStream inflate (&packed, false);
         juce::MemoryOutputStream out (wavBytes, false);
         if (out.writeFromInputStream (inflate, -1) <= 0)

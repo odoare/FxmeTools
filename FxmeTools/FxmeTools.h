@@ -115,6 +115,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/synth/WavetableBuilder.h>
 #include <FxmeTools/synth/WavetableCache.h>
 #include <FxmeTools/synth/WavetableReader.h>
+#include <FxmeTools/synth/MipmappedBuffer.h>
+#include <FxmeTools/synth/SourceAnalysis.h>
 #include <FxmeTools/synth/CurveAdsr.h>
 #include <FxmeTools/synth/ModulationLfo.h>
 #include <FxmeTools/synth/BreakpointCurve.h>

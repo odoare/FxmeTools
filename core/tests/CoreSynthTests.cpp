@@ -37,6 +37,8 @@
 #include <FxmeTools/dsp/MinMaxPyramid.h>
 #include <FxmeTools/dsp/MultiModeFilter.h>
 #include <FxmeTools/synth/BreakpointCurve.h>
+#include <FxmeTools/synth/MipmappedBuffer.h>
+#include <FxmeTools/synth/SourceAnalysis.h>
 #include <FxmeTools/synth/CurveAdsr.h>
 #include <FxmeTools/synth/ModGraph.h>
 #include <FxmeTools/synth/ModulationLfo.h>
@@ -127,6 +129,111 @@ static void testBuilder()
     builder.build (*src, s, set);
     const float* t = set.table (0, 3);
     check (std::abs (t[2047] - t[0]) < 0.05f, "overlap closes the loop");
+}
+
+static void testAlignment()
+{
+    std::printf ("Phase alignment\n");
+    // A saw of period 400: ranges one period wide, at centres 37 samples
+    // apart, hold the same cycle rotated. Aligned, their tables match.
+    auto saw = makeSource (48000, 400.0, 1);
+    fxme::WavetableBuilder builder;
+    fxme::WavetableSet a, b;
+    a.allocate();
+    b.allocate();
+    fxme::WavetableBuildSettings s;
+    s.width = 400.0;
+    s.centre = 10000.0;
+    builder.build (*saw, s, a);
+    s.centre = 10037.0;
+    builder.build (*saw, s, b);
+    double err = 0.0, peak = 0.0;
+    for (int i = 0; i < 2048; ++i)
+    {
+        err = std::max (err, (double) std::abs (a.table (0, 3)[i] - b.table (0, 3)[i]));
+        peak = std::max (peak, (double) std::abs (a.table (0, 3)[i]));
+    }
+    check (err < 0.02 * peak, "rotated content gives the same aligned table");
+    check (std::abs (std::fmod (a.alignment - b.alignment + 10.0, 1.0) - 37.0 / 400.0) < 0.002
+               || std::abs (std::fmod (b.alignment - a.alignment + 10.0, 1.0) - (1.0 - 37.0 / 400.0)) < 0.002,
+           "alignment records the rotation");
+
+    const int g = 1;
+    const auto target = fxme::WavetableCache::makeKey (g, 10000, 400, 0.0f, 1, 0);
+    const auto near = fxme::WavetableCache::makeKey (g, 10010, 400, 0.0f, 1, 0);
+    const auto far = fxme::WavetableCache::makeKey (g, 10200, 400, 0.0f, 1, 0);
+    const auto old = fxme::WavetableCache::makeKey (g + 1, 10000, 400, 0.0f, 1, 0);
+    check (fxme::WavetableCache::distance (near, target) < fxme::WavetableCache::distance (far, target)
+           && fxme::WavetableCache::distance (far, target) < fxme::WavetableCache::distance (old, target),
+           "key distance: nearer position first, another source last");
+}
+
+static void testPyramid2()
+{
+    std::printf ("MipmappedBuffer and RangeLoop\n");
+    // White noise: reading it 8 times faster from the right level must not
+    // put the energy of the folded-back band into the output. Compare the
+    // level read at speed 8 with plain decimation-free reading at speed 8.
+    const int n = 1 << 17;
+    std::vector<float> noise ((size_t) n);
+    fxme::Random rnd (11);
+    for (auto& v : noise) v = rnd.nextBipolar();
+    const float* ch[] = { noise.data() };
+    fxme::MipmappedBuffer b;
+    b.build (ch, 1, n);
+    check (b.getNumLevels() >= 10, "levels down to a few dozen samples");
+
+    using I = fxme::MipmappedBuffer::Interpolation;
+    const double speed = 8.0;
+    const float level = b.levelForSpeed (speed);
+    check (level > 3.0f && level < 4.0f, "speed 8 reads between levels 3 and 4");
+    double eFiltered = 0.0, eRaw = 0.0;
+    for (int i = 0; i < 8000; ++i)
+    {
+        const double pos = 1000.0 + speed * i;
+        const float f = b.readBlended (0, level, pos, I::cubic);
+        const float r = b.read (0, 0, pos, I::cubic);
+        eFiltered += f * f;
+        eRaw += r * r;
+    }
+    // Noise is flat: the band that fits at speed 8 is about 1/8 to 1/16 of it.
+    check (eFiltered < 0.2 * eRaw, "fast reading keeps only the band that fits (no aliasing)");
+
+    // Level k sample m sits at level-0 position m * 2^k: a slow sine reads
+    // the same from every level.
+    std::vector<float> sine ((size_t) n);
+    for (int i = 0; i < n; ++i) sine[(size_t) i] = (float) std::sin (2.0 * pi * i / 4096.0);
+    const float* sch[] = { sine.data() };
+    fxme::MipmappedBuffer sb;
+    sb.build (sch, 1, n);
+    double err = 0.0;
+    for (int k = 0; k < 5; ++k)
+        for (int i = 0; i < 200; ++i)
+        {
+            const double pos = 20000.0 + 37.3 * i;
+            err = std::max (err, std::abs ((double) sb.read (0, k, pos, I::cubic) - std::sin (2.0 * pi * pos / 4096.0)));
+        }
+    check (err < 0.01, "levels are aligned with level 0");
+
+    // RangeLoop: with an overlap the wrap is continuous.
+    fxme::RangeLoop::Range r { 30000.0, 1500.0, 300.0, true };
+    const float before = fxme::RangeLoop::read (sb, 0, 0.0f, r, 0.99999, I::cubic);
+    const float after = fxme::RangeLoop::read (sb, 0, 0.0f, r, 0.0, I::cubic);
+    check (std::abs (before - after) < 0.01f, "overlapped loop wraps without a step");
+}
+
+static void testAnalysis()
+{
+    std::printf ("SourceAnalysis\n");
+    auto saw = makeSource (48000, 123.4, 1);
+    const float* ch[] = { saw->channels[0].data() };
+    fxme::SourceAnalysis a;
+    a.build (ch, 1, saw->numSamples);
+    check (std::abs (a.periodAt (20000.0) - 123.4) < 0.15, "period track finds the period");
+    const double z = a.nearestRisingZeroCrossing (10000.0, 200.0);
+    const int zi = (int) z;
+    check (zi > 0 && saw->channels[0][(size_t) zi - 1] < 0.0f && saw->channels[0][(size_t) zi] >= 0.0f
+           && std::abs (z - 10000.0) <= 62.0, "nearest rising zero crossing");
 }
 
 static void testPeriod()
@@ -466,12 +573,51 @@ static void testLfo()
     lfo.noteOn();
     const float a = lfo.advance (100), b = lfo.advance (100);
     check (a == b, "S&H holds within a cycle");
+
+    // A note-on usually comes before that block's parameters: the start
+    // phase given afterwards must still be the one used.
+    fxme::ModulationLfo sine;
+    sine.setSampleRate (1000.0);
+    fxme::ModulationLfo::Parameters q;
+    q.rateHz = 1.0f;
+    q.startPhase = 0.0f;
+    sine.setParameters (q);
+    sine.noteOn();
+    sine.advance (1);
+    sine.noteOn();                 // next note, phase knob now at a quarter turn
+    q.startPhase = 0.25f;
+    sine.setParameters (q);
+    const float first = sine.advance (10);
+    check (std::abs (first - (float) std::sin (2.0 * pi * (0.25 + 0.01))) < 1.0e-4f,
+           "start phase set after the note-on is the one used");
+
+    // Phase after many control blocks: exactly rate x time.
+    float last = 0.0f;
+    for (int i = 0; i < 100; ++i)
+        last = sine.advance (32);
+    const double expected = std::sin (2.0 * pi * (0.25 + (10.0 + 3200.0) / 1000.0));
+    check (std::abs (last - (float) expected) < 1.0e-3f, "phase advances at the rate, no drift");
+
+    // Host lock: the phase is the host position over the cycle length.
+    fxme::ModulationLfo synced;
+    synced.setSampleRate (48000.0);
+    fxme::ModulationLfo::Parameters r;
+    r.synced = true;
+    r.syncBeats = 1.0f;
+    synced.setParameters (r);
+    synced.setBpm (120.0);
+    synced.noteOn();
+    synced.syncToPpq (10.25);
+    check (std::abs (synced.output() - 1.0f) < 1.0e-5f, "host-locked phase from the PPQ (a quarter beat in: peak)");
 }
 
 int main()
 {
     testBuilder();
     testPeriod();
+    testPyramid2();
+    testAnalysis();
+    testAlignment();
     testCache();
     testReader();
     testAdsr();

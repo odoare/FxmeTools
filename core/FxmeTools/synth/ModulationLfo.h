@@ -62,10 +62,13 @@ public:
     void setParameters (const Parameters& p) noexcept { params = p; }
     void setBpm (double newBpm) noexcept { bpm = newBpm > 1.0 ? newBpm : 120.0; }
 
-    /** Restart: phase to the start phase, delay and fade from zero. */
+    /** Restart: phase to the start phase, delay and fade from zero. The phase
+        is set by the next advance(), from the parameters current then: a
+        caller restarting the LFO before giving it this block's parameters
+        (the usual order at a note-on) still gets this note's start phase. */
     void noteOn() noexcept
     {
-        phase = wrap (params.startPhase);
+        restartPending = true;
         elapsed = 0.0;
         current = random.nextBipolar();
         next = random.nextBipolar();
@@ -79,8 +82,9 @@ public:
             return;
         const double cycles = ppq / beats + (double) params.startPhase;
         const double newPhase = cycles - std::floor (cycles);
-        if (newPhase < phase - 0.5)     // wrapped: draw the next random value
+        if (newPhase < phase - 0.5 && ! restartPending)   // wrapped: draw the next random value
             advanceRandom();
+        restartPending = false;
         phase = newPhase;
         elapsed = 1.0e9;                // no delay or fade when following the host
     }
@@ -97,6 +101,11 @@ public:
     float advance (int numSamples) noexcept
     {
         const double dt = (double) numSamples / sr;
+        if (restartPending)
+        {
+            phase = wrap (params.startPhase);
+            restartPending = false;
+        }
         elapsed += dt;
 
         if (elapsed >= (double) params.delaySeconds)
@@ -164,6 +173,7 @@ private:
     double sr = 44100.0, bpm = 120.0;
     Parameters params;
     double phase = 0.0, elapsed = 0.0;
+    bool restartPending = false;
     float current = 0.0f, next = 0.0f;
     Random random;
 };

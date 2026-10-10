@@ -240,13 +240,46 @@ void WavetableBuilder::resampleCycle (int workSize)
     std::fill (w + workSize, w + 2 * workSize, 0.0f);
 }
 
-void WavetableBuilder::buildLevels (int workOrder, int harmonicLimit, float* const* tables)
+void WavetableBuilder::buildLevels (int workOrder, int harmonicLimit, float* const* tables, bool computeAlignment)
 {
     const int workSize = 1 << workOrder;
     workFfts[(std::size_t) (workOrder - minWorkOrder)]->performRealOnlyForwardTransform (work.data());
 
     const float scale = (float) WavetableSet::tableSize / (float) workSize;
     const int maxBin = jmin (workSize / 2, WavetableSet::tableSize / 2 - 1);
+
+    // Phase alignment, measured on the first channel: the lowest harmonic at
+    // least a quarter as strong as the strongest one is rotated to a sine
+    // starting at phase 0. Delaying by tau cycles multiplies bin k by
+    // exp (-i 2 pi k tau); its phase phi becomes phi - 2 pi h tau = -pi/2.
+    const int alignTop = jmin (maxBin, harmonicLimit, 64);
+    if (computeAlignment)
+    {
+        alignTurns = 0.0;
+        double strongest = 0.0;
+        for (int h = 1; h <= alignTop; ++h)
+            strongest = jmax (strongest, (double) std::hypot (work[(std::size_t) (2 * h)], work[(std::size_t) (2 * h + 1)]));
+        if (strongest > 1.0e-9)
+            for (int h = 1; h <= alignTop; ++h)
+            {
+                const double re = work[(std::size_t) (2 * h)], im = work[(std::size_t) (2 * h + 1)];
+                if (std::hypot (re, im) >= 0.25 * strongest)
+                {
+                    const double phi = std::atan2 (im, re);
+                    alignTurns = (phi + 0.5 * MathConstants<double>::pi) / (MathConstants<double>::twoPi * (double) h);
+                    break;
+                }
+            }
+    }
+    if (alignTurns > 0.0 || alignTurns < 0.0)
+        for (int k = 1; k <= maxBin; ++k)
+        {
+            const double a = -MathConstants<double>::twoPi * (double) k * alignTurns;
+            const double c = std::cos (a), s = std::sin (a);
+            const double re = work[(std::size_t) (2 * k)], im = work[(std::size_t) (2 * k + 1)];
+            work[(std::size_t) (2 * k)]     = (float) (re * c - im * s);
+            work[(std::size_t) (2 * k + 1)] = (float) (re * s + im * c);
+        }
 
     for (int level = 0; level < WavetableSet::numLevels; ++level)
     {
@@ -307,11 +340,14 @@ bool WavetableBuilder::build (const WavetableSource& source, const WavetableBuil
         float* tables[WavetableSet::numLevels];
         for (int level = 0; level < WavetableSet::numLevels; ++level)
             tables[level] = out.table (ch, level);
-        buildLevels (workOrder, harmonicLimit, tables);
+        buildLevels (workOrder, harmonicLimit, tables, ch == 0);
 
         for (int level = 0; level < WavetableSet::numLevels; ++level)
             out.fillGuards (ch, level);
     }
+
+    // Reading at phase p now gives the original cycle at p - tau.
+    out.alignment = -alignTurns;
     return true;
 }
 
