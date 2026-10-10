@@ -69,6 +69,17 @@ public:
         return (float) (l < top ? l : top);
     }
 
+    /** levelForSpeed() from the speed's base-2 logarithm, for a caller that
+        has it without taking a logarithm (a pitch in octaves, say). */
+    float levelForLog2Speed (double log2Speed) const noexcept
+    {
+        const double l = log2Speed + (double) levelBias;
+        if (l <= 0.0)
+            return 0.0f;
+        const double top = (double) (numLevels - 1);
+        return (float) (l < top ? l : top);
+    }
+
     /** Channel `ch` at level-0 position `pos`, read from integer level `level`. */
     float read (int ch, int level, double pos, Interpolation mode) const noexcept
     {
@@ -91,6 +102,62 @@ public:
             return read (ch, k + 1, pos, mode);
         const float a = read (ch, k, pos, mode);
         return a + (read (ch, k + 1, pos, mode) - a) * t;
+    }
+
+    /** Both channels at once (the first twice for a mono recording): the
+        position arithmetic is shared, so a stereo read costs about one and a
+        half single reads. */
+    void readPair (int level, double pos, Interpolation mode, float& a, float& b) const noexcept
+    {
+        readPairScaled (level, pos * levelScale[(std::size_t) level], mode, a, b);
+    }
+
+    /** readPair() with `p` already in level `level`'s own samples. */
+    void readPairScaled (int level, double p, Interpolation mode, float& a, float& b) const noexcept
+    {
+        const auto& lv = levels[0][(std::size_t) level];
+        const double hi = (double) (lv.length - 1);
+        const double q = p < 0.0 ? 0.0 : (p > hi ? hi : p);
+        const int i = (int) q;
+        const float f = (float) (q - (double) i);
+        if (mode == Interpolation::cubic)
+        {
+            // WavetableReader's cubic, as four weights shared by the channels.
+            const float f2 = f * f, f3 = f2 * f;
+            const float w0 = -0.5f * f3 + f2 - 0.5f * f;
+            const float w1 = 1.5f * f3 - 2.5f * f2 + 1.0f;
+            const float w2 = -1.5f * f3 + 2.0f * f2 + 0.5f * f;
+            const float w3 = 0.5f * f3 - 0.5f * f2;
+            const float* x = lv.data.data() + guard + i - 1;
+            a = w0 * x[0] + w1 * x[1] + w2 * x[2] + w3 * x[3];
+            if (numChannels > 1)
+            {
+                const float* y = levels[1][(std::size_t) level].data.data() + guard + i - 1;
+                b = w0 * y[0] + w1 * y[1] + w2 * y[2] + w3 * y[3];
+            }
+            else
+                b = a;
+            return;
+        }
+        a = WavetableReader::interpolate (lv.data.data() + guard, i, f, mode);
+        b = numChannels > 1 ? WavetableReader::interpolate (levels[1][(std::size_t) level].data.data() + guard, i, f, mode) : a;
+    }
+
+    /** As readPair(), blending the two levels around a fractional `level`. */
+    void readBlendedPair (float level, double pos, Interpolation mode, float& a, float& b) const noexcept
+    {
+        const int k = (int) level;
+        const float t = level - (float) k;
+        const double p = pos * levelScale[(std::size_t) k];
+        if (t < 0.02f || k + 1 >= numLevels)
+            return readPairScaled (k, p, mode, a, b);
+        if (t > 0.98f)
+            return readPairScaled (k + 1, 0.5 * p, mode, a, b);
+        float a1, b1;
+        readPairScaled (k, p, mode, a, b);
+        readPairScaled (k + 1, 0.5 * p, mode, a1, b1);
+        a += (a1 - a) * t;
+        b += (b1 - b) * t;
     }
 
     /** Level-0 samples of channel `ch` (no guards), for analysis or display. */
@@ -130,6 +197,14 @@ namespace RangeLoop
         bool equalPower = true;
     };
 
+    /** sin (pi / 2 x) for x in [0, 1], within 4e-6 (a Taylor polynomial):
+        the equal-power crossfade gains without calling sin and cos. */
+    inline float quarterSine (float x) noexcept
+    {
+        const float x2 = x * x;
+        return x * (1.5707963f - x2 * (0.64596410f - x2 * (0.07969262f - x2 * (0.0046817541f - x2 * 0.00016044118f))));
+    }
+
     inline float read (const MipmappedBuffer& b, int ch, float level, const Range& r, double phase,
                        MipmappedBuffer::Interpolation mode) noexcept
     {
@@ -141,8 +216,8 @@ namespace RangeLoop
             float gIn, gOut;
             if (r.equalPower)
             {
-                gIn  = std::sin (1.5707963f * t);
-                gOut = std::cos (1.5707963f * t);
+                gIn  = quarterSine (t);
+                gOut = quarterSine (1.0f - t);
             }
             else
             {
@@ -152,6 +227,44 @@ namespace RangeLoop
             v = gIn * v + gOut * b.readBlended (ch, level, r.start + r.cycle + pos, mode);
         }
         return v;
+    }
+
+    /** read() for both channels at once (MipmappedBuffer::readPair). */
+    inline void readPair (const MipmappedBuffer& b, float level, const Range& r, double phase,
+                          MipmappedBuffer::Interpolation mode, float& left, float& right) noexcept
+    {
+        const double pos = phase * r.cycle;
+        b.readBlendedPair (level, r.start + pos, mode, left, right);
+        if (pos < r.overlap)
+        {
+            const float t = (float) (pos / r.overlap);
+            float gIn, gOut;
+            if (r.equalPower)
+            {
+                gIn  = quarterSine (t);
+                gOut = quarterSine (1.0f - t);
+            }
+            else
+            {
+                gIn = t;
+                gOut = 1.0f - t;
+            }
+            float l2, r2;
+            b.readBlendedPair (level, r.start + r.cycle + pos, mode, l2, r2);
+            left = gIn * left + gOut * l2;
+            right = gIn * right + gOut * r2;
+        }
+    }
+
+    /** wrapStep() for both channels at once. */
+    inline void wrapStepPair (const MipmappedBuffer& b, float level, const Range& r,
+                              MipmappedBuffer::Interpolation mode, float& left, float& right) noexcept
+    {
+        float l0, r0, l1, r1;
+        b.readBlendedPair (level, r.start, mode, l0, r0);
+        b.readBlendedPair (level, r.start + r.cycle, mode, l1, r1);
+        left = l0 - l1;
+        right = r0 - r1;
     }
 
     /** With no overlap: the value just after the wrap minus the value the

@@ -11,6 +11,31 @@ project after a break.
 
 ---
 
+## Faster synth reading: paired reads, envelope, filters (2026-10-10)
+
+Additive, plus two behaviour notes. **No consumer action.**
+
+- `MipmappedBuffer::readPair()`, `readBlendedPair()`, `readPairScaled()`: both
+  channels at once, the position arithmetic shared and the cubic as four
+  weights shared by the channels (same result as two `read()` calls, to
+  rounding). `levelForLog2Speed()`: `levelForSpeed()` from a logarithm the
+  caller already has. `RangeLoop::readPair()`, `wrapStepPair()`,
+  `quarterSine()`.
+- **Behaviour:** `RangeLoop`'s equal-power crossfade uses `quarterSine()`, a
+  polynomial within 4e-6 of `sin (pi / 2 x)`, instead of `sin` and `cos`.
+- **Behaviour:** `CurveAdsr` advanced one sample at a time carries its
+  exponential by multiplication (one `exp` per segment, time or curve change,
+  instead of two per sample); its position in the segment is now a double, so
+  a long segment ends on time (it could drift by a few percent in float).
+  Pinned: a 10 s attack stays within 2e-5 of the closed form.
+- `MultiModeFilter::hasParameters()` (can `setParameters()` be skipped) and
+  `copySettingsFrom()` (a second channel set up from the first without
+  computing the coefficients again); `TptSvf::copyCoefficientsFrom()`.
+
+Camshaft uses all of it (about 30 % less CPU at the same sound).
+
+---
+
 ## New: `BreakpointCurveEditor::setTimeGrid` (2026-10-10)
 
 Additive. **No consumer action** (without a call, the editor draws its eighths

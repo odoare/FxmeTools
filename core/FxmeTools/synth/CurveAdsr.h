@@ -15,6 +15,11 @@
     Times are in seconds; zero is instantaneous. Header-only, no allocation,
     realtime safe.
 
+    Cost: one sample at a time (getNextSample) the curve's exponential is
+    carried from sample to sample by one multiplication (in double, so even a
+    long segment does not drift); it is recomputed when a segment starts,
+    when its time or curve changes, or for a multi-sample advance.
+
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0
     SPDX-License-Identifier: LGPL-3.0-or-later
@@ -65,7 +70,8 @@ public:
     void noteOn() noexcept
     {
         startLevel = value;
-        x = 0.0f;
+        x = 0.0;
+        expValid = false;
         state = State::attack;
         if (attackInc <= 0.0f)
             enterDecay();
@@ -77,13 +83,14 @@ public:
         if (state == State::idle || state == State::release)
             return;
         startLevel = value;
-        x = 0.0f;
+        x = 0.0;
+        expValid = false;
         state = State::release;
         if (releaseInc <= 0.0f)
             finish();
     }
 
-    void reset() noexcept { state = State::idle; value = 0.0f; x = 0.0f; }
+    void reset() noexcept { state = State::idle; value = 0.0f; x = 0.0; expValid = false; }
 
     bool isActive() const noexcept { return state != State::idle; }
     State getState() const noexcept { return state; }
@@ -130,16 +137,42 @@ private:
             return steps;
         }
 
-        const float remaining = (1.0f - x) / inc;
-        if (steps < remaining)
+        const double remaining = (1.0 - x) / (double) inc;
+        if ((double) steps < remaining)
         {
-            x += steps * inc;
-            value = from + (to - from) * shape (x, curve);
+            x += (double) steps * (double) inc;
+            value = from + (to - from) * segmentShape (steps, inc, curve);
             return 0.0f;
         }
         value = to;
         endSegment();
-        return steps - remaining;
+        return steps - (float) remaining;
+    }
+
+    /** shape (x, curve), the exponential carried from the previous sample
+        when this is one more sample of the same segment, time and curve. */
+    float segmentShape (float steps, float inc, float curve) noexcept
+    {
+        if (std::abs (curve) < 1.0e-3f)
+            return (float) x;
+        const double k = 6.0 * (double) curve;
+        const bool same = expValid && ! (inc < expInc || inc > expInc) && ! (curve < expCurve || curve > expCurve);
+        if (same && ! (steps < 1.0f || steps > 1.0f))
+            expX *= expStep;
+        else
+        {
+            expX = std::exp (k * x);
+            if (! same)
+            {
+                expStep = std::exp (k * (double) inc);
+                expDenominator = 1.0 / (std::exp (k) - 1.0);
+                expInc = inc;
+                expCurve = curve;
+                expValid = true;
+            }
+        }
+        const double y = (expX - 1.0) * expDenominator;
+        return (float) (y < 0.0 ? 0.0 : (y > 1.0 ? 1.0 : y));
     }
 
     void endSegment() noexcept
@@ -157,7 +190,8 @@ private:
     void enterDecay() noexcept
     {
         value = 1.0f;
-        x = 0.0f;
+        x = 0.0;
+        expValid = false;
         state = State::decay;
         if (decayInc <= 0.0f)
         {
@@ -166,7 +200,7 @@ private:
         }
     }
 
-    void finish() noexcept { state = State::idle; value = 0.0f; x = 0.0f; }
+    void finish() noexcept { state = State::idle; value = 0.0f; x = 0.0; expValid = false; }
 
     void updateIncrements() noexcept
     {
@@ -179,8 +213,14 @@ private:
     double sr = 44100.0;
     Parameters params;
     State state = State::idle;
-    float value = 0.0f, startLevel = 0.0f, x = 0.0f;
+    float value = 0.0f, startLevel = 0.0f;
+    double x = 0.0;                    // position in the segment, 0 to 1
     float attackInc = 0.0f, decayInc = 0.0f, releaseInc = 0.0f;
+
+    // The segment's exponential, carried sample to sample.
+    double expX = 1.0, expStep = 1.0, expDenominator = 1.0;
+    float expInc = 0.0f, expCurve = 0.0f;
+    bool expValid = false;
 };
 
 } // namespace fxme

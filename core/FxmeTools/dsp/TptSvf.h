@@ -69,6 +69,16 @@ public:
 
     void reset() noexcept { ic1 = ic2 = 0.0; }
 
+    /** Another section's coefficients, keeping this one's state. */
+    void copyCoefficientsFrom (const TptSvf& other) noexcept
+    {
+        gCoef = other.gCoef;
+        kCoef = other.kCoef;
+        a1 = other.a1;
+        a2 = other.a2;
+        a3 = other.a3;
+    }
+
     Outputs tick (float x) noexcept
     {
         const double v0 = x;

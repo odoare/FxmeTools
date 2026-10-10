@@ -20,7 +20,9 @@
     natural bandwidth) up to about 22.
 
     Channels: one instance per channel. setParameters() is meant for control
-    rate (every 16 to 64 samples): it computes tangents and exponentials.
+    rate (every 16 to 64 samples): it computes tangents and exponentials;
+    hasParameters() tells when it can be skipped, and copySettingsFrom()
+    sets a second channel up from the first without computing them again.
     processSample() is cheap. Header-only, no allocation, realtime safe.
 
     Author: Olivier Doaré, github.com/odoare
@@ -151,6 +153,34 @@ public:
     }
 
     const Parameters& getParameters() const noexcept { return params; }
+
+    /** True when `p` would leave the filter as it is (setParameters() can be
+        skipped). */
+    bool hasParameters (const Parameters& p) const noexcept
+    {
+        auto same = [] (float a, float b) { return ! (a < b || a > b); };
+        return p.type == params.type && same (p.cutoffHz, params.cutoffHz) && same (p.resonance, params.resonance)
+            && same (p.gainDb, params.gainDb) && p.vowelA == params.vowelA && p.vowelB == params.vowelB
+            && same (p.vowelPosition, params.vowelPosition);
+    }
+
+    /** Another instance's settings (type, coefficients, gains), keeping this
+        one's state: the second channel of a pair, set up without computing
+        the coefficients again. Both must share the sample rate. */
+    void copySettingsFrom (const MultiModeFilter& other) noexcept
+    {
+        if (other.params.type != params.type)
+            reset();
+        params = other.params;
+        for (int f = 0; f < numFormants; ++f)
+        {
+            sections[f].copyCoefficientsFrom (other.sections[f]);
+            formantGain[f] = other.formantGain[f];
+        }
+        m0 = other.m0;
+        m1 = other.m1;
+        m2 = other.m2;
+    }
 
     float processSample (float x) noexcept
     {

@@ -365,6 +365,37 @@ static void testAdsr()
     check (std::abs (env.getValue() - mid) < 1.0e-6f, "retrigger starts from the current level");
     env.advance (1000);
     check (std::abs (env.getValue() - 0.5f) < 1.0e-4f, "control-rate advance crosses segments");
+
+    // Sample by sample, the exponential is carried by multiplication: it must
+    // stay on the closed-form curve over a long segment, and follow a curve
+    // changed mid-segment.
+    {
+        fxme::CurveAdsr e;
+        e.setSampleRate (48000.0);
+        fxme::CurveAdsr::Parameters q;
+        q.attack = 10.0f;
+        q.attackCurve = -0.7f;
+        e.setParameters (q);
+        e.noteOn();
+        double worst = 0.0;
+        const int n = 480000 - 10;
+        for (int i = 1; i <= n; ++i)
+        {
+            const float v = e.getNextSample();
+            if (i % 997 == 0 || i == n)
+                worst = std::max (worst, (double) std::abs (v - fxme::CurveAdsr::shape ((float) ((double) i / 480000.0), -0.7f)));
+        }
+        check (worst < 2.0e-5, "per-sample attack stays on the curve over 10 s");
+
+        e.reset();
+        e.noteOn();
+        for (int i = 0; i < 1000; ++i)
+            e.getNextSample();
+        q.attackCurve = 0.5f;
+        e.setParameters (q);
+        const float v = e.getNextSample();
+        check (std::abs (v - fxme::CurveAdsr::shape (1001.0f / 480000.0f, 0.5f)) < 1.0e-5f, "a curve changed mid-segment is followed");
+    }
 }
 
 static void testCurve()
