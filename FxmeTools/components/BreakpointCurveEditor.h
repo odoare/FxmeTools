@@ -20,7 +20,10 @@
     The shape is the caller's: setShape() shows one, onChange receives every
     edit (call it the single source of truth and write it back wherever the
     shape lives, a ValueTree say). setPlayheads() draws markers at live
-    positions (normalised time). Colours via setColours().
+    positions (normalised time). onPointHeld reports the point being held
+    and its value while a point is pressed or dragged (index -1 when it is
+    let go), for a caller that shows what that value does elsewhere.
+    Colours via setColours().
 
     Author: Olivier Doaré, github.com/odoare
     Dual-licensed, mirroring the JUCE framework it depends on: under the GNU
@@ -54,6 +57,8 @@ public:
 
     std::function<void (const CurveShape&)> onChange;
     std::function<void()> onGestureStart, onGestureEnd;
+    /** A point is held: its index and value (0 to 1); -1 when let go. */
+    std::function<void (int point, float value)> onPointHeld;
 
     BreakpointCurveEditor() { setRepaintsOnMouseActivity (true); }
 
@@ -181,6 +186,8 @@ public:
         else if ((dragIndex = hitPoint (e.position)) >= 0)
         {
             dragging = Drag::point;
+            if (onPointHeld)
+                onPointHeld (dragIndex, shape.y[(size_t) dragIndex]);
         }
         else if ((dragIndex = hitHandle (e.position)) >= 0)
         {
@@ -235,10 +242,14 @@ public:
 
         shape.sanitise();
         changed();
+        if (dragging == Drag::point && onPointHeld)
+            onPointHeld (dragIndex, shape.y[(size_t) dragIndex]);
     }
 
     void mouseUp (const juce::MouseEvent&) override
     {
+        if (dragging == Drag::point && onPointHeld)
+            onPointHeld (-1, 0.0f);
         if (dragging != Drag::none && onGestureEnd)
             onGestureEnd();
         dragging = Drag::none;

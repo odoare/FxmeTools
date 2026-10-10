@@ -11,6 +11,17 @@ project after a break.
 
 ---
 
+## New: `BreakpointCurveEditor::onPointHeld` (2026-10-10)
+
+Additive. **No consumer action.**
+
+`onPointHeld (int point, float value)` is called when a breakpoint is pressed,
+on every drag of it (with its new value, 0 to 1), and with index -1 when it is
+let go. A caller can show what the held value does elsewhere (Camshaft marks
+the position it gives a cam's range on the waveform).
+
+---
+
 ## New: live range reading (`MipmappedBuffer`, `RangeLoop`, `SourceAnalysis`); `ModulationLfo::noteOn` timing (2026-10-09)
 
 Additive, plus one behaviour change in code only Camshaft uses so far. **No
