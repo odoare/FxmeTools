@@ -95,6 +95,8 @@ public:
     bool isActive() const noexcept { return state != State::idle; }
     State getState() const noexcept { return state; }
     float getValue() const noexcept { return value; }
+    /** Where the current segment (attack, decay or release) has got to, 0 to 1. */
+    double getSegmentPosition() const noexcept { return x; }
 
     /** One sample. */
     float getNextSample() noexcept { return advance (1); }

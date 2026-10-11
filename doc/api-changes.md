@@ -11,6 +11,13 @@ project after a break.
 
 ---
 
+## New: `CurveAdsr::getSegmentPosition()` (2026-10-11)
+
+Additive. **No consumer action.** Where the current segment (attack, decay or
+release) has got to, 0 to 1, for a display (Camshaft's envelope shape view).
+
+---
+
 ## New: flat knob style in `FxmeLookAndFeel`; `rotaryGeometry()` (2026-10-11)
 
 Additive. **No consumer action** (the classic style stays the default).
