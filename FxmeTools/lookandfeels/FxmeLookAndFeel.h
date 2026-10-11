@@ -26,6 +26,13 @@
     bipolar one. "centralValue" is given in the slider's own units, so it
     anchors correctly even on an asymmetric range such as -60…+6 dB.
 
+    Two knob styles: classic (a disc with a light rim, a small tick, the
+    value inside) and flat (setKnobStyle, or a slider's "knobStyle" property
+    set to "flat"): a larger plain dark disc, thicker arcs, a bold pointer
+    mark near the rim and a larger label, easier to read at small sizes.
+    rotaryGeometry() gives a knob's centre and radius in either style, for a
+    component that draws over its knob (a modulation ring, say).
+
     Read-outs use the slider's own getTextFromValue(), so decimal places and
     the text-value suffix carry through to knobs and faders alike, and their
     colours come from Slider::textBoxTextColourId / textBoxOutlineColourId /
@@ -94,6 +101,56 @@ public:
       Component in this codebase owns its own FxmeLookAndFeel, so calling
       this once in a component's constructor tints that component's menus to
       match its panel. Left alone, menus stay a neutral grey. */
+  enum class KnobStyle { classic, flat };
+
+  /** The style of every rotary knob drawn by this look-and-feel (a
+      slider's "knobStyle" property, "classic" or "flat", overrides it). */
+  void setKnobStyle (KnobStyle s) noexcept { knobStyle = s; }
+  KnobStyle getKnobStyle() const noexcept  { return knobStyle; }
+
+  KnobStyle styleFor (const juce::Slider& slider) const
+  {
+      const auto prop = slider.getProperties().getWithDefault ("knobStyle", juce::var()).toString();
+      if (prop == "flat")    return KnobStyle::flat;
+      if (prop == "classic") return KnobStyle::classic;
+      return knobStyle;
+  }
+
+  /** Where a rotary knob sits in its bounds: its centre, radius, arc
+      thickness and the label's area under it. */
+  struct RotaryGeometry
+  {
+      juce::Point<float> centre;
+      float radius = 0.0f, thickness = 0.0f;
+      juce::Rectangle<float> labelArea;
+  };
+
+  static RotaryGeometry rotaryGeometry (juce::Rectangle<float> bounds, bool showLabel, KnobStyle style)
+  {
+      RotaryGeometry geo;
+      const float w = bounds.getWidth(), h = bounds.getHeight();
+      float diameter, labelHeight;
+      if (style == KnobStyle::flat)
+      {
+          // The label keeps a readable height; the knob takes the rest.
+          labelHeight = showLabel ? juce::jlimit (0.0f, h * 0.45f, juce::jmax (h * 0.24f, 13.0f)) : 0.0f;
+          // A margin round the knob, for anything a component draws round it.
+          diameter = juce::jmax (4.0f, juce::jmin (w * 0.80f, (h - labelHeight) * 0.84f));
+          geo.thickness = diameter / 9.0f;
+      }
+      else
+      {
+          diameter = 0.7f * juce::jmin (w, h);
+          labelHeight = showLabel ? juce::jmin (diameter * 0.32f, h - diameter) : 0.0f;
+          geo.thickness = diameter / 12.0f;
+      }
+      geo.radius = diameter * 0.5f;
+      const float clusterHeight = diameter + labelHeight;
+      geo.centre = { bounds.getCentreX(), bounds.getY() + (h - clusterHeight) * 0.5f + geo.radius };
+      geo.labelArea = { bounds.getX(), geo.centre.y + geo.radius, w, labelHeight };
+      return geo;
+  }
+
   void setAccentColour (juce::Colour c)
   {
       accent = c;
@@ -177,6 +234,13 @@ public:
     // A disabled slider gets no mouse events, so hover can only be true here
     // while the control is live — the guard is for clarity, not safety.
     const bool hovered   = enabled && slider.isMouseOverOrDragging();
+
+    if (styleFor (slider) == KnobStyle::flat)
+    {
+        drawFlatKnob (g, juce::Rectangle<int> (x, y, width, height).toFloat(), sliderPos,
+                      rotaryStartAngle, rotaryEndAngle, slider, showLabel, enabled, hovered);
+        return;
+    }
 
     float diameter = 0.7f * juce::jmin ((float) width, (float) height);
     // Label height scales with the knob so the text stays proportionate; the
@@ -767,6 +831,65 @@ public:
 
 
 private:
+  KnobStyle knobStyle = KnobStyle::classic;
+
+  /** The flat knob: a plain dark disc, a thick value arc over its track, a
+      bold pointer mark near the rim, the value in the middle, a large
+      label under it. */
+  void drawFlatKnob (juce::Graphics& g, juce::Rectangle<float> bounds, float sliderPos,
+                     float startAngle, float endAngle, juce::Slider& slider,
+                     bool showLabel, bool enabled, bool hovered)
+  {
+      const auto geo = rotaryGeometry (bounds, showLabel, KnobStyle::flat);
+      const auto c = geo.centre;
+      const float r = geo.radius, t = geo.thickness;
+      const float arcR = r - t * 0.5f;
+      const float angle = startAngle + sliderPos * (endAngle - startAngle);
+      const juce::PathStrokeType stroke { t, juce::PathStrokeType::curved, juce::PathStrokeType::rounded };
+
+      // Disc.
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderFillColourId), enabled, 0.9f));
+      g.fillEllipse (juce::Rectangle<float> (2.0f * (r - t * 1.25f), 2.0f * (r - t * 1.25f)).withCentre (c));
+
+      // Track, then the value from its origin.
+      juce::Path track;
+      track.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderOutlineColourId), enabled));
+      g.strokePath (track, stroke);
+
+      const float originAngle = startAngle + originProportion (slider) * (endAngle - startAngle);
+      if (std::abs (angle - originAngle) > 1.0e-3f)
+      {
+          juce::Path value;
+          value.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, juce::jmin (angle, originAngle), juce::jmax (angle, originAngle), true);
+          g.setColour (forHover (forState (slider.findColour (juce::Slider::trackColourId), enabled), hovered));
+          g.strokePath (value, stroke);
+      }
+
+      // Pointer: a bold mark from the disc's edge inwards.
+      g.setColour (forHover (forState (slider.findColour (juce::Slider::thumbColourId), enabled), hovered));
+      g.drawLine ({ c.getPointOnCircumference (r * 0.50f, angle), c.getPointOnCircumference (r - t * 1.5f, angle) },
+                  juce::jmax (2.0f, t * 0.9f));
+
+      // Value in the middle.
+      const float valueFont = juce::jmin (13.0f, r * 0.42f);
+      if (valueFont >= 7.0f)
+      {
+          g.setColour (slider.findColour (juce::Slider::textBoxTextColourId).withMultipliedAlpha (textAlpha (0.8f, enabled)));
+          g.setFont (valueFont);
+          g.drawText (slider.getTextFromValue (slider.getValue()),
+                      juce::Rectangle<float> (r * 1.15f, valueFont * 1.2f).withCentre (c).toNearestInt(),
+                      juce::Justification::centred, true);
+      }
+
+      if (showLabel && geo.labelArea.getHeight() > 4.0f)
+      {
+          g.setColour (slider.findColour (juce::Slider::textBoxTextColourId).withMultipliedAlpha (textAlpha (0.9f, enabled)));
+          g.setFont (juce::Font (juce::FontOptions (juce::jmin (14.5f, geo.labelArea.getHeight() * 0.92f), juce::Font::bold)));
+          g.drawText (slider.getName(), geo.labelArea.toNearestInt(), juce::Justification::centred, true);
+      }
+  }
+
     juce::Colour accent { juce::Colours::grey };
 
     // A LookAndFeel that outlives the widgets pointing at it (or the reverse)

@@ -11,6 +11,23 @@ project after a break.
 
 ---
 
+## New: flat knob style in `FxmeLookAndFeel`; `rotaryGeometry()` (2026-10-11)
+
+Additive. **No consumer action** (the classic style stays the default).
+
+- `setKnobStyle (KnobStyle::flat)` (or a slider's `"knobStyle"` property,
+  `"flat"` / `"classic"`): a plain dark disc without the light rim, thicker
+  arcs, a bold pointer mark near the rim, the value in the middle and a larger
+  bold label, whose size stays the same however tall the knob (so a knob given
+  more room grows, its label does not). The disc is the slider's
+  `rotarySliderFillColourId`. Meant for small knobs that must stay readable.
+  Camshaft uses it everywhere.
+- `rotaryGeometry (bounds, showLabel, style)` and `styleFor (slider)`: where a
+  knob sits (centre, radius, arc thickness, label area), for a component that
+  draws over its knob instead of copying the look-and-feel's arithmetic.
+
+---
+
 ## New: `CircularSpectrum`; `StereoLevelMeter::setHorizontal`; `VoiceAllocator::isSustainDown` (2026-10-10)
 
 Additive. **No consumer action.**
