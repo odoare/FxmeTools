@@ -2,9 +2,10 @@
   ------------------------------------------------------------------------------
     StereoLevelMeter.h
 
-    A compact one- or two-channel vertical level meter: an RMS bar per
-    channel, a peak marker held for a second, red above 0 dBFS, on a dBFS
-    scale (-60 to +6 by default).
+    A compact one- or two-channel level meter: an RMS bar per channel, a peak
+    marker held for a second, red above 0 dBFS, on a dBFS scale (-60 to +6 by
+    default). Vertical by default; setHorizontal (true) lays the channels out
+    as two rows filling left to right (a header or a toolbar).
 
     Push model, like DynamicsMeter: the editor's timer calls update() with
     the latest values from the audio thread's atomics.
@@ -40,6 +41,7 @@ public:
 
     void setColours (Colours c)          { colours = c; repaint(); }
     void setNumChannels (int n)          { numChannels = juce::jlimit (1, 2, n); repaint(); }
+    void setHorizontal (bool h)          { horizontal = h; repaint(); }
     void setRange (float minDbIn, float maxDbIn)
     {
         minDb = minDbIn;
@@ -65,6 +67,9 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        if (horizontal)
+            return paintHorizontal (g);
+
         auto b = getLocalBounds().toFloat().reduced (1.0f);
         const float gap = 2.0f;
         const float w = (b.getWidth() - gap * (float) (numChannels - 1)) / (float) numChannels;
@@ -97,6 +102,44 @@ public:
     }
 
 private:
+    void paintHorizontal (juce::Graphics& g)
+    {
+        auto b = getLocalBounds().toFloat().reduced (1.0f);
+        const float gap = 2.0f;
+        const float h = (b.getHeight() - gap * (float) (numChannels - 1)) / (float) numChannels;
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            auto r = juce::Rectangle<float> (b.getX(), b.getY() + (float) ch * (h + gap), b.getWidth(), h);
+            const auto& c = chans[(size_t) ch];
+
+            g.setColour (colours.background);
+            g.fillRect (r);
+
+            const float x0 = toX (0.0f, r);
+            const float x = toX (c.rms, r);
+            g.setColour (colours.bar);
+            g.fillRect (r.withRight (juce::jmin (x, x0)));
+            if (x > x0)
+            {
+                g.setColour (colours.over);
+                g.fillRect (r.withLeft (x0).withRight (x));
+            }
+
+            g.setColour (c.held > 0.0f ? colours.over : colours.peak);
+            g.fillRect (toX (c.held, r) - 0.75f, r.getY(), 1.5f, r.getHeight());
+
+            g.setColour (colours.outline);
+            g.drawRect (r, 1.0f);
+            g.fillRect (x0, r.getY(), 1.0f, r.getHeight());
+        }
+    }
+
+    float toX (float db, juce::Rectangle<float> r) const
+    {
+        return juce::jmap (juce::jlimit (minDb, maxDb, db), minDb, maxDb, r.getX(), r.getRight());
+    }
+
     float toY (float db, juce::Rectangle<float> r) const
     {
         return juce::jmap (juce::jlimit (minDb, maxDb, db), minDb, maxDb, r.getBottom(), r.getY());
@@ -110,6 +153,7 @@ private:
 
     Colours colours;
     int numChannels = 2;
+    bool horizontal = false;
     float minDb = -60.0f, maxDb = 6.0f;
     std::array<Channel, 2> chans;
 

@@ -220,6 +220,8 @@ public:
     bool isGated (int v) const noexcept { return voices[(std::size_t) v].gated; }
 
     /** The most recently started voice that is still sounding, or -1. */
+    bool isSustainDown() const noexcept { return sustainDown; }
+
     int newestVoice() const noexcept
     {
         int best = -1;

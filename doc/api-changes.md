@@ -11,6 +11,21 @@ project after a break.
 
 ---
 
+## New: `CircularSpectrum`; `StereoLevelMeter::setHorizontal`; `VoiceAllocator::isSustainDown` (2026-10-10)
+
+Additive. **No consumer action.**
+
+- `components/CircularSpectrum.h`: a spectrum as a round gauge (radial bars
+  over a 270 degree dial, log frequency, falling peaks, a tilt so music reads
+  level), reading a `SpectrumTap` through `SpectrumAnalyzer`; it enables the
+  tap while it exists and does nothing while hidden. Included by
+  `FxmeTools.h`. Camshaft's dashboard uses it.
+- `StereoLevelMeter::setHorizontal (true)`: the channels as two rows filling
+  left to right, for a header (vertical stays the default).
+- `VoiceAllocator::isSustainDown()`.
+
+---
+
 ## Faster synth reading: paired reads, envelope, filters (2026-10-10)
 
 Additive, plus two behaviour notes. **No consumer action.**
