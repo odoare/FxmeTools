@@ -33,6 +33,9 @@
     rotaryGeometry() gives a knob's centre and radius in either style, for a
     component that draws over its knob (a modulation ring, say).
 
+    A read-out that does not fit is never cut with "...": its font shrinks to
+    a floor, then its unit goes (drawFittedText()).
+
     Read-outs use the slider's own getTextFromValue(), so decimal places and
     the text-value suffix carry through to knobs and faders alike, and their
     colours come from Slider::textBoxTextColourId / textBoxOutlineColourId /
@@ -101,6 +104,39 @@ public:
       Component in this codebase owns its own FxmeLookAndFeel, so calling
       this once in a component's constructor tints that component's menus to
       match its panel. Left alone, menus stay a neutral grey. */
+  /** Draws a read-out in `area` without ever cutting it with "...": the font
+      shrinks (down to minSize) until the text fits; if it still does not,
+      the text loses what follows its first space (its unit: "2048 smp"
+      reads "2048"); failing that it is drawn at minSize across `spill`, a
+      wider box (the whole control), rather than clipped. */
+  static void drawFittedText (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area,
+                              juce::Rectangle<float> spill, float maxSize, float minSize, bool bold = false)
+  {
+      auto fontOf = [bold] (float size) { return juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain)); };
+      auto widthOf = [] (const juce::Font& f, const juce::String& t) { return juce::GlyphArrangement::getStringWidth (f, t); };
+
+      for (const auto& candidate : { text, text.upToFirstOccurrenceOf (" ", false, false) })
+      {
+          if (candidate.isEmpty())
+              continue;
+          for (float size = maxSize; size >= minSize - 0.01f; size -= 0.5f)
+          {
+              const auto f = fontOf (size);
+              if (widthOf (f, candidate) <= area.getWidth())
+              {
+                  g.setFont (f);
+                  g.drawText (candidate, area.withSizeKeepingCentre (area.getWidth(), juce::jmax (area.getHeight(), size * 1.2f)),
+                              juce::Justification::centred, false);
+                  return;
+              }
+          }
+      }
+      g.setFont (fontOf (minSize));
+      g.drawText (text, spill.withSizeKeepingCentre (spill.getWidth(), juce::jmax (area.getHeight(), minSize * 1.2f))
+                             .withY (area.getCentreY() - juce::jmax (area.getHeight(), minSize * 1.2f) * 0.5f),
+                  juce::Justification::centred, false);
+  }
+
   enum class KnobStyle { classic, flat };
 
   /** The style of every rotary knob drawn by this look-and-feel (a
@@ -303,8 +339,10 @@ public:
     g.setColour(slider.findColour(juce::Slider::textBoxTextColourId)
                       .withMultipliedAlpha(textAlpha(0.7f, enabled)));
     // Make font size proportional to the knob's diameter
-    g.setFont(juce::jmin(15.0f, diameter * 0.3f));
-    g.drawText(text, dialArea.toNearestInt(), juce::Justification::centred, true);
+    // Fitted inside the disc (never cut with "...").
+    const float classicSize = juce::jmin (15.0f, diameter * 0.3f);
+    drawFittedText (g, text, dialArea.reduced (thickness * 1.5f), dialArea.withWidth ((float) width).withX ((float) x),
+                    classicSize, juce::jmin (classicSize, 8.0f));
 
     if (showLabel)
     {
@@ -551,8 +589,8 @@ public:
         auto text = slider.getTextFromValue (slider.getValue());
         g.setColour(slider.findColour(juce::Slider::textBoxTextColourId)
                           .withMultipliedAlpha(textAlpha(0.7f, enabled)));
-        g.setFont(juce::jmin(18.0f, height * 0.55f));
-        g.drawText(text, bounds.toNearestInt(), juce::Justification::centred, true);
+        const float barSize = juce::jmin (18.0f, height * 0.55f);
+        drawFittedText (g, text, bounds.reduced (4.0f, 0.0f), bounds, barSize, juce::jmin (barSize, 8.0f));
 
         // Draw outline
         g.setColour(slider.findColour(juce::Slider::textBoxOutlineColourId)
@@ -872,14 +910,16 @@ private:
                   juce::jmax (2.0f, t * 0.9f));
 
       // Value in the middle.
+      // Value in the middle, fitted inside the disc (never cut with "...").
       const float valueFont = juce::jmin (13.0f, r * 0.42f);
-      if (valueFont >= 7.0f)
+      if (valueFont >= 6.0f)
       {
           g.setColour (slider.findColour (juce::Slider::textBoxTextColourId).withMultipliedAlpha (textAlpha (0.8f, enabled)));
-          g.setFont (valueFont);
-          g.drawText (slider.getTextFromValue (slider.getValue()),
-                      juce::Rectangle<float> (r * 1.15f, valueFont * 1.2f).withCentre (c).toNearestInt(),
-                      juce::Justification::centred, true);
+          const float inner = 2.0f * (r - t * 1.3f) * 0.94f;
+          drawFittedText (g, slider.getTextFromValue (slider.getValue()),
+                          juce::Rectangle<float> (inner, valueFont * 1.2f).withCentre (c),
+                          juce::Rectangle<float> (2.0f * r, valueFont * 1.2f).withCentre (c),
+                          valueFont, juce::jmin (valueFont, 7.5f));
       }
 
       if (showLabel && geo.labelArea.getHeight() > 4.0f)

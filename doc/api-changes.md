@@ -11,6 +11,18 @@ project after a break.
 
 ---
 
+## `FxmeLookAndFeel`: read-outs fitted instead of cut; `drawFittedText()` (2026-10-11)
+
+Behaviour change, visual only. **No consumer action.**
+
+The value inside a knob (both styles) and on a horizontal bar no longer ends in
+"..." when it is too wide: the font shrinks to a floor (8 px, 7.5 px on a flat
+knob), then the text drops what follows its first space (its unit), and only
+then is it drawn at the floor across the whole control. The helper is public
+and static: `drawFittedText (g, text, area, spill, maxSize, minSize, bold)`.
+
+---
+
 ## New: `CurveAdsr::getSegmentPosition()` (2026-10-11)
 
 Additive. **No consumer action.** Where the current segment (attack, decay or
