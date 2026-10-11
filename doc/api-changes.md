@@ -11,6 +11,21 @@ project after a break.
 
 ---
 
+## `MultiModeFilter` formant: make-up gain follows the resonance (2026-10-11)
+
+Behaviour change, audible. **Consumers using the formant type: check levels.**
+
+The formant type lost most of a broadband signal's level (a 110 Hz sawtooth:
+7 to 12 dB at resonance 0, 19 to 24 dB at 1, with the fixed x1.6 make-up). Its
+make-up gain is now 4.5 x n^0.75, n = 1 + 6 x resonance (the band narrowing),
+which keeps that sawtooth within about 4 dB of its input level at any vowel
+and resonance. Formant patches are louder than before: 10 to 20 dB depending
+on the resonance. Users: Camshaft only (MechanOdd and FxmeSampler were
+searched: neither uses it). The file comment documents
+the measurement. Pinned in `CoreSynthTests.cpp`.
+
+---
+
 ## `FxmeLookAndFeel`: read-outs fitted instead of cut; `drawFittedText()` (2026-10-11)
 
 Behaviour change, visual only. **No consumer action.**

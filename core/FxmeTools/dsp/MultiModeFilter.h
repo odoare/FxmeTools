@@ -14,7 +14,21 @@
       lowShelf / highShelf      gain in dB (Cytomic's SVF shelves)
       formant                   three band-passes on the formants of a vowel,
                                 blended between two vowels (A E I O U) by a
-                                position in [0, 1]; resonance narrows them
+                                position in [0, 1]; resonance narrows them.
+                                A make-up gain follows the filter: three
+                                narrow bands keep only a fraction of a
+                                broadband signal's energy (a 110 Hz sawtooth
+                                lost 7 to 12 dB at resonance 0, 19 to 24 dB at
+                                1, with the earlier fixed x1.6), and the
+                                narrower the bands the less they keep, so the
+                                gain grows with them: 4.5 x n^0.75, n = 1 + 6 x
+                                resonance (the bandwidth divider). A sawtooth
+                                then comes out within about 4 dB of its input
+                                level at any vowel and resonance (white noise
+                                4 to 10 dB below). A single partial sitting on
+                                a formant's centre is boosted as much (up to
+                                about +26 dB at full resonance): that is what
+                                makes the vowel.
 
     Resonance is 0 .. 1 for every type: Q goes from 0.707 (or the formant's
     natural bandwidth) up to about 22.
@@ -147,6 +161,10 @@ public:
                     sections[f].setup (TptSvf::gFor (jmin (hz, 0.45 * sr), sr), bw / jmax (1.0, hz));
                     formantGain[f] = (float) std::pow (10.0, gDb / 20.0);
                 }
+                // Make-up gain: three narrow bands pass a fraction of a
+                // broadband signal's energy, the less the narrower they are
+                // (see the file comment).
+                formantMakeupGain = (float) (formantMakeupBase * std::pow (narrow, formantMakeupSlope));
                 break;
             }
         }
@@ -177,6 +195,7 @@ public:
             sections[f].copyCoefficientsFrom (other.sections[f]);
             formantGain[f] = other.formantGain[f];
         }
+        formantMakeupGain = other.formantMakeupGain;
         m0 = other.m0;
         m1 = other.m1;
         m2 = other.m2;
@@ -208,7 +227,7 @@ public:
                 float y = 0.0f;
                 for (int f = 0; f < numFormants; ++f)
                     y += formantGain[f] * (float) sections[f].getK() * sections[f].tick (x).band;
-                return y * formantMakeup;
+                return y * formantMakeupGain;
             }
         }
         return x;
@@ -233,7 +252,11 @@ private:
         { 0.0f, -20.0f, -17.0f },
     };
     static constexpr float bandwidths[numFormants] = { 80.0f, 90.0f, 120.0f };
-    static constexpr float formantMakeup = 1.6f;
+    // Make-up gain = base x narrowing ^ slope (narrowing = 1 + 6 x resonance),
+    // measured on a 110 Hz sawtooth, every vowel: see the file comment.
+    static constexpr double formantMakeupBase  = 4.5;
+    static constexpr double formantMakeupSlope = 0.75;
+    float formantMakeupGain = (float) formantMakeupBase;
 
     double sr = 44100.0;
     Parameters params;

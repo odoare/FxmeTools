@@ -23,7 +23,8 @@
          mono note stack, legato glides.
       8. ModGraph: refuses a cycle, accepts feedback, orders nodes.
       9. MultiModeFilter: low-pass passes DC and attenuates far above cutoff;
-         every type stays finite under modulation.
+         every type stays finite under modulation; the formant keeps a
+         sawtooth near its level.
      10. LookaheadLimiter: output never above the ceiling.
      11. MinMaxPyramid: ranges agree with a brute-force scan.
 
@@ -581,6 +582,34 @@ static void testFilter()
         }
     }
     check (finite, "every type stays finite under random modulation");
+
+    // The formant's make-up gain keeps a sawtooth near its own level at any
+    // vowel and resonance (three narrow bands alone lose up to 24 dB of it).
+    {
+        double worst = 0.0;
+        for (int vowel = 0; vowel < fxme::MultiModeFilter::numVowels; ++vowel)
+            for (float res : { 0.0f, 0.5f, 1.0f })
+            {
+                fxme::MultiModeFilter f;
+                f.prepare (48000.0);
+                fxme::MultiModeFilter::Parameters fp;
+                fp.type = fxme::MultiModeFilter::Type::formant;
+                fp.vowelA = fp.vowelB = vowel;
+                fp.resonance = res;
+                f.setParameters (fp);
+                double ph = 0.0, ein = 0.0, eout = 0.0;
+                for (int i = 0; i < 48000; ++i)
+                {
+                    ph += 110.0 / 48000.0;
+                    ph -= std::floor (ph);
+                    const float x = (float) (0.5 * (2.0 * ph - 1.0));
+                    const float y = f.processSample (x);
+                    if (i > 4800) { ein += (double) x * x; eout += (double) y * y; }
+                }
+                worst = std::max (worst, std::abs (10.0 * std::log10 (eout / ein)));
+            }
+        check (worst < 6.0, "formant keeps a sawtooth within 6 dB at any vowel and resonance");
+    }
 }
 
 static void testLimiter()
