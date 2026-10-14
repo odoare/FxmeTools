@@ -19,7 +19,11 @@
 #       unavailable, so calling it is safe on any machine.
 #
 # Usage from a consumer project (after add_subdirectory(JUCE)):
-#     include(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/cmake/FxmeTools.cmake)
+#     include(${FXMETOOLS_DIR}/cmake/FxmeTools.cmake)
+#
+# FXMETOOLS_DIR comes from the consumer's cmake/FxmeDeps.cmake (sibling clone
+# or pinned commit). Including this file more than once — from a consumer and
+# from a FxmeFX helper, say — is safe: only the first include registers targets.
 #     ...
 #     fxmetools_attach(MyPlugin)
 #     fxmetools_attach_video(MyPlugin)     # only if the plugin uses image input
@@ -29,6 +33,11 @@ get_filename_component(FXMETOOLS_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(FXMETOOLS_MODULE_DIR "${FXMETOOLS_ROOT}/FxmeTools")
 set(FXMETOOLS_CORE_DIR   "${FXMETOOLS_ROOT}/core")
 set(FXMETOOLS_WDL_DIR    "${FXMETOOLS_ROOT}/WDL/WDL")
+
+# The paths above are set on every include, so a later include from another
+# directory scope still sees them; targets and functions are global and are
+# registered once.
+include_guard(GLOBAL)
 
 # The JUCE-free half of the library (see core/README.md). It is a second
 # include root for the very same <FxmeTools/...> spelling, so whether a header
