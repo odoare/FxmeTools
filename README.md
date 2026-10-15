@@ -10,8 +10,8 @@ separate from the GUI code means they can be tested in a second without a plugin
 host, reused from a command-line tool, a Pure Data external or an embedded
 target, and carried across intact if the framework is ever swapped.
 
-There is a licensing dimension too, and it is not incidental. JUCE 8 is dual
-AGPLv3 / commercial, which constrains anything built on it. The code under
+There is a licensing dimension too, and it is not incidental. JUCE (8 and 9
+alike) is dual AGPLv3 / commercial, which constrains anything built on it. The code under
 `core/` is not a JUCE derivative in any sense — it does not include a JUCE
 header, link a JUCE library, or name a JUCE symbol — so it is free to carry
 whatever licence its author chooses, independently of the framework half. That
@@ -85,20 +85,32 @@ This is where anything touching files, images, value trees or windows belongs.
 
 ## Using it
 
-As a submodule, from a consuming project's CMake:
+From a consuming project's CMake, after JUCE has been added.
+`FXMETOOLS_DIR` is wherever the project gets FxmeTools from: a sibling clone or
+a pinned commit (`fxme_dependency()` in its `cmake/Dependencies.cmake`), or
+`lib/FxmeTools` in projects that still use a submodule:
 
 ```cmake
-include(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/cmake/FxmeTools.cmake)
+include(${FXMETOOLS_DIR}/cmake/FxmeTools.cmake)
 fxmetools_attach(MyPlugin)         # module + core + the WDL convolution engine
+fxmetools_add_clap(MyPlugin        # optional: MyPlugin_CLAP
+    ID       "com.fx-mechanics.MyPlugin"
+    FEATURES audio-effect stereo)
 ```
+
+`fxmetools_add_clap()` wraps
+[clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions),
+which the consuming project pins itself (`CLAPJUCEEXTENSIONS_DIR`); see the
+comment above the function in `cmake/FxmeTools.cmake`. The CLAP ID is permanent
+once released.
 
 Registering the module directly instead of using `fxmetools_attach()` is fine —
 several projects do, to avoid compiling WDL — but then `core/` has to be added
 explicitly:
 
 ```cmake
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/core FxmeCore)
-juce_add_module(${CMAKE_CURRENT_SOURCE_DIR}/lib/FxmeTools/FxmeTools)
+add_subdirectory(${FXMETOOLS_DIR}/core FxmeCore)
+juce_add_module(${FXMETOOLS_DIR}/FxmeTools)
 target_link_libraries(FxmeTools INTERFACE FxmeCore)
 ```
 
@@ -112,7 +124,7 @@ around but the whole library they wanted.
 ```
 core/          the framework-free half, its build, its guard and its tests
 FxmeTools/     the JUCE module
-cmake/         FxmeTools.cmake — module registration and fxmetools_attach()
+cmake/         FxmeTools.cmake — module registration, fxmetools_attach(), fxmetools_add_clap()
 doc/           api-changes.md: consumer-visible changes and per-project migration
 scripts/       split-core.py, which performs the mechanical half of a promotion
 tests/         JUCE-side unit tests, added by a consuming project

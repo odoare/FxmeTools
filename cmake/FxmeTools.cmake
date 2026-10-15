@@ -18,6 +18,10 @@
 #       decoding (FFmpeg via pkg-config). Both degrade gracefully when
 #       unavailable, so calling it is safe on any machine.
 #
+#   fxmetools_add_clap(<target> ID <clap-id> FEATURES <feature>...)
+#       adds a <target>_CLAP format target through clap-juce-extensions,
+#       which the consumer pins as ClapJuceExtensions (CLAPJUCEEXTENSIONS_DIR).
+#
 # Usage from a consumer project (after add_subdirectory(JUCE)):
 #     include(${FXMETOOLS_DIR}/cmake/FxmeTools.cmake)
 #
@@ -123,4 +127,65 @@ function(fxmetools_attach_video target)
     target_compile_definitions(${target} PUBLIC
         FXME_HAS_JUCE_CAMERA=${_has_camera}
         FXME_HAS_FFMPEG=${_has_ffmpeg})
+endfunction()
+
+# ──────────────────────────────────────────────────────────────────────────
+# CLAP format, through free-audio/clap-juce-extensions (JUCE 9 has no CLAP
+# client of its own yet).
+#
+#   fxmetools_add_clap(MyPlugin
+#       ID       "com.fx-mechanics.MyPlugin"
+#       FEATURES audio-effect stereo)
+#
+# Creates MyPlugin_CLAP beside the VST3/AU/Standalone targets, built by
+# MyPlugin_All too, into MyPlugin_artefacts/<config>/CLAP/MyPlugin.clap.
+# Call it after juce_add_plugin(MyPlugin ...). Any other argument (CLAP_MANUAL_URL,
+# CLAP_SUPPORT_URL, ...) goes to clap_juce_extensions_plugin() unchanged.
+#
+# ID is permanent once released: hosts store it in their sessions. The
+# FX-Mechanics scheme is com.fx-mechanics.<PRODUCT_NAME>, whatever the
+# target's BUNDLE_ID says. It is required, not derived from the product name,
+# so that renaming a product can never change it silently.
+#
+# FEATURES by plugin type: effect → audio-effect (+ a category such as
+# reverb, delay, compressor, ...), instrument → instrument synthesizer,
+# MIDI effect → note-effect; add stereo or mono for the channel layout.
+#
+# This file does not fetch clap-juce-extensions: the top-level project pins
+# it like every other dependency (cmake/Dependencies.cmake), e.g.
+#     fxme_dependency(ClapJuceExtensions
+#         https://github.com/free-audio/clap-juce-extensions <sha>
+#         SIBLING clap-juce-extensions)
+# which sets CLAPJUCEEXTENSIONS_DIR; FetchContent brings its clap and
+# clap-helpers submodules along.
+# ──────────────────────────────────────────────────────────────────────────
+function(fxmetools_add_clap target)
+    cmake_parse_arguments(FXMECLAP "" "ID" "FEATURES" ${ARGN})
+    if(NOT FXMECLAP_ID)
+        message(FATAL_ERROR "fxmetools_add_clap(${target}): ID is required")
+    endif()
+    if(NOT FXMECLAP_FEATURES)
+        message(FATAL_ERROR "fxmetools_add_clap(${target}): FEATURES is required")
+    endif()
+
+    if(NOT TARGET clap_juce_extensions)
+        if(NOT CLAPJUCEEXTENSIONS_DIR)
+            message(FATAL_ERROR "fxmetools_add_clap(${target}): CLAPJUCEEXTENSIONS_DIR is not set; "
+                                "pin ClapJuceExtensions with fxme_dependency() first")
+        endif()
+        # Added once, at the top of the build tree, whichever plugin asks first.
+        add_subdirectory("${CLAPJUCEEXTENSIONS_DIR}"
+                         "${CMAKE_BINARY_DIR}/clap-juce-extensions" EXCLUDE_FROM_ALL)
+    endif()
+
+    clap_juce_extensions_plugin(TARGET ${target}
+        CLAP_ID "${FXMECLAP_ID}"
+        CLAP_FEATURES ${FXMECLAP_FEATURES}
+        ${FXMECLAP_UNPARSED_ARGUMENTS})
+
+    # clap-juce-extensions does not hook into JUCE's <target>_All, which is
+    # what "build every format of this plugin" means everywhere else.
+    if(TARGET ${target}_All)
+        add_dependencies(${target}_All ${target}_CLAP)
+    endif()
 endfunction()

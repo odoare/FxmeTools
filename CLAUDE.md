@@ -1,7 +1,10 @@
 # FxmeTools
 
 Shared C++ audio library behind the FX-Mechanics plugins (FxmeFX, SuperMoTo,
-FxmeSampler). Consumed as a git submodule under `<plugin>/lib/FxmeTools`.
+FxmeSampler). Being moved from a git submodule (`<plugin>/lib/FxmeTools`) to a
+sibling clone (`~/src/FxmeTools`) pinned by each plugin's
+`cmake/Dependencies.cmake`; FxmeFX and Camshaft are migrated, the others not
+yet.
 
 The repository is mid-way through a **core/shell split**: the JUCE-free half is
 being moved under `core/`, leaving only genuinely JUCE-coupled code in the
@@ -181,7 +184,11 @@ Follow the surrounding code, which is JUCE house style:
   engine for `dsp/FirFilter.h` and the real FFT used by `dsp/SpectralFreeze.h`
   and by `fxme::RealFft` (orders 2..15, see `util/Fft.cpp`).
   It is the JUCE-free FFT of choice for anything promoted into core.
-- This repo is itself consumed as a submodule. Commits here need pushing to the
-  FxmeTools remote **and** a submodule pointer bump in the consuming plugin.
-- `~/src/FxmeTools` may be a stale clone. The authoritative checkout is
-  whichever submodule you are working in — check `git log -1` before assuming.
+- Migrated consumers (FxmeFX, Camshaft) build against `~/src/FxmeTools` when it
+  exists and against their pinned SHA otherwise (`-DFXME_USE_SIBLINGS=OFF`, as
+  in CI). Commits here need pushing to the FxmeTools remote **and** a pin bump
+  in each consumer's `cmake/Dependencies.cmake`.
+- Not-yet-migrated consumers still carry it as a submodule; there the
+  authoritative checkout is the submodule you are working in.
+- Compiles against JUCE 9 (the migrated consumers' pin) and must keep compiling
+  against JUCE 8.0.12 until the other consumers move.

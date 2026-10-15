@@ -34,8 +34,8 @@ incorporates; the two are read together.
 The `FxmeTools/` directory is a JUCE module. It only compiles against JUCE, and
 a work combining the two is bound by JUCE's own terms.
 
-JUCE 8 is itself dual-licensed: under the AGPLv3, or under the commercial JUCE 8
-licence. This half mirrors that shape rather than fighting it, so that whichever
+JUCE is itself dual-licensed, in version 8 as in 9: under the AGPLv3, or under
+the commercial JUCE licence. This half mirrors that shape rather than fighting it, so that whichever
 route a consumer is already on for JUCE, the same route works here:
 
     SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FXME-Commercial

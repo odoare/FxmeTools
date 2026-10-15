@@ -11,6 +11,26 @@ project after a break.
 
 ---
 
+## New: `fxmetools_add_clap()`; JUCE 9 (2026-10-15)
+
+CMake only, additive. **Nothing to do for a consumer that does not want CLAP.**
+
+`cmake/FxmeTools.cmake` gains `fxmetools_add_clap(<target> ID <id> FEATURES
+<feature>...)`, which adds `<target>_CLAP` (built by `<target>_All` too)
+through free-audio/clap-juce-extensions. The consumer pins that repo itself:
+`fxme_dependency(ClapJuceExtensions <url> <sha> SIBLING clap-juce-extensions)`
+in its `cmake/Dependencies.cmake`, before including `FxmeTools.cmake`. Use
+commit `7adee3a` or later: the last tag (0.26.0, 2022) predates JUCE 9 support.
+
+CLAP IDs follow `com.fx-mechanics.<PRODUCT_NAME>` for every plugin, whatever
+its `BUNDLE_ID`. They are permanent once released.
+
+The library compiles unchanged against JUCE 9.0.4 (FxmeFX and Camshaft moved
+to it) and still against 8.0.12. JUCE 9 on Linux needs `libxi-dev` and
+`libegl-dev` at build time.
+
+---
+
 ## `MultiModeFilter` formant: make-up gain follows the resonance (2026-10-11)
 
 Behaviour change, audible. **Consumers using the formant type: check levels.**
