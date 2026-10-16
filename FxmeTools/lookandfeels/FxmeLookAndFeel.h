@@ -33,6 +33,13 @@
     rotaryGeometry() gives a knob's centre and radius in either style, for a
     component that draws over its knob (a modulation ring, say).
 
+    Faders (LinearVertical, LinearHorizontal) have a flat style too, opt-in
+    (setLinearStyle, or a slider's "linearStyle" property set to "flat"): the
+    flat knob's vocabulary on a straight track — a thick track, the value
+    filled from its origin, a dark cap crossed by the accent, the value under
+    it when "showLabel" is set. Classic stays the default, so existing panels
+    whose knobs are flat keep their linear sliders as they were.
+
     A read-out that does not fit is never cut with "...": its font shrinks to
     a floor, then its unit goes (drawFittedText()).
 
@@ -143,6 +150,50 @@ public:
       slider's "knobStyle" property, "classic" or "flat", overrides it). */
   void setKnobStyle (KnobStyle s) noexcept { knobStyle = s; }
   KnobStyle getKnobStyle() const noexcept  { return knobStyle; }
+
+  enum class LinearStyle { classic, flat };
+
+  /** The style of faders (LinearVertical and LinearHorizontal sliders); a
+      slider's "linearStyle" property, "classic" or "flat", overrides it. */
+  void setLinearStyle (LinearStyle s) noexcept { linearStyle = s; }
+  LinearStyle getLinearStyle() const noexcept  { return linearStyle; }
+
+  LinearStyle linearStyleFor (const juce::Slider& slider) const
+  {
+      const auto prop = slider.getProperties().getWithDefault ("linearStyle", juce::var()).toString();
+      if (prop == "flat")    return LinearStyle::flat;
+      if (prop == "classic") return LinearStyle::classic;
+      return linearStyle;
+  }
+
+  /** Where a flat fader's parts sit in its bounds: the track's area (the
+      cap travels along it), the track's thickness, the cap's length (along
+      the track) and width (across it), and the read-out under it. */
+  struct FaderGeometry
+  {
+      juce::Rectangle<float> track, labelArea;
+      float thickness = 0.0f, capLength = 0.0f, capWidth = 0.0f;
+  };
+
+  static FaderGeometry faderGeometry (juce::Rectangle<float> bounds, bool vertical, bool showLabel)
+  {
+      FaderGeometry geo;
+      const float labelHeight = showLabel ? juce::jlimit (0.0f, bounds.getHeight() * 0.4f, juce::jmax (bounds.getHeight() * 0.12f, 13.0f)) : 0.0f;
+      geo.labelArea = bounds.removeFromBottom (labelHeight);
+      geo.track = bounds;
+      const float across = vertical ? bounds.getWidth() : bounds.getHeight();
+      geo.thickness = juce::jlimit (3.0f, 8.0f, across * 0.18f);
+      geo.capWidth = juce::jmin (across * 0.86f, 44.0f);
+      geo.capLength = juce::jlimit (8.0f, 18.0f, geo.capWidth * 0.45f);
+      return geo;
+  }
+
+  bool isFlatFader (const juce::Slider& slider) const
+  {
+      const auto style = slider.getSliderStyle();
+      return (style == juce::Slider::LinearVertical || style == juce::Slider::LinearHorizontal)
+          && linearStyleFor (slider) == LinearStyle::flat;
+  }
 
   KnobStyle styleFor (const juce::Slider& slider) const
   {
@@ -359,9 +410,33 @@ public:
     }
   };
 
+  /** A flat fader's cap must not run off its track: JUCE keeps the value's
+      positions this far from each end, for the mouse as for the drawing. */
+  int getSliderThumbRadius (juce::Slider& slider) override
+  {
+      if (isFlatFader (slider))
+      {
+          const bool vertical = slider.getSliderStyle() == juce::Slider::LinearVertical;
+          const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+          return juce::roundToInt (faderGeometry (slider.getLocalBounds().toFloat(), vertical, showLabel).capLength * 0.5f);
+      }
+      return LookAndFeel_V4::getSliderThumbRadius (slider);
+  }
+
   juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
   {
       auto style = slider.getSliderStyle();
+
+      // A flat fader travels along its track; the read-out below is drawn by us.
+      if (isFlatFader (slider))
+      {
+          const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+          juce::Slider::SliderLayout layout;
+          layout.sliderBounds = faderGeometry (slider.getLocalBounds().toFloat(), style == juce::Slider::LinearVertical, showLabel)
+                                    .track.toNearestInt();
+          layout.textBoxBounds = {};
+          return layout;
+      }
 
       // For our custom linear sliders, we want the bar to fill the entire component bounds.
       if (style == juce::Slider::LinearHorizontal || style == juce::Slider::LinearBarVertical)
@@ -483,6 +558,13 @@ public:
           juce::Slider& slider) override
   {
     const bool enabled = slider.isEnabled();
+
+    if (isFlatFader (slider))
+    {
+        drawFlatFader (g, sliderPos, slider, style == juce::Slider::LinearVertical, enabled,
+                       enabled && slider.isMouseOverOrDragging());
+        return;
+    }
 
     if (style == juce::Slider::LinearBarVertical)
     {
@@ -870,6 +952,61 @@ public:
 
 private:
   KnobStyle knobStyle = KnobStyle::classic;
+  LinearStyle linearStyle = LinearStyle::classic;
+
+  /** The flat fader: a thick track, the value filled from its origin (the
+      bottom or left, or "centralValue" for a bipolar one), a dark cap crossed
+      by the accent at `pos` (pixels, as JUCE computed it), the value below. */
+  void drawFlatFader (juce::Graphics& g, float pos, juce::Slider& slider, bool vertical, bool enabled, bool hovered)
+  {
+      const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+      const auto geo = faderGeometry (slider.getLocalBounds().toFloat(), vertical, showLabel);
+      const auto area = geo.track;
+      const float t = geo.thickness;
+
+      // The track runs between the cap's two extreme positions.
+      const float inset = geo.capLength * 0.5f;
+      const auto line = vertical
+          ? juce::Line<float> (area.getCentreX(), area.getBottom() - inset, area.getCentreX(), area.getY() + inset)
+          : juce::Line<float> (area.getX() + inset, area.getCentreY(), area.getRight() - inset, area.getCentreY());
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderOutlineColourId), enabled));
+      g.drawLine (line, t);
+
+      // The value, from its origin.
+      const double originValue = slider.proportionOfLengthToValue (originProportion (slider));
+      const float origin = (float) slider.getPositionOfValue (originValue);
+      if (std::abs (pos - origin) > 0.5f)
+      {
+          const auto fill = vertical ? juce::Line<float> (area.getCentreX(), origin, area.getCentreX(), pos)
+                                     : juce::Line<float> (origin, area.getCentreY(), pos, area.getCentreY());
+          g.setColour (forHover (forState (slider.findColour (juce::Slider::trackColourId), enabled), hovered));
+          g.drawLine (fill, t);
+      }
+
+      // The cap: dark, crossed by the accent.
+      const auto centre = vertical ? juce::Point<float> (area.getCentreX(), pos) : juce::Point<float> (pos, area.getCentreY());
+      const auto cap = vertical ? juce::Rectangle<float> (geo.capWidth, geo.capLength).withCentre (centre)
+                                : juce::Rectangle<float> (geo.capLength, geo.capWidth).withCentre (centre);
+      const float corner = juce::jmin (cap.getWidth(), cap.getHeight()) * 0.3f;
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderFillColourId), enabled, 0.9f));
+      g.fillRoundedRectangle (cap, corner);
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderOutlineColourId), enabled));
+      g.drawRoundedRectangle (cap, corner, 1.0f);
+      const float mark = juce::jmax (2.0f, t * 0.6f);
+      g.setColour (forHover (forState (slider.findColour (juce::Slider::thumbColourId), enabled), hovered));
+      if (vertical)
+          g.drawLine (cap.getX() + corner, centre.y, cap.getRight() - corner, centre.y, mark);
+      else
+          g.drawLine (centre.x, cap.getY() + corner, centre.x, cap.getBottom() - corner, mark);
+
+      // The value under it, fitted (never cut with "...").
+      if (showLabel && geo.labelArea.getHeight() > 4.0f)
+      {
+          g.setColour (slider.findColour (juce::Slider::textBoxTextColourId).withMultipliedAlpha (textAlpha (0.85f, enabled)));
+          const float size = juce::jmin (13.0f, geo.labelArea.getHeight() * 0.9f);
+          drawFittedText (g, slider.getTextFromValue (slider.getValue()), geo.labelArea, geo.labelArea, size, juce::jmin (size, 7.5f));
+      }
+  }
 
   /** The flat knob: a plain dark disc, a thick value arc over its track, a
       bold pointer mark near the rim, the value in the middle, a large
