@@ -11,6 +11,28 @@ project after a break.
 
 ---
 
+## New: `midi/BlockOverrides.h`, Mango's override language made generic; `StringSequencer::setMaxSteps` (2026-10-20)
+
+Additive. **Mango: done in the same change** (its `OverrideParser.h` is now a
+thin layer over it). Nothing to do elsewhere.
+
+- `core/FxmeTools/midi/BlockOverrides.h` (no JUCE, LGPL): the block override
+  language of Mango (`key=value` per sequencer block, all-or-nothing, flat POD
+  result for the audio thread), with the language described by the caller:
+  `OverrideLanguage` lists the keys (each with optional symbols, Mango's
+  vowels) and the named variables (with an optional voice digit,
+  `mididur2`). `OverrideExpr::eval (source)` takes any object with
+  `float variableValue (int variable, int voice) const`. Note-value constants
+  (`s8`, `t16`, `d4`), absolute seconds (`1.5s`) and the `*N`, `/N`, `N*`
+  forms are built in. Used by Mango and by Otomatotamoto's Mango agents,
+  which add harmony and form variables of their own.
+- `StringSequencer::setMaxSteps (n)` / `getMaxSteps()`: the window was
+  hard-capped at 64 steps; 64 stays the default. A host whose pattern spans a
+  longer musical length (a song-form cycle in sixteenths) raises it.
+- Tests: `core/tests/CoreBlockOverridesTests.cpp`.
+
+---
+
 ## New: `fxmetools_add_clap()`; JUCE 9 (2026-10-15)
 
 CMake only, additive. **Nothing to do for a consumer that does not want CLAP.**

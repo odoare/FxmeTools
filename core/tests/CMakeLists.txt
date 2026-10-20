@@ -118,3 +118,8 @@ foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitte
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
 endforeach()
+
+# ── The block override language (midi/BlockOverrides.h), StringSequencer's step limit ──
+add_executable(FxmeCoreBlockOverridesTests CoreBlockOverridesTests.cpp)
+target_link_libraries(FxmeCoreBlockOverridesTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreBlockOverridesTests COMMAND FxmeCoreBlockOverridesTests)

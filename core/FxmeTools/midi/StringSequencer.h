@@ -75,8 +75,20 @@ public:
         go dormant and come back unchanged if the window grows again. */
     void setNumSteps (int n)
     {
-        numSteps_ = std::max (1, std::min (64, n));
+        numSteps_ = std::max (1, std::min (maxSteps_, n));
     }
+
+    /** The largest window setNumSteps() accepts: 64 by default. A host whose
+        pattern follows a longer musical span (a whole cycle of a song form in
+        sixteenths) raises it. Lowering it shrinks the window if needed; the
+        blocks past it go dormant, as with setNumSteps(). */
+    void setMaxSteps (int n)
+    {
+        maxSteps_ = std::max (1, n);
+        numSteps_ = std::min (numSteps_, maxSteps_);
+    }
+
+    int getMaxSteps() const noexcept { return maxSteps_; }
 
     SeqStepSize getStepSize()           const noexcept { return stepSize_; }
     int         getNumSteps()           const noexcept { return numSteps_; }
@@ -293,6 +305,7 @@ public:
 private:
     SeqStepSize           stepSize_ = SeqStepSize::Sixteenth;
     int                   numSteps_ = 16;
+    int                   maxSteps_ = 64;
     int                   nextId_   = 0;
     std::vector<SeqBlock> blocks_;
 
