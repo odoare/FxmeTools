@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Unit tests for FxmeTools: the midi/Arpeggiator engine and the
-# modulation-effect DSP kernels (ModDelayLine / AllpassChain / ModLfo).
+# Unit tests for FxmeTools that need JUCE: the modulation-effect DSP kernels
+# (ModDelayLine / AllpassChain / ModLfo). The arpeggiator engine is JUCE-free
+# and is tested in core/tests (CoreArpeggiatorTests.cpp).
 # This directory is meant to be added from a consumer project's CMakeLists
 # (after add_subdirectory(JUCE)), e.g.:
 #     add_subdirectory(Source/libs/FxmeTools/tests)
@@ -23,7 +24,6 @@ juce_add_console_app(FxmeToolsTests
 target_sources(FxmeToolsTests
     PRIVATE
         main.cpp
-        test_arpeggiator.cpp
         test_modulation.cpp
 )
 
@@ -61,4 +61,4 @@ target_link_libraries(FxmeToolsTests
 # resolves to this generated file via the include path JUCE adds automatically.
 juce_generate_juce_header(FxmeToolsTests)
 
-add_test(NAME ArpeggiatorTests COMMAND FxmeToolsTests)
+add_test(NAME FxmeToolsTests COMMAND FxmeToolsTests)

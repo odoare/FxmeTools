@@ -240,6 +240,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/SequencerEngine.h>)
  #include <FxmeTools/midi/SequencerEngine.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/midi/Arpeggiator.h>)
+ #include <FxmeTools/midi/Arpeggiator.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/StringSequencer.h>)
  #include <FxmeTools/midi/StringSequencer.h>
 #endif

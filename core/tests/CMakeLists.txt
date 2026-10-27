@@ -123,3 +123,26 @@ endforeach()
 add_executable(FxmeCoreBlockOverridesTests CoreBlockOverridesTests.cpp)
 target_link_libraries(FxmeCoreBlockOverridesTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreBlockOverridesTests COMMAND FxmeCoreBlockOverridesTests)
+
+# ── The text-pattern arpeggiator (midi/Arpeggiator.h) ──────────────────────
+# Written with doctest, unlike the tests above; fetched at configure time and
+# scoped to this one executable.
+include(FetchContent)
+FetchContent_Declare(
+    doctest
+    GIT_REPOSITORY https://github.com/doctest/doctest.git
+    GIT_TAG        v2.4.11
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(doctest)
+if(NOT doctest_POPULATED)
+    FetchContent_Populate(doctest)
+endif()
+
+add_executable(FxmeCoreArpeggiatorTests CoreArpeggiatorTests.cpp)
+target_link_libraries(FxmeCoreArpeggiatorTests PRIVATE FxmeCore)
+target_include_directories(FxmeCoreArpeggiatorTests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+target_compile_options(FxmeCoreArpeggiatorTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
+add_test(NAME FxmeCoreArpeggiatorTests COMMAND FxmeCoreArpeggiatorTests)

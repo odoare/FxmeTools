@@ -11,6 +11,57 @@ project after a break.
 
 ---
 
+## `midi/Arpeggiator.h` moves to core: no JUCE, new output type; `setSeed`, `setOctaveWrap`, `Chord::setDegreesDirect` (2026-10-27)
+
+**Breaking for the one consumer, TeAr: done in the same change.** The include
+spelling `<FxmeTools/midi/Arpeggiator.h>` is unchanged.
+
+`fxme::Arpeggiator` moved from the module to `core/FxmeTools/midi/`
+(licence now LGPL like the rest of core; it was AGPL/commercial only because of
+JUCE). What changed for a caller:
+
+- **Output.** `processBlock (numSamples, channel)`, `reset (channel, ppq)` and
+  `turnOff (channel)` return `fxme::ArrayView<fxme::ArpMidiEvent>` instead of a
+  `const juce::MidiBuffer&`. `ArpMidiEvent { int sample, channel, note,
+  velocity; bool noteOn; }`; a note-off has `noteOn == false` and velocity 0.
+  Same lifetime rule: valid until the next call to one of the three. Convert
+  with a loop (`juce::MidiMessage::noteOn (e.channel, e.note, (juce::uint8) e.velocity)`
+  at `e.sample`). A note outside 0..127 (after octave, sharp/flat) is no longer
+  emitted, and not remembered as the last played note.
+- **Strings.** Patterns are `std::string`: `getPattern()` returns
+  `const std::string&`; `makeEuclidianPattern` and `migratePatternV1toV2`
+  return `std::string`; `setPattern`, `setPlayNoteOffMode`,
+  `patternHasFixedLength`, `migratePatternV1toV2` and the constructor take
+  `fxme::StringRef` (a `juce::String` still converts implicitly).
+- **Position.** `syncToPlayHead (double ppqPosition)` replaces the
+  `CurrentPositionInfo` overload; `reset (channel, double ppqPosition = -1.0)`
+  replaces the `Optional<CurrentPositionInfo>` (negative = none).
+- `makeRandomPattern (Random& r = systemRandom())`: a seeded `fxme::Random`
+  makes a pattern reproducible.
+- **New: `setSeed (std::int64_t)`.** Every random choice of a playing pattern
+  (`?`, `pN`, `v?`, `o?`) now draws from the engine's own `fxme::Random`
+  (seeded randomly at construction, as before: nothing changes unless a host
+  calls `setSeed`). With a seed, the same calls give the same events.
+- **New: `setOctaveWrap (bool)`**, default off. On, an explicit degree beyond
+  the chord's size (`8` on a seven-note scale) is the degree `index % size` an
+  octave higher per lap, instead of folding into the same octave. `+`, `-`, `?`
+  stay cyclic.
+- **New: `MidiTools::Chord::setDegreesDirect (ArrayView<int>)`**: degrees set as
+  given (semitones from C, may exceed 11), name "Diatonic", no allocation once
+  `ensureCapacity` was called. For hosts that build their own scales.
+- `getRandomPresentDegree()` no longer allocates (it allocated a `juce::Array`
+  on the audio thread). `Arpeggiator::prepareToPlay` reserves 512/8 events.
+- Tests moved from `tests/test_arpeggiator.cpp` (JUCE console app) to
+  `core/tests/CoreArpeggiatorTests.cpp` (doctest, fetched for that one target):
+  `FxmeCoreArpeggiatorTests`. The remaining JUCE test target is registered with
+  ctest as `FxmeToolsTests` (it was `ArpeggiatorTests`).
+
+Checklist: **TeAr** done. Other projects still on an old FxmeTools pointer
+(Dede, AmbiRR2, Localizer) do not use the engine; if one starts to, use the
+new API.
+
+---
+
 ## New: `midi/BlockOverrides.h`, Mango's override language made generic; `StringSequencer::setMaxSteps` (2026-10-20)
 
 Additive. **Mango: done in the same change** (its `OverrideParser.h` is now a

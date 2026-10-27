@@ -432,6 +432,16 @@ namespace MidiTools
             std::sort(rawNotes.begin(), rawNotes.end()); // Keep a consistent order
         }
 
+        /** Sets the degrees directly, in order, as semitones from C (they may exceed 11:
+            a scale voiced upward from its first note). For hosts that build their own
+            scales. Does not allocate once the chord has the capacity (ensureCapacity). */
+        void setDegreesDirect(ArrayView<int> semitones)
+        {
+            name = "Diatonic";
+            degrees.assign(semitones.begin(), semitones.end());
+            rawNotes.clear();
+        }
+
         /** Returns the raw MIDI notes that were set via setNotesByArray. */
         ArrayView<int> getRawNotes() const
         {

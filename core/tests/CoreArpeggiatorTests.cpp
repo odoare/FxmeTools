@@ -1,6 +1,11 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
-#include <JuceHeader.h>
 #include <FxmeTools/midi/Arpeggiator.h>
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <vector>
 
 // The engine moved from CppMusicTools into FxmeTools; keep the test body
 // written against the original (un-nested) names.
@@ -35,8 +40,8 @@ namespace
 
     // Configures an Arpeggiator for deterministic, sample-accurate testing.
     void setup(Arpeggiator& arp,
-               const juce::String& pattern,
-               const juce::String& chordName = "CM")
+               const std::string& pattern,
+               const std::string& chordName = "CM")
     {
         arp.setChord(MidiTools::Chord(chordName));
         arp.setPattern(pattern);
@@ -52,12 +57,9 @@ namespace
     NoteEvent tick(Arpeggiator& arp, bool isFirst = false)
     {
         auto buf = arp.processBlock(isFirst ? 1 : 100);
-        for (const auto& meta : buf)
-        {
-            auto msg = meta.getMessage();
-            if (msg.isNoteOn())
-                return { msg.getNoteNumber(), msg.getVelocity() };
-        }
+        for (const auto& e : buf)
+            if (e.noteOn)
+                return { e.note, e.velocity };
         return {};
     }
 
@@ -452,13 +454,9 @@ namespace
 {
     // A host position in PPQ. The test setup runs 1/16 steps, so one step is
     // 0.25 PPQ and an eight-step pattern spans 2.0 PPQ (a half note).
-    juce::AudioPlayHead::CurrentPositionInfo hostAt(double ppq)
+    double hostAt(double ppq)
     {
-        juce::AudioPlayHead::CurrentPositionInfo p;
-        p.bpm         = 150.0;
-        p.ppqPosition = ppq;
-        p.isPlaying   = true;
-        return p;
+        return ppq;
     }
 
     // The pitch of the first note the arpeggiator emits once synced to `ppq`.
@@ -602,7 +600,7 @@ TEST_CASE("getPatternIndexForStep and getStepForPatternIndex are inverses")
 {
     Arpeggiator arp;
 
-    const juce::StringArray patterns {
+    const std::vector<std::string> patterns {
         "1 2 3",
         "vF 1 o3 2 p5 3",
         "1 2 (O+ 1 2 3) 1 2",
@@ -682,9 +680,9 @@ TEST_CASE("v1 to v2 migration preserves the velocity each step produced")
 
     for (int oldLevel = 1; oldLevel <= 9; ++oldLevel)
     {
-        const juce::String migrated = A::migratePatternV1toV2("v" + juce::String(oldLevel) + " 1");
+        const std::string migrated = A::migratePatternV1toV2("v" + std::to_string(oldLevel) + " 1");
         const int newLevel = A::hexValue(migrated[1]);
-        const int oldVel   = juce::jmin(127, oldLevel * 16);
+        const int oldVel   = std::min(127, oldLevel * 16);
 
         CHECK(std::abs(A::velocityForLevel(newLevel) - oldVel) <= 5);
     }
@@ -939,4 +937,171 @@ TEST_CASE("the reported step index does not advance inside a fallback group")
 
     // Frozen: the walk behind it steps over the fallback as a single token.
     CHECK(reported == std::vector<int>{ 1, 1, 1, 1, 1, 1 });
+}
+
+// ---------------------------------------------------------------------------
+// 11. Seeded randomness, octave wrap, note range, setDegreesDirect
+// ---------------------------------------------------------------------------
+namespace
+{
+    struct Played { int pitch; int velocity; bool on; };
+
+    // Every event of `n` consecutive steps, flattened.
+    std::vector<Played> collectEvents(Arpeggiator& arp, int n)
+    {
+        std::vector<Played> out;
+        for (int i = 0; i < n; ++i)
+            for (const auto& e : arp.processBlock(i == 0 ? 1 : 100))
+                out.push_back({ e.note, e.velocity, e.noteOn });
+        return out;
+    }
+
+    bool sameEvents(const std::vector<Played>& a, const std::vector<Played>& b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (a[i].pitch != b[i].pitch || a[i].velocity != b[i].velocity || a[i].on != b[i].on)
+                return false;
+        return true;
+    }
+
+    std::vector<Played> seededRun(std::int64_t seed)
+    {
+        Arpeggiator arp;
+        setup(arp, "? p5 1 v?0", "CM7");
+        arp.setSeed(seed);
+        return collectEvents(arp, 64);
+    }
+}
+
+TEST_CASE("setSeed makes the random choices reproducible")
+{
+    const auto a = seededRun(1234);
+    const auto b = seededRun(1234);
+    CHECK(a.size() > 0);
+    CHECK(sameEvents(a, b));
+
+    CHECK_FALSE(sameEvents(a, seededRun(98765)));
+}
+
+TEST_CASE("setOctaveWrap makes an explicit degree past the end continue upward")
+{
+    const std::vector<int> major { 0, 2, 4, 5, 7, 9, 11 };
+    MidiTools::Chord scale("");
+    scale.setDegreesDirect(major);
+
+    Arpeggiator off;
+    setup(off, "1 8 F");
+    off.setChord(scale);
+    const auto without = collectPitches(off, 3);
+    CHECK(without[0] == C4);
+    CHECK(without[1] == C4);          // '8' folds back onto the first degree
+    CHECK(without[2] == C4);          // 'F' is degree 14: two laps, still folded
+
+    Arpeggiator on;
+    setup(on, "1 8 F 9");
+    on.setChord(scale);
+    on.setOctaveWrap(true);
+    const auto with = collectPitches(on, 4);
+    CHECK(with[0] == C4);
+    CHECK(with[1] == C4 + 12);        // one octave above '1'
+    CHECK(with[2] == C4 + 24);
+    CHECK(with[3] == C4 + 2 + 12);    // '9' is the second degree, an octave up
+}
+
+TEST_CASE("setOctaveWrap leaves '+' cyclic within the chord")
+{
+    const std::vector<int> major { 0, 2, 4, 5, 7, 9, 11 };
+    MidiTools::Chord scale("");
+    scale.setDegreesDirect(major);
+
+    Arpeggiator arp;
+    setup(arp, "7 + +");
+    arp.setChord(scale);
+    arp.setOctaveWrap(true);
+    const auto p = collectPitches(arp, 3);
+    CHECK(p[0] == C4 + 11);
+    CHECK(p[1] == C4);
+    CHECK(p[2] == C4 + 2);
+}
+
+TEST_CASE("processBlock never emits a note outside 0..127")
+{
+    // A scale voiced far upward: at octave 7 (84) most of it is beyond 127.
+    const std::vector<int> high { 5, 11, 16, 23, 30, 40, 50 };
+    MidiTools::Chord chord("");
+    chord.setDegreesDirect(high);
+
+    Arpeggiator arp;
+    setup(arp, "O7 ? F 1 2 3 4 5 6 7 8 9 A ? ? #F b1 o+7", "CM");
+    arp.setChord(chord);
+    arp.setOctaveWrap(true);
+    arp.setSeed(7);
+
+    bool sawOn = false;
+    for (int i = 0; i < 200; ++i)
+        for (const auto& e : arp.processBlock(i == 0 ? 1 : 100))
+        {
+            CHECK(e.note >= 0);
+            CHECK(e.note <= 127);
+            CHECK(e.channel >= 1);
+            CHECK(e.channel <= 16);
+            if (e.noteOn)
+            {
+                sawOn = true;
+                CHECK(e.velocity >= 1);
+                CHECK(e.velocity <= 127);
+            }
+        }
+    CHECK(sawOn);
+
+    // A note beyond the range is not remembered as the last played one.
+    const std::vector<int> beyond { 50 };
+    MidiTools::Chord chord2("");
+    chord2.setDegreesDirect(beyond);
+    Arpeggiator single;
+    setup(single, "O7 1");
+    single.setChord(chord2);
+    CHECK(collectEvents(single, 4).empty());
+    CHECK(single.getLastPlayedNote() == -1);
+}
+
+TEST_CASE("the note-off of a played note still goes out when the next one is out of range")
+{
+    const std::vector<int> mixed { 0, 50 };
+    MidiTools::Chord chord("");
+    chord.setDegreesDirect(mixed);
+
+    Arpeggiator arp;
+    setup(arp, "O7 1 2");
+    arp.setChord(chord);
+    const auto ev = collectEvents(arp, 2);
+    REQUIRE(ev.size() == 2);
+    CHECK(ev[0].on);
+    CHECK(ev[0].pitch == 84);
+    CHECK_FALSE(ev[1].on);
+    CHECK(ev[1].pitch == 84);
+    CHECK(arp.getLastPlayedNote() == -1);
+}
+
+TEST_CASE("Chord::setDegreesDirect sets the degrees as given, without allocating")
+{
+    MidiTools::Chord chord("CM");
+    chord.ensureCapacity(16, 16);
+    const int* before = chord.getDegrees().begin();
+
+    const std::vector<int> notes { 2, 4, 6, 7, 9, 11, 13, 14 };
+    chord.setDegreesDirect(notes);
+
+    CHECK(chord.getName() == "Diatonic");
+    REQUIRE(chord.getDegrees().size() == 8);
+    for (int i = 0; i < 8; ++i)
+        CHECK(chord.getDegree(i) == notes[(std::size_t) i]);
+    CHECK(chord.getRawNotes().isEmpty());
+    CHECK(chord.getDegrees().begin() == before);
+
+    chord.setNotesByArray(notes);
+    chord.setDegreesDirect(notes);
+    CHECK(chord.getRawNotes().isEmpty());
 }

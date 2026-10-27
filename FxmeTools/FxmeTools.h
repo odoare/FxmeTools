@@ -70,10 +70,10 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/midi/NoteDuration.h>
 #include <FxmeTools/midi/MidiTools.h>
 
-// MIDI / music-theory (header-only, JUCE-based). MidiTools keeps its original
-// namespace from CppMusicTools, nested inside fxme (fxme::MidiTools::Chord);
-// the text-pattern arpeggiator engine is fxme::Arpeggiator.
-#include "midi/Arpeggiator.h"
+// MidiTools keeps its original namespace from CppMusicTools, nested inside
+// fxme (fxme::MidiTools::Chord); the text-pattern arpeggiator engine is
+// fxme::Arpeggiator (core, JUCE-free: its output is fxme::ArpMidiEvent).
+#include <FxmeTools/midi/Arpeggiator.h>
 
 // DSP (header-only, no external deps)
 #include <FxmeTools/dsp/Ambisonics.h>
