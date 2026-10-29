@@ -7,9 +7,19 @@
 
     Framework-free: patterns are std::string, the output is a list of
     ArpMidiEvent (a sample offset, a channel, a note, a velocity) that the host
-    turns into whatever MIDI type it uses. Random choices ('?', 'pN', 'v?',
-    'o?') draw from the engine's own generator, which setSeed() makes
+    turns into whatever MIDI type it uses.
+
+    The engine does not read the pattern's text itself. It is a player of the
+    pattern language's passes (PatternLanguage.h): the text is compiled to a
+    pattern::Program, the program realizes one pass at a time (timed events with
+    notes as scale degrees), and the engine maps the degrees to MIDI notes
+    through its chords and plays the events on its own clock. Random choices
+    ('?', 'pN', 'v?', 'o?') are draws of the pass's seed: setSeed() makes them
     reproducible.
+
+    Two syntaxes: 2 is TeAr's (the default, so existing presets play exactly as
+    before), 3 is its superset (chords, local note values, generators, repeats,
+    variations by pass, gates, expressions). See setPatternSyntax().
 
     Author: Olivier Doaré, github.com/odoare
     Licenced under the GNU LGPL Version 3.0
@@ -20,16 +30,22 @@
 #pragma once
 
 #include <FxmeTools/midi/MidiTools.h>
+#include <FxmeTools/midi/PatternLanguage.h>
 #include <FxmeTools/util/ArrayView.h>
 #include <FxmeTools/util/Math.h>
 #include <FxmeTools/util/Random.h>
 #include <FxmeTools/util/StringRef.h>
 #include <FxmeTools/util/StringUtils.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fxme
@@ -49,14 +65,15 @@ struct ArpMidiEvent
     A base class for creating MIDI arpeggiators.
 
     This class takes a Chord, an octave, and a pattern string to generate
-    a sequence of MIDI notes. The getNext() method processes the pattern
-    and returns MIDI messages for note-on and note-off events.
+    a sequence of MIDI notes. processBlock() plays the pattern and returns MIDI
+    messages for note-on and note-off events.
 
     Degrees and velocity levels are written as a single uppercase hexadecimal
     character ('0'-'9' then 'A'-'F') since syntax version 2. Octave (0-7) and
     probability (0-9) stay decimal. See migratePatternV1toV2() for what changed.
 
-    The pattern string consists of characters that define the arpeggio's behavior at each step:
+    The pattern string consists of characters that define the arpeggio's behavior at each step
+    (syntax 2; syntax 3 is written in Otomatotamoto's doc/pattern-language.md):
     - '1' to 'F': Plays a specific degree of the chord/scale (1=fundamental, 2=2nd, ..., up to 15).
       - The `playNoteOff` property determines behavior for absent degrees ("Off", "Next", "Previous").
     - '0': Closes a step without naming a degree, so it fires on the current one. Example: "vF0"
@@ -98,6 +115,19 @@ struct ArpMidiEvent
     by default they wrap into the same octave; with setOctaveWrap (true) they
     continue upward, '8' being the first degree an octave higher. Only explicit
     degrees can exceed the size: '+', '-' and '?' stay cyclic within the chord.
+
+    Time. A pass is played in beats: an event starts at its onset and stops at
+    onset + length, so the notes of a chord sound together and are released
+    together, and a gate (syntax 3) releases a note inside its step. The engine
+    counts samples from the sample rate and the tempo (samplesPerBeat =
+    sampleRate * 60 / tempo). A step is the subdivision unless the text says
+    otherwise (`m` in syntax 3). Glides (`~`) and hits (`x`, no note) play no
+    note here.
+
+    Real time. processBlock(), reset(), turnOff(), syncToPlayHead() and
+    setProgram() do not allocate once prepareToPlay() was called and the pass
+    was reserved for the program (reservePass(), or by setPattern() /
+    setProgram() beforehand). setPattern() compiles: not for the audio thread.
 */
 class Arpeggiator
 {
@@ -232,8 +262,9 @@ public:
         Initializes with a default C Major chord, a simple pattern, and a base octave.
     */
     Arpeggiator()
-        : chord(MidiTools::Chord("CM")), pattern("012"), octave(baseOctave)
+        : chord(MidiTools::Chord("CM"))
     {
+        initialise ("012");
     }
 
     /**
@@ -243,8 +274,9 @@ public:
         @param baseOctave The starting MIDI octave.
     */
     Arpeggiator(const MidiTools::Chord& initialChord, StringRef arpPattern, int initialOctave)
-        : chord(initialChord), pattern(arpPattern.str()), octave(initialOctave)
+        : chord(initialChord), baseOctave(initialOctave)
     {
+        initialise (arpPattern);
     }
 
     virtual ~Arpeggiator() = default;
@@ -256,17 +288,16 @@ public:
     void prepareToPlay(double rate)
     {
         sampleRate = rate;
-        updateSamplesPerNote();
+        updateSamplesPerBeat();
 
-        // Grow the two output vectors here, once, so that the audio thread
-        // never has to. clear() keeps the capacity, so from here on the
-        // clear-and-refill cycle below allocates nothing at all.
+        // Grow the output vector here, once, so that the audio thread never
+        // has to. clear() keeps the capacity, so from here on the
+        // clear-and-refill cycle allocates nothing at all.
         //
         // 512 events is well beyond what one block of the fastest subdivision
-        // can produce (two per step); if some pathological block ever exceeds
-        // it, the vector grows once and then stays grown.
+        // can produce; if some pathological block ever exceeds it, the vector
+        // grows once and then stays grown.
         outEvents.reserve (512);
-        stepEvents.reserve (8);
     }
 
     //=========================================================================
@@ -289,444 +320,171 @@ public:
     /**
         Generates MIDI events for the current block of audio samples.
         @param numSamples The number of samples in the current audio block.
-        @return A view over this engine's output events, in time order, holding
-                any events generated during this block. Valid until the next
-                call to processBlock(), reset() or turnOff().
+        @return A view over this engine's output events, in time order (at one
+                sample, note-offs before note-ons), holding any events
+                generated during this block. Valid until the next call to
+                processBlock(), reset() or turnOff().
     */
     ArrayView<ArpMidiEvent> processBlock(int numSamples, int midiChannel = 1)
     {
         outEvents.clear();
-        if (sampleRate <= 0.0 || samplesPerNote <= 0.0 || pattern.empty())
+        if (sampleRate <= 0.0 || samplesPerBeat <= 0.0 || program == nullptr || ! program->ok())
             return outEvents;
         if (midiChannel < 1 || midiChannel > 16) midiChannel = 1;
 
         int time = 0;
         while (time < numSamples)
         {
-            if (samplesUntilNextNote <= 0.0)
+            // Everything due at this sample: note-offs first, then the step. A
+            // step that is late by more than its own length fires again, at
+            // the same sample, up to a bound.
+            for (int guard = 0; guard < 64; ++guard)
             {
-                // getNext() fills stepEvents, a different vector, so appending
-                // from it is not self-aliasing.
-                getNext(midiChannel);
-                for (auto e : stepEvents)
+                const bool stepDue = samplesUntilNextStep <= timeTolerance;
+                // A new pass first: its tied first steps keep the notes that reach the boundary
+                // from being released.
+                if (stepDue && (! haveCurrentPass || nextStep >= (int) currentPass.steps.size()))
+                    startPass();
+                bool did = releaseDueNotes (time);
+                if (stepDue)
                 {
-                    e.sample = time;
-                    outEvents.push_back (e);
+                    fireStep (time, midiChannel);
+                    did = true;
                 }
-                // Use 'while' to handle cases where the block size is larger than the note duration.
-                while (samplesUntilNextNote <= 0.0)
-                    samplesUntilNextNote += samplesPerNote;
+                if (! did)
+                    break;
             }
 
-            // Ensure we always advance time, even if samplesUntilNextNote is 0.
-            const int samplesToAdvance = (int)std::ceil(samplesUntilNextNote);
-            const int samplesThisStep = fxme::jmin(numSamples - time, fxme::jmax(1, samplesToAdvance));
+            // Sleep until the next thing: the step boundary or a note-off.
+            double wait = samplesUntilNextStep;
+            for (int i = 0; i < soundingCount; ++i)
+                wait = std::min (wait, samplesUntilNextStep + sounding[(std::size_t) i].endRel * samplesPerBeat);
 
-            time += samplesThisStep;
-            samplesUntilNextNote -= samplesThisStep;
+            // Always advance, even if the wait rounds to nothing.
+            const int advance = fxme::jmin (numSamples - time, fxme::jmax (1, (int) std::ceil (wait - timeTolerance)));
+            time += advance;
+            samplesUntilNextStep -= advance;
         }
         return outEvents;
     }
 
-private:
-    /**
-        Processes the next step in the arpeggio pattern and fills stepEvents
-        with this step's note-off and/or note-on. Private, and only
-        processBlock() calls it.
-    */
-    void getNext(int midiChannel)
-    {
-        stepEvents.clear();
-
-        if (pattern.empty())
-            return;
-
-
-        // --- 2. Parse the pattern using a robust loop ---
-        int noteToPlay = -1;
-        int currentDegreeIndex = lastPlayedDegreeIndex;
-        int semitoneOffset = 0; // For local sharp/flat modifiers
-        int localVelocity = -1; // For local velocity modifier
-        int localOctave = -1;   // For local octave modifier
-        bool noteCommandFound = false;
-        bool shouldUpdateLastDegree = true;
-        bool forcedRest = false;
-        bool isSustain = false;
-        bool isRest = false;
-        bool hasProbability = false;
-        
-        // This outer loop ensures we will always find a note command, even if we have to
-        // wrap around the pattern string after processing prefixes at the end.
-        for (int i = 0; i < (int) pattern.length() * 2 && !noteCommandFound; ++i)
-        {
-            // This inner loop consumes any number of prefix commands.
-            while (true)
-            {
-                char command = patternAt(pos);
-                
-                if (command == 'o' || command == 'O')
-                {
-                    currentStepIndex = getStepForPatternIndex(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // Consume 'o' or 'O'
-                    char octaveCommand = patternAt(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // Consume octave value
-                    
-                    int currentStepOctave = (localOctave != -1) ? localOctave : octave;
-                    int targetOctave = currentStepOctave;
-                    if (octaveCommand == '+') targetOctave = fxme::jmin(7, currentStepOctave + 1);
-                    else if (octaveCommand == '-') targetOctave = fxme::jmax(0, currentStepOctave - 1);
-                    else if (octaveCommand == '?') targetOctave = rng.nextInt(9) + 1;
-                    else if (octaveCommand >= '0' && octaveCommand <= '9') targetOctave = octaveCommand - '0';
-                    
-                    if (command == 'o') localOctave = targetOctave;
-                    else octave = targetOctave;
-                }
-                else if (command == 'v' || command == 'V')
-                {
-                    currentStepIndex = getStepForPatternIndex(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // Consume 'v' or 'V'
-                    char velocityValueChar = patternAt(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // Consume velocity value
-                    
-                    // Same shape as the octave block above: '+'/'-' step one
-                    // level from whatever is in effect for this step, '?' picks
-                    // one at random, and a value sets the level outright.
-                    // Levels are hex since syntax v2: 1-F over the full range.
-                    int currentLevel = levelForVelocity((localVelocity != -1) ? localVelocity
-                                                                              : effectiveVelocity());
-                    int velocityLevel;
-
-                    if (velocityValueChar == '+')
-                        velocityLevel = fxme::jmin(maxVelocityLevel, currentLevel + 1);
-                    else if (velocityValueChar == '-')
-                        velocityLevel = fxme::jmax(1, currentLevel - 1);
-                    else if (velocityValueChar == '?')
-                        velocityLevel = rng.nextInt(maxVelocityLevel) + 1;
-                    else
-                        velocityLevel = hexValue(velocityValueChar);   // 0 or -1 = leave alone
-
-                    if (velocityLevel > 0)
-                    {
-                        int velocity = velocityForLevel(velocityLevel);
-                        if (command == 'v') localVelocity = velocity;
-                        else patternVelocity = velocity;
-                    }
-                }
-                else if (command == 'p')
-                {
-                    currentStepIndex = getStepForPatternIndex(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // consume 'p'
-                    char probChar = patternAt(pos);
-                    pos = (pos + 1) % (int) pattern.length(); // consume digit
-
-                    bool rollSucceeded = true;
-                    if (probChar >= '0' && probChar <= '9')
-                    {
-                        int level = probChar - '0';
-                        rollSucceeded = rng.nextFloat() < (float) level * 0.1f;
-                    }
-
-                    // Skip spaces between 'pN' and '(' to support "p5 (12):(34)" style
-                    int groupCheckPos = pos;
-                    while (groupCheckPos < (int) pattern.length() && patternAt(groupCheckPos) == ' ')
-                        ++groupCheckPos;
-
-                    if (groupCheckPos < (int) pattern.length() && patternAt(groupCheckPos) == '(')
-                    {
-                        // Group probability: pN (success)[:( fallback)]
-                        pos = (groupCheckPos + 1) % (int) pattern.length(); // skip spaces + '('
-                        if (rollSucceeded)
-                        {
-                            scopeStack.push_back ({ octave, patternVelocity });
-                            probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
-                        }
-                        else
-                        {
-                            skipToMatchingParen(); // advance pos past matching ')'
-                            if (!pattern.empty() && patternAt(pos) == ':')
-                            {
-                                pos = (pos + 1) % (int) pattern.length(); // consume ':'
-                                if (!pattern.empty() && patternAt(pos) == '(')
-                                {
-                                    pos = (pos + 1) % (int) pattern.length(); // consume '('
-                                    scopeStack.push_back ({ octave, patternVelocity });
-                                    probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
-                                }
-                                // else single-char fallback: leave pos there for note command loop
-                            }
-                            else
-                            {
-                                forcedRest = true; // no fallback → rest
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Single-step form: pN X[:Y or :(group)]
-                        // Look ahead (linear, no wrap) to detect ':(group)' after the note command
-                        int lp = pos;
-                        while (lp < (int) pattern.length() && patternAt(lp) == ' ') lp++;
-                        while (lp < (int) pattern.length()) // skip prefix commands before note command
-                        {
-                            char lc = patternAt(lp);
-                            if ((lc == 'o' || lc == 'O' || lc == 'v' || lc == 'V' || lc == 'p') && lp + 1 < (int) pattern.length())
-                                lp += 2;
-                            else if (lc == '#' || lc == 'b')
-                                lp++;
-                            else
-                                break;
-                        }
-                        if (lp < (int) pattern.length()) lp++; // skip the note command char
-                        while (lp < (int) pattern.length() && patternAt(lp) == ' ') lp++;
-
-                        const bool hasGroupFallback = (lp     < (int) pattern.length() && patternAt(lp)     == ':' &&
-                                                       lp + 1 < (int) pattern.length() && patternAt(lp + 1) == '(');
-                        if (hasGroupFallback && !rollSucceeded)
-                        {
-                            // Fail: skip success note, enter fallback group directly (no rest)
-                            pos = (lp + 2) % (int) pattern.length(); // first char inside '('
-                            scopeStack.push_back ({ octave, patternVelocity });
-                            probGroupStack.push_back ({ (int) scopeStack.size() - 1 });
-                            // prefix loop continues; outer for loop finds first group note
-                        }
-                        else
-                        {
-                            hasProbability = true;
-                            if (!rollSucceeded) forcedRest = true;
-                            // success + hasGroupFallback: post-loop will skip ':(group)'
-                        }
-                    }
-                }
-                else if (command == '#')
-                {
-                    currentStepIndex = getStepForPatternIndex(pos);
-                    semitoneOffset = 1;
-                    pos = (pos + 1) % (int) pattern.length();
-                }
-                else if (command == 'b')
-                {
-                    currentStepIndex = getStepForPatternIndex(pos);
-                    semitoneOffset = -1;
-                    pos = (pos + 1) % (int) pattern.length();
-                }
-                else if (command == '(')
-                {
-                    pos = (pos + 1) % (int) pattern.length();
-                    scopeStack.push_back ({ octave, patternVelocity });
-                }
-                else if (command == ')')
-                {
-                    pos = (pos + 1) % (int) pattern.length();
-                    if (!scopeStack.empty())
-                    {
-                        octave          = scopeStack.back().octave;
-                        patternVelocity = scopeStack.back().velocity;
-                        scopeStack.pop_back();
-                    }
-                    // If this closes a prob group's taken branch, skip the other branch
-                    if (!probGroupStack.empty() && (int) scopeStack.size() == probGroupStack.back().nestDepth)
-                    {
-                        if (!pattern.empty() && patternAt(pos) == ':')
-                        {
-                            pos = (pos + 1) % (int) pattern.length(); // consume ':'
-                            skipProbFallback();
-                        }
-                        probGroupStack.pop_back();
-                    }
-                }
-                else if (command == '"')
-                {
-                    pos = (pos + 1) % (int) pattern.length();
-                    inRootRelativeBlock = !inRootRelativeBlock;
-                }
-                else
-                {
-                    break; // Not a prefix, break to handle note commands.
-                }
-            }
-
-            char command = patternAt(pos);
-            currentStepIndex = getStepForPatternIndex(pos);
-            pos = (pos + 1) % (int) pattern.length(); // Consume character
-
-            if (command == '_')
-            {
-                isSustain = true;
-                noteCommandFound = true;
-            }
-            else if (hexValue(command) >= 0)
-            {
-                // Convert 1-indexed pattern value to 0-indexed internal degree.
-                // '1' -> 0, '2' -> 1 ... 'F' -> 14. '0' is not a valid note: it
-                // closes the step without naming a degree, so the step fires on
-                // whichever degree is current (the idiom behind "vF0").
-                int degreeValue = hexValue(command);
-                if (degreeValue > 0)
-                    currentDegreeIndex = degreeValue - 1;
-
-                noteCommandFound = true;
-            }
-            else
-            {
-                // Handle other note commands
-                switch (command)
-                {
-                    case '+':
-                        currentDegreeIndex = (currentDegreeIndex + 1) % chord.getDegrees().size();
-                        noteCommandFound = true; break;
-                    case '-':
-                        currentDegreeIndex = (currentDegreeIndex + chord.getDegrees().size() - 1) % chord.getDegrees().size();
-                        noteCommandFound = true; break;
-                    case '?': 
-                        currentDegreeIndex = getRandomPresentDegree(); 
-                        noteCommandFound = true;
-                        // There are two possible behaviours
-                        // 1. The last played degree is updated by a '?' command,
-                        //    then it is taken ito account by '+' or '-'
-                        // 2. The last played degree is not updated by a '?' command
-                        // We choose option 1 for now
-                        // shouldUpdateLastDegree = false; 
-                        break;
-                    case '=': /* currentDegreeIndex remains the same */ noteCommandFound = true; break;
-                    case '.': currentDegreeIndex = -1; isRest = true; noteCommandFound = true; break;
-                    default: // Ignore invalid characters (like spaces) and continue loop.
-                        break;
-                }
-            }
-        }
-
-        // Single-step explicit fallback: pN X:Y or pN X:(group) — success path only
-        // (fail+group is handled inside the prefix loop above, so hasProbability is not set there)
-        if (hasProbability && !pattern.empty() && patternAt(pos) == ':')
-        {
-            pos = (pos + 1) % (int) pattern.length(); // consume ':'
-            if (!pattern.empty() && patternAt(pos) == '(')
-            {
-                // Success + group fallback: skip the entire fallback group
-                skipProbFallback(); // pos is at '('; advances past matching ')'
-            }
-            else
-            {
-                // Single-char fallback: pN X:Y
-                char fallback = patternAt(pos);
-                pos = (pos + 1) % (int) pattern.length(); // consume fallback char
-                if (forcedRest)
-                {
-                    forcedRest = false; isSustain = false; isRest = false;
-                    currentDegreeIndex = lastPlayedDegreeIndex;
-                    if (fallback == '_') { isSustain = true; }
-                    else if (fallback == '.') { isRest = true; currentDegreeIndex = -1; }
-                    else if (fallback == '?') { currentDegreeIndex = getRandomPresentDegree(); }
-                    else if (fallback >= '0' && fallback <= '9' && fallback != '0')
-                        currentDegreeIndex = (fallback - '0') - 1;
-                }
-                // success: fallback char already consumed (skipped)
-            }
-        }
-
-        if (forcedRest)
-        {
-            if (isSustain)      { isSustain = false; isRest = true; }   // _ → .
-            else if (isRest)    { isRest = false; isSustain = true; }   // . → _
-            else                { isRest = true; currentDegreeIndex = -1; } // note → .
-        }
-        if (isSustain)
-            return;  // sustain: keep previous note ringing
-
-        // --- Turn off the previous note ---
-        // This now happens *after* we've decided what the next command is.
-        if (lastPlayedMidiNote != -1)
-        {
-            stepEvents.push_back ({ 0, lastPlayedMidiChannel, lastPlayedMidiNote, 0, false });
-            lastPlayedMidiNote = -1;
-        }
-
-        // --- 3. Determine the final MIDI note to play ---
-        if (noteToPlay == -1 && currentDegreeIndex != -1) // If not sustaining and not a rest
-        {
-            // std::cout << "We should play a note!" << std::endl;
-            // std::cout << "currentDegreeIndex = " << currentDegreeIndex << std::endl;
-
-            int finalNote = getNoteForDegree(currentDegreeIndex);
-            // std::cout << "     semitone = " << semitone << std::endl;
-
-            if (finalNote != -1)
-            {
-                // Use local octave if set, otherwise use global octave.
-                int octaveToUse = (localOctave != -1) ? localOctave : octave;
-
-                // Calculate the octave offset from the base.
-                int octaveOffset = octaveToUse - baseOctave;
-                // For "Notes played" (0) and "Single note" (2) modes, the finalNote is a semitone (0-11)
-                // that needs to be placed in an absolute octave.
-                // For "Chord played as is" (1) mode, the finalNote is a full MIDI note that needs a relative offset.
-                if (chordMethod == 1)
-                    noteToPlay = finalNote + (octaveOffset * 12);
-                else // Modes 0 and 2
-                    noteToPlay = finalNote + (octaveToUse * 12);
-            }
-        }
-        
-        // --- 4. Generate MIDI event ---
-        if (noteToPlay != -1 )
-            noteToPlay += semitoneOffset; // Apply sharp/flat
-
-        // A note outside 0..127 is not emitted, and is not remembered either:
-        // there would be no note-off to send for it.
-        if (noteToPlay >= 0 && noteToPlay <= 127)
-        {
-            // Local 'v' wins for this one note; otherwise whatever is in effect.
-            const int velocityToUse = jlimit (1, 127, (localVelocity != -1) ? localVelocity
-                                                                            : effectiveVelocity());
-            stepEvents.push_back ({ 0, midiChannel, noteToPlay, velocityToUse, true });
-            lastPlayedMidiNote = noteToPlay;
-            lastPlayedMidiChannel = midiChannel;
-            noteOnCounter.bump();
-            if (shouldUpdateLastDegree)
-                lastPlayedDegreeIndex = currentDegreeIndex;
-        }
-
-        // std::cout << "     noteToplay = " << noteToPlay << std::endl;
-    }
-
-public:
-    /** Returns the number of samples remaining until the next note event. */
+    /** Returns the number of samples remaining until the next step boundary. */
     double getSamplesUntilNextNote() const
     {
-        return samplesUntilNextNote;
+        return samplesUntilNextStep;
     }
 
-    /** Sets the number of samples remaining until the next note event. */
+    /** Sets the number of samples remaining until the next step boundary. */
     void setSamplesUntilNextNote(double samples)
     {
-        samplesUntilNextNote = samples;
+        samplesUntilNextStep = samples;
     }
-public:
+
     // --- Setters for properties ---
     void setChord(const MidiTools::Chord& newChord)
     {
         chord = newChord;
     }
+
+    /**
+        Sets the pattern from its text and plays it from its start: the text is
+        compiled with the engine's syntax (setPatternSyntax()) and a step the
+        length of the subdivision (setSubdivision()). Not for the audio thread
+        (it allocates).
+
+        A text that does not compile (syntax 3 reports errors) leaves the
+        previous program playing; getDiagnostics() says why. getPattern()
+        returns the new text either way, so that an editor shows what was typed.
+    */
     void setPattern(StringRef newPattern)
     {
-        // assign() reuses the string's capacity: a host that reserved it can
-        // change patterns on the audio thread without allocating.
         pattern.assign (newPattern.data(), newPattern.length());
-        patternLengthIsFixed = patternHasFixedLength (pattern);
-        pos = 0;
-        octave = baseOctave;
-        scopeStack.clear();
-        probGroupStack.clear();
-        inRootRelativeBlock = false;
+        compilePattern();
     }
-    void setOctave(int newOctave) { octave = fxme::jlimit(0, 7, newOctave); }
+
+    /**
+        Plays a program compiled elsewhere (the pattern language's compile()),
+        from its start. For hosts that compile on another thread and swap on
+        the audio thread: nothing here allocates or frees when the pass was
+        reserved for the program (reservePass()).
+
+        The program carries its syntax and its step (defaultStepBeats), so the
+        engine takes both from it: setSubdivision() and setPatternSyntax() no
+        longer apply to it. Its text is what getPattern() returns.
+
+        @return The program that was playing. It is moved out rather than
+                released here: the host keeps it and lets it go on its own
+                thread, so that no program is ever freed by the audio thread.
+                (Ignoring the result frees it here, which is harmless unless
+                this was its last owner.)
+    */
+    std::shared_ptr<const pattern::Program> setProgram (std::shared_ptr<const pattern::Program> newProgram)
+    {
+        std::shared_ptr<const pattern::Program> previous = std::move (program);
+        program = std::move (newProgram);
+        programFromText = false;
+        if (program != nullptr)
+        {
+            patternSyntax = program->options().syntax < 3 ? 2 : 3;
+            reservePass (program->info());
+        }
+        restartProgram();
+        return previous;
+    }
+
+    /** The program being played (null before any pattern). */
+    std::shared_ptr<const pattern::Program> getProgram() const { return program; }
+
+    /** Makes room for the passes of a program with this Info, so that a later swap
+        allocates nothing. Not for the audio thread. setProgram() and setPattern()
+        do it for their own program. */
+    void reservePass (const pattern::Info& info)
+    {
+        currentPass.reserve (info);
+    }
+
+    /** The compiler's diagnostics for the last text given to setPattern() (errors and
+        warnings with their character positions), or for the program given to setProgram(). */
+    const std::vector<pattern::Diagnostic>& getDiagnostics() const
+    {
+        return (programFromText || program == nullptr) ? diagnostics : program->diagnostics();
+    }
+
+    /** The syntax setPattern() compiles with: 2 (TeAr's, the default) or 3 (the superset). Changing
+        it compiles the current text again and restarts the pattern. */
+    void setPatternSyntax (int syntax)
+    {
+        const int s = syntax < 3 ? 2 : 3;
+        if (s == patternSyntax)
+            return;
+        patternSyntax = s;
+        if (programFromText)
+            compilePattern();
+    }
+
+    int getPatternSyntax() const noexcept { return patternSyntax; }
+
+    /** Values between single quotes in syntax 3 ('64*energy') are evaluated by the host. Given to
+        setPattern()'s compiler; it must outlive the programs. */
+    void setExpressions (pattern::Expressions* e) noexcept { expressions = e; }
+
+    void setOctave(int newOctave) { carry.octave = fxme::jlimit(0, 7, newOctave); }
     void setPlayNoteOffMode(StringRef mode) { playNoteOff = mode.str(); }
 
-    /** Seeds the generator behind every random choice of the pattern ('?',
-        'pN', 'v?', 'o?'), so that a host can make them reproducible: the same
-        seed and the same calls give the same events. Without a call, the
-        engine seeds itself randomly. */
-    void setSeed (std::int64_t seed) noexcept { rng.setSeed (seed); }
+    /** Seeds the draws behind every random choice of the pattern ('?',
+        'pN', 'v?', 'o?', generators), so that a host can make them
+        reproducible: the same seed and the same calls give the same events.
+        Pass k draws from a seed made of this one and k, and the count of
+        passes starts again: a host that reseeds at a cycle's start gets
+        identical passes. Without a call, the engine seeds itself randomly
+        (and keeps going on reset(): each restart draws differently). */
+    void setSeed (std::int64_t seed) noexcept
+    {
+        rng.setSeed (seed);
+        baseSeed = static_cast<std::uint64_t> (seed);
+        seedCounter = 0;
+        passIndex = 0;
+    }
 
     /** When on, an explicit degree beyond the chord's size continues upward
         ('8' on a seven-note scale is its first degree an octave higher) instead
@@ -735,13 +493,18 @@ public:
     void setTempo(double newTempoBPM)
     {
         tempoBPM = newTempoBPM > 0 ? newTempoBPM : 120.0;
-        updateSamplesPerNote();
+        updateSamplesPerBeat();
     }
 
+    /** The step's length (index 4 = 1/16, see getNoteDivisor()). A program compiled from a text
+        by setPattern() is compiled again with it, from its start; a program given to setProgram()
+        keeps its own. */
     void setSubdivision(int subdivisionIndex)
     {
         subdivision = subdivisionIndex;
-        updateSamplesPerNote();
+        updateSamplesPerBeat();
+        if (programFromText && program != nullptr && std::abs (program->options().defaultStepBeats - 1.0 / getNoteDivisor()) > 1.0e-12)
+            compilePattern();
     }
 
     void setChordMethod(int methodIndex)
@@ -766,7 +529,8 @@ public:
         int diff = newBaseOctave - baseOctave;
         baseOctave = newBaseOctave;
         // Adjust the current octave by the difference to maintain relative shifts
-        octave = fxme::jlimit(0, 7, octave + diff);
+        if (carry.octave >= 0)
+            carry.octave = fxme::jlimit(0, 7, carry.octave + diff);
     }
 
     /**
@@ -788,11 +552,13 @@ public:
     }
 
     /** The velocity a note fires at when the step carries no local 'v': the
-        pattern's 'V' if one is in effect here, else the played velocity. */
+        pattern's 'V' if one is in effect here (syntax 2), else the played velocity. */
     int effectiveVelocity() const noexcept
     {
-        return (patternVelocity >= 0) ? patternVelocity : playedVelocity;
+        return (carry.velocity >= 0.0f) ? fxme::jlimit (1, 127, (int) std::lround (carry.velocity * 127.0f))
+                                        : playedVelocity;
     }
+
 
     /**
         Generates a Euclidean pattern string.
@@ -918,7 +684,7 @@ public:
     /** Returns the current pattern string. */
     const std::string& getPattern() const
     {
-        return pattern;
+        return text();
     }
 
     /** Returns a const reference to the currently active chord. */
@@ -927,13 +693,27 @@ public:
         return chord;
     }
 
-    /** Returns the index of the current musical step being played. */
+    /** Returns the index of the step that played last. Syntax 2: its number among the text's
+        musical steps (what getPatternIndexForStep() and getStepForPatternIndex() count, so a step
+        inside a probability fallback group reports the group's); syntax 3: its index in the pass's
+        steps. */
     int getCurrentStepIndex() const
     {
-        return currentStepIndex;
+        if (shownStep < 0)
+            return 0;
+        return patternSyntax < 3 ? getStepForPatternIndex (shownSourceStart) : shownStep;
     }
 
-    /** Returns the last MIDI note number that was played. */
+    /** The characters [start, end) of the text of the step that played last (prefixes
+        included), for highlighting it; {-1, -1} before any step. */
+    std::pair<int, int> getCurrentStepSource() const
+    {
+        if (shownStep < 0)
+            return { -1, -1 };
+        return { shownSourceStart, shownSourceEnd };
+    }
+
+    /** Returns the last MIDI note number that was played and is still sounding; -1 if none. */
     int getLastPlayedNote() const
     {
         return lastPlayedMidiNote;
@@ -948,41 +728,24 @@ public:
     {
         return noteOnCounter.get();
     }
+
 private:
     /**
-        Advances `i` past exactly one token of the pattern and reports whether
-        that token was a musical step.
+        Advances `i` past exactly one token of the text and reports whether
+        that token was a musical step (syntax 2's reading of the text, behind
+        numSteps() and its inverses).
 
-        The three public step queries below are the same walk asked three
-        different questions, so they share this one definition. They used to
-        carry a copy each, and the copies had drifted: one of them counted '"'
-        as a step while the others treated it as a block marker, which made the
-        playing-step highlight slide out of position in any pattern using
-        root-relative blocks.
+        The step queries below are the same walk asked different questions, so
+        they share this one definition. They used to carry a copy each, and the
+        copies had drifted: one of them counted '"' as a step while the others
+        treated it as a block marker, which made the playing-step highlight
+        slide out of position in any pattern using root-relative blocks.
     */
-    /** The host's position expressed in steps, with floating-point jitter
-        snapped away. A host reporting a position a millionth of a step before
-        a boundary must not be read as "a whole step still to go". */
-    double songPositionInSteps (double ppqPosition) const noexcept
-    {
-        const double raw     = ppqPosition * getNoteDivisor();
-        const double nearest = std::round (raw);
-        return (std::abs (raw - nearest) < 1.0e-6) ? nearest : raw;
-    }
-
-    /** Wraps an absolute song step onto the pattern. */
-    static int patternStepForSongStep (double songStep, int patternSteps) noexcept
-    {
-        if (patternSteps <= 0)
-            return 0;
-
-        int s = (int) std::fmod (songStep, (double) patternSteps);
-        return (s < 0) ? s + patternSteps : s;
-    }
-
     bool advanceOneToken(int& i) const
     {
-        const char command = patternAt(i);
+        const std::string& p = text();
+        const char command = p[static_cast<std::size_t> (i)];
+        const int length = (int) p.length();
 
         if (command == 'o' || command == 'O' || command == 'v' ||
             command == 'V' || command == 'p')
@@ -1000,17 +763,17 @@ private:
         else if (command == ':')
         {
             i++;                // probability fallback: skip it whole
-            if (i < (int) pattern.length() && patternAt(i) == '(')
+            if (i < length && p[static_cast<std::size_t> (i)] == '(')
             {
                 int depth = 1; i++;
-                while (i < (int) pattern.length() && depth > 0)
+                while (i < length && depth > 0)
                 {
-                    if (patternAt(i) == '(') ++depth;
-                    else if (patternAt(i) == ')') --depth;
+                    if (p[static_cast<std::size_t> (i)] == '(') ++depth;
+                    else if (p[static_cast<std::size_t> (i)] == ')') --depth;
                     i++;
                 }
             }
-            else if (i < (int) pattern.length())
+            else if (i < length)
             {
                 i++;
             }
@@ -1029,12 +792,22 @@ private:
     }
 
 public:
-    /** Calculates the number of musical steps in the pattern string. */
+    /** The number of musical steps. Syntax 2: counted in the text (a probability group counts its
+        success branch, whatever pass is playing). Syntax 3: the steps of the pass being played,
+        or before any pass the most a pass can have. */
     int numSteps() const
     {
+        if (patternSyntax >= 3)
+        {
+            if (haveCurrentPass)
+                return (int) currentPass.steps.size();
+            return program != nullptr ? program->info().maxStepsPerPass : 0;
+        }
+
+        const std::string& p = text();
         int steps = 0;
         int i = 0;
-        while (i < (int) pattern.length())
+        while (i < (int) p.length())
             if (advanceOneToken(i))
                 ++steps;
         return steps;
@@ -1043,15 +816,24 @@ public:
     /** Given a step index (0, 1, 2...), find the corresponding character index
         in the pattern string. The index returned is the start of the whole
         step, prefixes and block markers included, so that highlighting a step
-        highlights its modifiers too. */
+        highlights its modifiers too. Syntax 3: the start of the step in the
+        pass being played (0 before one). */
     int getPatternIndexForStep(int stepIndex) const
     {
-        if (pattern.empty())
+        if (patternSyntax >= 3)
+        {
+            if (haveCurrentPass && stepIndex >= 0 && stepIndex < (int) currentPass.steps.size())
+                return currentPass.steps[static_cast<std::size_t> (stepIndex)].sourceStart;
+            return 0;
+        }
+
+        const std::string& p = text();
+        if (p.empty())
             return 0;
 
         int currentStepCount = 0;
         int i = 0;
-        while (i < (int) pattern.length())
+        while (i < (int) p.length())
         {
             if (currentStepCount == stepIndex)
                 return i; // Found the start of the desired step
@@ -1063,35 +845,30 @@ public:
     }
 
     /** Given a character index in the pattern string, find the corresponding
-        musical step index. Exact inverse of getPatternIndexForStep(). */
+        musical step index (syntax 2's count). Exact inverse of getPatternIndexForStep() there. */
     int getStepForPatternIndex(int patternIndex) const
     {
-        if (pattern.empty() || patternIndex < 0)
+        const std::string& p = text();
+        if (p.empty() || patternIndex < 0)
             return 0;
 
         int stepCount = 0;
         int i = 0;
-        while (i < (int) pattern.length() && i < patternIndex)
+        while (i < (int) p.length() && i < patternIndex)
             if (advanceOneToken(i))
                 ++stepCount;
 
         return stepCount;
     }
 
-
     /**
-        True if every pass through the pattern lasts the same number of steps.
+        True if every pass through a syntax-2 text lasts the same number of steps.
 
         Probability groups break that: `p5 (1 2):(3 4 5)` runs two steps or
         three depending on the roll, and a bare `p5 (1 2)` runs two steps or
         one, so there is no fixed length to anchor a song position against.
-        numSteps() reports the success branch, which is only one of the
-        possible lengths. Single-step probability (`p5 1`, `p5 1:2`) is always
-        one step and does not count.
-
-        Patterns that fail this keep the step grid but not the bar alignment,
-        until the rolls are made at the start of each pass rather than at the
-        step (the pre-roll design in doc/architecture.md).
+        Single-step probability (`p5 1`, `p5 1:2`) is always one step and does
+        not count. See hasFixedLength() for the program being played.
     */
     static bool patternHasFixedLength (StringRef p)
     {
@@ -1114,9 +891,20 @@ public:
         return true;
     }
 
-    /** Returns the total duration of one full pattern loop in PPQ. */
+    /** True if every pass of the program being played lasts the same time, so that a song
+        position can anchor it (syncToPlayHead()). */
+    bool hasFixedLength() const
+    {
+        return program == nullptr || program->info().fixedLength;
+    }
+
+    /** Returns the total duration of one full pattern loop in PPQ (syntax 2: from the text's
+        steps; syntax 3: the program's fixed length). */
     double ppqDuration() const
     {
+        if (patternSyntax >= 3)
+            return program != nullptr ? program->info().lengthBeats : 0.0;
+
         const int steps = numSteps();
         if (steps == 0)
             return 0.0;
@@ -1132,45 +920,59 @@ public:
     */
     void syncToPlayHead(double ppqPosition)
     {
-        if (samplesPerNote <= 0.0 || ppqPosition < 0.0 || pattern.empty())
+        if (samplesPerBeat <= 0.0 || ppqPosition < 0.0 || program == nullptr || ! program->ok())
             return;
 
-        const int steps = numSteps();
-        if (steps <= 0)
-            return;
+        const pattern::Info& info = program->info();
+        const double grid = info.shortestStepBeats > 0.0 ? info.shortestStepBeats : 1.0 / getNoteDivisor();
 
-        const double songPosInSteps  = songPositionInSteps (ppqPosition);
-        const double nextStepInSong  = std::ceil (songPosInSteps);
-
-        // Grid: how far the next step boundary is from the start of this block.
-        const double stepsUntilNext = nextStepInSong - songPosInSteps;
-        const double secondsPerPPQ  = 60.0 / tempoBPM;   // 1.0 PPQ = one quarter
-        samplesUntilNextNote = stepsUntilNext / getNoteDivisor() * secondsPerPPQ * sampleRate;
-
-        // Phase: which step of the pattern belongs at that boundary. Aligning
-        // the grid alone is not enough — it keeps steps on the beat but lets
-        // the pattern sit at any rotation against the bar, so where a pattern
-        // started depended on how many steps had been consumed since the
-        // plugin loaded. Anchoring the phase to the song makes step n of the
-        // pattern fall on song step n modulo the pattern length, always.
-        if (!patternLengthIsFixed)
-            return;   // see the comment on patternHasFixedLength()
-
-        const int targetStep = patternStepForSongStep (nextStepInSong, steps);
-
-        // Only on genuine drift. In the steady state pos is already at the
-        // right step, and reassigning it would re-enter the step's leading
-        // '(' or '"' and push a second scope entry every block.
-        if (getStepForPatternIndex (pos) != targetStep)
+        if (! info.fixedLength || info.lengthBeats <= 0.0)
         {
-            pos = getPatternIndexForStep (targetStep);
-            // Jumping abandons whatever blocks were open, so the modifier
-            // state they were holding has to go with them.
-            scopeStack.clear();
-            probGroupStack.clear();
-            inRootRelativeBlock = false;
-            octave = baseOctave;
-            patternVelocity = -1;
+            // No single length to anchor a position against (see patternHasFixedLength()):
+            // the step grid is placed, the pass is left where it is.
+            const double raw = ppqPosition / grid;
+            const double nearest = std::round (raw);
+            const double steps = (std::abs (raw - nearest) < 1.0e-6) ? nearest : raw;
+            samplesUntilNextStep = (std::ceil (steps) - steps) * grid * samplesPerBeat;
+            return;
+        }
+
+        if (! haveCurrentPass)
+            startPass();
+        const int count = (int) currentPass.steps.size();
+        if (count == 0)
+            return;
+
+        // Where the position sits in the pass, and which step boundary comes next. Aligning the
+        // grid alone is not enough: it keeps steps on the beat but lets the pattern sit at any
+        // rotation against the bar, so where a pattern started would depend on how many steps
+        // had been consumed since the plugin loaded. Anchoring the phase to the song makes the
+        // pass start on every multiple of its length, always.
+        const double length = info.lengthBeats;
+        const double eps = 1.0e-6 * grid;
+        double pos = std::fmod (ppqPosition, length);
+        if (pos < eps) pos = 0.0;
+        else if (length - pos < eps) pos = length;
+
+        int target = count;
+        for (int i = 0; i < count; ++i)
+            if (currentPass.steps[(std::size_t) i].onset >= pos - eps) { target = i; break; }
+
+        const double boundary = target < count ? currentPass.steps[(std::size_t) target].onset : length;
+        double wait = boundary - pos;
+        if (wait < eps) wait = 0.0;
+        samplesUntilNextStep = wait * samplesPerBeat;
+
+        // The pass boundary is both the end of a pass and the start of the next one.
+        const bool atEdge = pos == 0.0 || pos == length;
+        const bool inPlace = target == nextStep || (atEdge && (nextStep == 0 || nextStep == count));
+
+        // Only on genuine drift. In the steady state the next step is already the right one.
+        if (! inPlace)
+        {
+            jumpToStep (target);
+            // Jumping abandons whatever the passes before were holding in scope.
+            carry = pattern::Carry {};
         }
     }
 
@@ -1178,52 +980,42 @@ public:
         @param ppqPosition The host's position in quarter notes when the
                 transport has just started, or a negative value for none.
         @return A view over this engine's output events, holding a note-off
-                for the note left ringing, if there was one. Valid until the
-                next call to processBlock(), reset() or turnOff(). */
+                for every note left ringing. Valid until the next call to
+                processBlock(), reset() or turnOff(). */
     ArrayView<ArpMidiEvent> reset(int midiChannel = 1, double ppqPosition = -1.0)
     {
         // Kept in the signature for source compatibility, but unused: the
-        // note-off below goes out on lastPlayedMidiChannel, the channel the
-        // note was actually played on.
+        // note-offs below go out on the channel each note was played on.
         (void) midiChannel;
 
         outEvents.clear();
-        if (lastPlayedMidiNote != -1)
-        {
-            outEvents.push_back ({ 0, lastPlayedMidiChannel, lastPlayedMidiNote, 0, false });
-            lastPlayedMidiNote = -1;
-        }
-
-        octave = baseOctave;
-        // Drop any 'V' the pattern had set, so playback restarts following the
-        // played velocity. playedVelocity itself survives: it belongs to the
-        // note the player is holding, not to our position in the pattern.
-        patternVelocity = -1;
-        pos = 0;
-        lastPlayedDegreeIndex = 0;
-        samplesUntilNextNote = 0;
-        scopeStack.clear();
-        probGroupStack.clear();
-        inRootRelativeBlock = false;
+        releaseAllNotes();
+        restartPlayback();
 
         // If host position is provided (i.e., transport just started), sync to it.
         // Unlike syncToPlayHead this lands on the step the position sits inside
         // rather than the next boundary, because it fires immediately.
-        if (ppqPosition >= 0.0)
+        if (ppqPosition >= 0.0 && program != nullptr && program->ok())
         {
-            const int steps = numSteps();
-            if (steps > 0 && patternLengthIsFixed)
+            const pattern::Info& info = program->info();
+            if (info.fixedLength && info.lengthBeats > 0.0)
             {
-                const double songPosInSteps = songPositionInSteps (ppqPosition);
-                pos = getPatternIndexForStep (patternStepForSongStep (std::floor (songPosInSteps), steps));
-                samplesUntilNextNote = 0; // Trigger immediate evaluation for the current position
+                startPass();
+                const double eps = 1.0e-6 * (info.shortestStepBeats > 0.0 ? info.shortestStepBeats : 1.0 / getNoteDivisor());
+                const double pos = std::fmod (ppqPosition, info.lengthBeats);
+                int inside = 0;
+                for (int i = 0; i < (int) currentPass.steps.size(); ++i)
+                    if (currentPass.steps[(std::size_t) i].onset <= pos + eps)
+                        inside = i;
+                jumpToStep (inside);
+                samplesUntilNextStep = 0;   // Trigger immediate evaluation for the current position
             }
         }
 
         return outEvents;
     }
 
-    /** Generates a note-off for the last played note and resets the state.
+    /** Releases every note that sounds and resets the state.
         @return A view over this engine's output events. Valid until the
                 next call to processBlock(), reset() or turnOff(). */
     ArrayView<ArpMidiEvent> turnOff(int midiChannel = 1)
@@ -1231,50 +1023,26 @@ public:
         (void) midiChannel;   // see reset() above
 
         outEvents.clear();
-        if (lastPlayedMidiNote != -1)
-        {
-            outEvents.push_back ({ 0, lastPlayedMidiChannel, lastPlayedMidiNote, 0, false });
-            lastPlayedMidiNote = -1;
-        }
-        // Also reset pattern position and other state variables for a clean start next time.
-        pos = 0;
-        lastPlayedDegreeIndex = 0;
-        octave = baseOctave;
-        scopeStack.clear();
-        probGroupStack.clear();
-        inRootRelativeBlock = false;
+        releaseAllNotes();
+        // Also reset pattern position and other state variables for a clean start next time
+        // (the step grid keeps going).
+        restartProgram();
         return outEvents;
     }
 
 protected:
-    // -----------------------------------------------------------------------
-    // Scope stack for ( ) local-modifier blocks
-    // `velocity` here holds patternVelocity, so it may be -1: closing a block
-    // that set a global 'V' hands control back to the played velocity.
-    struct ScopeState { int octave; int velocity; };
-    std::vector<ScopeState> scopeStack;
-
-    // Stack for pN(success):(fallback) group probability tracking
-    struct ProbGroupState { int nestDepth; };
-    std::vector<ProbGroupState> probGroupStack;
-
     // Root-relative mode: inside " " blocks in single-note mode (chordMethod==2),
     // notes are resolved against rootChord (degree-0 of the scale) rather than
     // the chord built from the pressed MIDI note's degree.
-    bool             inRootRelativeBlock = false;
     MidiTools::Chord rootChord { "" };
 
     /**
-        Finds a valid semitone for a given degree index, handling absent notes.
+        Finds a valid semitone for a degree index in `activeChord`, handling absent notes.
         For "Notes played" mode, it returns a semitone (0-11).
         For "Chord played as is" mode, it returns a full MIDI note number (0-127).
-        Inside a " " block in single-note mode the rootChord is used instead.
     */
-    int getNoteForDegree(int degreeIndex)
+    int getNoteForDegree(const MidiTools::Chord& activeChord, int degreeIndex) const
     {
-        const MidiTools::Chord& activeChord = (inRootRelativeBlock && chordMethod == 2)
-                                              ? rootChord : chord;
-
         if (chordMethod == 1) // "Chord played as is"
         {
             const auto& rawNotes = activeChord.getRawNotes();
@@ -1345,74 +1113,27 @@ protected:
         return activeChord.getDegree(0);
     }
 
-    /**
-        Selects a random degree index that is actually present in the chord, for use with the '?' command.
-        @return A valid degree index (0-6), or -1 if the chord is empty.
-    */
-    int getRandomPresentDegree()
-    {
-        if (chordMethod == 1)
-        {
-            if (chord.getRawNotes().isEmpty())
-                return -1;
-            return rng.nextInt(chord.getRawNotes().size());
-        }
-
-        // Count, then pick: no list of the present degrees, so nothing to allocate.
-        const auto& degrees = chord.getDegrees();
-        int numPresent = 0;
-        for (int i = 0; i < degrees.size(); ++i)
-            if (degrees[i] != -1)
-                ++numPresent;
-
-        if (numPresent == 0)
-            return -1;
-
-        int pick = rng.nextInt(numPresent);
-        for (int i = 0; i < degrees.size(); ++i)
-        {
-            if (degrees[i] == -1)
-                continue;
-            if (pick-- == 0)
-                return i;
-        }
-        return -1;
-    }
-
     MidiTools::Chord chord;
-    std::string pattern;
-
-    /** pattern[i] for an int index, which is what the parser walks with. */
-    char patternAt (int i) const noexcept { return pattern[static_cast<std::size_t> (i)]; }
+    std::string pattern;             ///< the text given to setPattern()
 
     int baseOctave = 4;
-    int octave = baseOctave;
     std::string playNoteOff = "Next"; // "Off", "Next", "Previous"
     int chordMethod = 0; // 0: Notes played, 1: Chord played as is, 2: Single note
 
     // Velocity comes from two independent sources. `playedVelocity` tracks the
     // incoming note-on and is what a pattern that says nothing about velocity
-    // will use. `patternVelocity` is the 'V' override: -1 means "the pattern
-    // has not set one", so the two never overwrite each other and a ')' can
-    // restore the override to "unset" and fall back to the player again.
+    // will use. The pattern's own 'V' lives in `carry` (syntax 2), so the two
+    // never overwrite each other and a ')' can restore the override to "unset"
+    // and fall back to the player again.
     int playedVelocity = 96;    // until a note has been played
-    int patternVelocity = -1;   // -1 = unset, follow playedVelocity
 
-    // Source of every random choice of the pattern; see setSeed().
+    // The generator of the engine's random seed, and what setSeed() reaches.
     Random rng;
 
     // See setOctaveWrap().
     bool octaveWrap = false;
 
-    // Cached with the pattern: syncToPlayHead consults it every block, and it
-    // only changes when the pattern does. See patternHasFixedLength().
-    bool patternLengthIsFixed = true;
-
-    int pos = 0;
     int lastPlayedMidiNote = -1;
-    int lastPlayedMidiChannel = 1;
-    int lastPlayedDegreeIndex = 0;
-    int currentStepIndex = 0;
 
     /** Monotonic count of note-ons emitted, bumped on the audio thread and
         polled by the GUI (see getNoteOnCount). Copyable/movable on purpose:
@@ -1439,34 +1160,243 @@ protected:
     NoteOnCounter noteOnCounter;
 
 private:
-    // Advance pos past the matching ')'. Call with pos already past the opening '('.
-    void skipToMatchingParen()
+    //==========================================================================
+    // The player. `currentPass` is the realized pass being played, `nextStep` the
+    // step that starts at the next boundary (== the number of steps when the pass is over:
+    // the boundary then starts the next pass). `samplesUntilNextStep` counts down to that
+    // boundary. A sounding note remembers when it ends in beats *after that boundary*
+    // (negative: before it), so it needs no correction when the pass changes.
+
+    static constexpr int maxSounding = 32;            ///< notes that sound at once (chords, ties)
+    static constexpr double timeTolerance = 1.0e-6;   ///< samples; beats for the ends of notes
+
+    struct Sounding { int note = 0; int channel = 1; double endRel = 0.0; };
+
+    void initialise (StringRef text)
     {
-        int depth = 1;
-        for (int guard = (int) pattern.length(); guard > 0 && depth > 0; --guard)
-        {
-            char c = patternAt(pos);
-            if (c == '(') ++depth;
-            else if (c == ')') --depth;
-            pos = (pos + 1) % (int) pattern.length();
-        }
+        baseSeed = pattern::mix (static_cast<std::uint64_t> (rng.getSeed()));
+        outEvents.reserve (512);
+        pattern.assign (text.data(), text.length());
+        compilePattern();
     }
 
-    // Skip a ':fallback' target — either a '(group)' or a single char.
-    void skipProbFallback()
+    const std::string& text() const noexcept
     {
-        if (pattern.empty()) return;
-        if (patternAt(pos) == '(')
+        return (programFromText || program == nullptr) ? pattern : program->text();
+    }
+
+    /** Compiles `pattern` with the engine's syntax and step; an invalid text keeps the previous program. */
+    void compilePattern()
+    {
+        pattern::Options options;
+        options.syntax = patternSyntax;
+        options.defaultStepBeats = 1.0 / getNoteDivisor();
+        options.expressions = expressions;
+        auto compiled = std::make_shared<pattern::Program> (pattern::compile (pattern, options));
+        diagnostics = compiled->diagnostics();
+        if (! compiled->ok() && program != nullptr)
+            return;
+        reservePass (compiled->info());
+        program = std::move (compiled);
+        programFromText = true;
+        restartProgram();
+    }
+
+    /** A new program starts from its first pass, with the state of a fresh start (the notes
+        that sound keep their ends). */
+    void restartProgram()
+    {
+        carry = pattern::Carry {};
+        passIndex = 0;
+        haveCurrentPass = false;
+        nextStep = 0;
+        nextEvent = 0;
+    }
+
+    /** Back to the start for good: the notes were released by the caller. */
+    void restartPlayback()
+    {
+        restartProgram();
+        samplesUntilNextStep = 0;
+    }
+
+    void jumpToStep (int step)
+    {
+        nextStep = step;
+        nextEvent = 0;
+        const int n = (int) currentPass.events.size();
+        while (nextEvent < n && currentPass.events[(std::size_t) nextEvent].firstStep < step)
+            ++nextEvent;
+    }
+
+    //--------------------------------------------------------------------------
+    pattern::Context makeContext() const
+    {
+        pattern::Context c;
+        c.seed = pattern::mix (baseSeed ^ pattern::mix (seedCounter));
+        c.passIndex = passIndex;
+        c.baseOctave = baseOctave;
+        c.hostVelocity = (float) playedVelocity / 127.0f;
+
+        const auto& degrees = chord.getDegrees();
+        int size = degrees.size();
+        std::uint32_t present = 0;
+        if (chordMethod == 1)
         {
-            pos = (pos + 1) % (int) pattern.length(); // consume '('
-            skipToMatchingParen();
+            // The notes themselves are the degrees ('+' and '-' keep cycling in the chord's
+            // degree slots, as they always did).
+            const int raw = chord.getRawNotes().size();
+            size = fxme::jmax (size, raw);
+            for (int d = 0; d < fxme::jmin (raw, 32); ++d)
+                present |= 1u << d;
         }
         else
         {
-            pos = (pos + 1) % (int) pattern.length(); // skip single char
+            for (int d = 0; d < fxme::jmin (size, 32); ++d)
+                if (degrees[d] != -1)
+                    present |= 1u << d;
+        }
+        c.chordSize = size;
+        c.chordPresent = present;
+        c.keySize = (chordMethod == 2 ? rootChord : chord).getDegrees().size();
+        return c;
+    }
+
+    /** Realizes the next pass and starts at its first step. At a pass boundary, a first step
+        that is a tie (a hold with nothing to hold in its own pass) keeps the notes that reach
+        the boundary sounding. */
+    void startPass()
+    {
+        const bool continuing = haveCurrentPass;
+        program->realize (makeContext(), currentPass, &carry);
+        ++passIndex;
+        ++seedCounter;
+        haveCurrentPass = true;
+        nextStep = 0;
+        nextEvent = 0;
+
+        if (! continuing)
+            return;
+        double tied = 0.0;
+        for (const pattern::Step& s : currentPass.steps)
+        {
+            if (! s.tied)
+                break;
+            tied += s.duration;
+        }
+        if (tied > 0.0)
+            for (int i = 0; i < soundingCount; ++i)
+                if (sounding[(std::size_t) i].endRel >= -timeTolerance)
+                    sounding[(std::size_t) i].endRel += tied;
+    }
+
+    /** The step boundary has come (and its pass is ready): start its events and set the next boundary. */
+    void fireStep (int time, int midiChannel)
+    {
+        if (currentPass.steps.empty())
+        {
+            samplesUntilNextStep += samplesPerBeat;   // nothing to play: look again in a beat
+            return;
+        }
+
+        const int s = nextStep++;
+        const pattern::Step& step = currentPass.steps[(std::size_t) s];
+        shownStep = s;
+        shownSourceStart = step.sourceStart;
+        shownSourceEnd = step.sourceEnd;
+
+        const int numEvents = (int) currentPass.events.size();
+        while (nextEvent < numEvents && currentPass.events[(std::size_t) nextEvent].firstStep < s)
+            ++nextEvent;
+        while (nextEvent < numEvents && currentPass.events[(std::size_t) nextEvent].firstStep == s)
+            startEvent (currentPass.events[(std::size_t) nextEvent++], time, midiChannel);
+
+        const double duration = std::max (step.duration, 1.0e-9);
+        samplesUntilNextStep += duration * samplesPerBeat;
+        for (int i = 0; i < soundingCount; ++i)
+            sounding[(std::size_t) i].endRel -= duration;
+    }
+
+    void startEvent (const pattern::Event& e, int time, int midiChannel)
+    {
+        if (e.length <= 0.0)
+            return;
+        for (int k = 0; k < e.noteCount; ++k)
+        {
+            const int midi = midiNoteFor (currentPass.notes[(std::size_t) (e.firstNote + k)]);
+            // A note outside 0..127 is not emitted, and is not remembered either:
+            // there would be no note-off to send for it.
+            if (midi < 0 || midi > 127 || soundingCount >= maxSounding)
+                continue;
+            bool again = false;
+            for (int i = 0; i < soundingCount; ++i)
+                again = again || (sounding[(std::size_t) i].note == midi && sounding[(std::size_t) i].channel == midiChannel);
+            if (again)
+                continue;
+
+            const int velocity = e.velocity < 0.0f ? playedVelocity
+                                                   : fxme::jlimit (1, 127, (int) std::lround (e.velocity * 127.0f));
+            outEvents.push_back ({ time, midiChannel, midi, velocity, true });
+            sounding[(std::size_t) soundingCount++] = { midi, midiChannel, e.length };
+            lastPlayedMidiNote = midi;
+            noteOnCounter.bump();
         }
     }
 
+    /** The MIDI note of a pattern note: its degree through the chord (or the root chord, for the
+        key scale in single-note mode), placed in its octave; -1: none. */
+    int midiNoteFor (const pattern::Note& n) const
+    {
+        const bool key = n.scale == pattern::ScaleKind::Key;
+        const MidiTools::Chord& active = (key && chordMethod == 2) ? rootChord : chord;
+        const int base = getNoteForDegree (active, n.degree);
+        if (base < 0)
+            return -1;
+        // For "Notes played" (0) and "Single note" (2) modes, the base is a semitone (0-11)
+        // that needs to be placed in an absolute octave.
+        // For "Chord played as is" (1) mode, the base is a full MIDI note that needs a relative offset.
+        const int placed = (chordMethod == 1) ? base + (n.octave - baseOctave) * 12
+                                              : base + n.octave * 12;
+        return placed + n.accidental;
+    }
+
+    /** Note-offs for the notes whose end has come. @return true if there was any. */
+    bool releaseDueNotes (int time)
+    {
+        bool any = false;
+        for (int i = 0; i < soundingCount;)
+        {
+            const Sounding s = sounding[(std::size_t) i];
+            if (samplesUntilNextStep + s.endRel * samplesPerBeat <= timeTolerance)
+            {
+                release (i, time);
+                any = true;
+            }
+            else
+                ++i;
+        }
+        return any;
+    }
+
+    void release (int index, int time)
+    {
+        const Sounding s = sounding[(std::size_t) index];
+        outEvents.push_back ({ time, s.channel, s.note, 0, false });
+        for (int j = index + 1; j < soundingCount; ++j)
+            sounding[(std::size_t) (j - 1)] = sounding[(std::size_t) j];
+        --soundingCount;
+        if (lastPlayedMidiNote == s.note)
+            lastPlayedMidiNote = -1;
+    }
+
+    void releaseAllNotes()
+    {
+        while (soundingCount > 0)
+            release (0, 0);
+        lastPlayedMidiNote = -1;
+    }
+
+    //--------------------------------------------------------------------------
     double getNoteDivisor() const
     {
         switch (subdivision)
@@ -1485,30 +1415,43 @@ private:
         }
     }
 
-    void updateSamplesPerNote()
+    void updateSamplesPerBeat()
     {
         if (sampleRate > 0 && tempoBPM > 0)
-        {
-            const double noteDivisor = getNoteDivisor();
-            double quarterNoteDurationSeconds = 60.0 / tempoBPM;
-            samplesPerNote = sampleRate * quarterNoteDurationSeconds / noteDivisor;
-        }
+            samplesPerBeat = sampleRate * 60.0 / tempoBPM;
     }
+
     double sampleRate = 0.0;
     double tempoBPM = 120.0;
     int subdivision = 4; // Default to 1/16
-    double samplesPerNote = 0.0;
-    double samplesUntilNextNote = 0.0;
+    double samplesPerBeat = 0.0;
+    double samplesUntilNextStep = 0.0;
 
-    // Output buffers, reused across calls so that nothing allocates on the
+    // The program and what plays it
+    std::shared_ptr<const pattern::Program> program;
+    bool programFromText = true;              ///< compiled by setPattern(), so compiled again when the syntax or the step changes
+    int patternSyntax = 2;
+    pattern::Expressions* expressions = nullptr;
+    std::vector<pattern::Diagnostic> diagnostics;   ///< of the last text given to setPattern()
+
+    pattern::Pass currentPass;
+    pattern::Carry carry;
+    bool haveCurrentPass = false;
+    int nextStep = 0, nextEvent = 0;
+    int passIndex = 0;                        ///< chooses the parts of [a|b]; restarts with the pattern
+    std::uint64_t baseSeed = 0, seedCounter = 0;   ///< pass k draws from mix (baseSeed ^ mix (k))
+
+    std::array<Sounding, maxSounding> sounding {};
+    int soundingCount = 0;
+
+    // What GUI threads read about the step that played last (plain ints, as before).
+    int shownStep = -1, shownSourceStart = 0, shownSourceEnd = 0;
+
+    // Output buffer, reused across calls so that nothing allocates on the
     // audio thread. Sized in prepareToPlay(); see the note above processBlock()
-    // for the lifetime rule this places on callers.
-    //
-    // Two of them rather than one, because processBlock() merges getNext()'s
-    // result into its own vector. outEvents is shared by processBlock(),
+    // for the lifetime rule this places on callers. Shared by processBlock(),
     // reset() and turnOff(), which are never in flight at the same time.
     std::vector<ArpMidiEvent> outEvents;
-    std::vector<ArpMidiEvent> stepEvents;
 };
 
 } // namespace fxme

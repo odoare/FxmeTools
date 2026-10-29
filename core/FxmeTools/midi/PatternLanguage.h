@@ -180,6 +180,7 @@ public:
     const std::vector<Diagnostic>& diagnostics() const noexcept;
     const Info& info() const noexcept;
     const std::string& text() const noexcept;
+    const Options& options() const noexcept;       ///< what it was compiled with (syntax, default step)
 
     /** One pass into `out` (cleared first). `carry`: syntax 2 reads and updates it; syntax 3 ignores it.
         Real-time safe when `out` was reserved with info(). A program that is not ok() gives an empty pass. */

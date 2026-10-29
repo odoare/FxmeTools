@@ -1,9 +1,15 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 #include <FxmeTools/midi/Arpeggiator.h>
+#include "ArpeggiatorGolden.h"
+#include "ArpeggiatorGoldenRecord.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <memory>
+#include <new>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1104,4 +1110,379 @@ TEST_CASE("Chord::setDegreesDirect sets the degrees as given, without allocating
     chord.setNotesByArray(notes);
     chord.setDegreesDirect(notes);
     CHECK(chord.getRawNotes().isEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// The engine as a player of the pattern language's passes
+// ---------------------------------------------------------------------------
+//
+// Counting allocations: the whole executable's operator new / delete count
+// while `g_countAllocations` is set, so that a test can say "nothing was
+// allocated or freed" about a stretch of code (no CHECK inside such a stretch:
+// the framework allocates).
+
+namespace
+{
+    bool g_countAllocations = false;
+    long g_allocations = 0, g_frees = 0;
+}
+
+void* operator new (std::size_t size)
+{
+    if (g_countAllocations) ++g_allocations;
+    if (void* p = std::malloc (size > 0 ? size : 1))
+        return p;
+    throw std::bad_alloc();
+}
+void operator delete (void* p) noexcept { if (p != nullptr && g_countAllocations) ++g_frees; std::free (p); }
+void operator delete (void* p, std::size_t) noexcept { if (p != nullptr && g_countAllocations) ++g_frees; std::free (p); }
+
+namespace
+{
+    namespace pl = fxme::pattern;
+
+    struct Ev
+    {
+        int t = 0, note = 0, velocity = 0;
+        bool on = false;
+        bool operator== (const Ev& o) const { return t == o.t && note == o.note && velocity == o.velocity && on == o.on; }
+    };
+
+    // Plays the blocks in `sizes`, with absolute sample times.
+    std::vector<Ev> play (Arpeggiator& arp, const std::vector<int>& sizes)
+    {
+        std::vector<Ev> out;
+        int start = 0;
+        for (int n : sizes)
+        {
+            for (const auto& e : arp.processBlock (n))
+                out.push_back ({ start + e.sample, e.note, e.velocity, e.noteOn });
+            start += n;
+        }
+        return out;
+    }
+
+    // `steps` blocks as the helpers above cut them: one sample, then 100 per step (absolute time 100 * step).
+    std::vector<Ev> playSteps (Arpeggiator& arp, int steps)
+    {
+        std::vector<int> sizes (static_cast<std::size_t> (steps), 100);
+        sizes[0] = 1;
+        return play (arp, sizes);
+    }
+
+    const std::vector<int> kMajor { 0, 2, 4, 5, 7, 9, 11 };
+
+    // Syntax 3, the major scale as the chord: degree n is the n-th note of C major at octave 4 (48 + ...).
+    void setup3 (Arpeggiator& arp, const std::string& text, int syntax = 3)
+    {
+        MidiTools::Chord scale ("");
+        scale.setDegreesDirect (kMajor);
+        arp.setPatternSyntax (syntax);
+        arp.setChord (scale);
+        arp.setPattern (text);
+        arp.prepareToPlay (1000.0);
+        arp.setTempo (150.0);          // 400 samples a beat, 100 a step
+        arp.setSubdivision (4);
+        arp.setChordMethod (0);
+    }
+
+    std::vector<int> onsetTimes (const std::vector<Ev>& v)
+    {
+        std::vector<int> t;
+        for (const Ev& e : v) if (e.on) t.push_back (e.t);
+        return t;
+    }
+
+    std::vector<int> notesOn (const std::vector<Ev>& v)
+    {
+        std::vector<int> n;
+        for (const Ev& e : v) if (e.on) n.push_back (e.note);
+        return n;
+    }
+}
+
+TEST_CASE("the rewritten engine plays the old engine's streams (golden recording)")
+{
+    int n = 0, m = 0;
+    const arpgolden::Case* cases = arpgolden::inputs (n);
+    const char* const* expected = arpgolden::expected (m);
+    REQUIRE (n == m);
+    for (int i = 0; i < n; ++i)
+    {
+        const std::string actual = arpgolden::record<Arpeggiator> (cases[i], 48);
+        CHECK_MESSAGE (actual == expected[i], "case ", i, ": ", cases[i].pattern, " (", cases[i].chord, ", method ", cases[i].method, ")");
+    }
+}
+
+TEST_CASE("the engine defaults to syntax 2 and compiles what it is given")
+{
+    Arpeggiator arp;
+    CHECK (arp.getPatternSyntax() == 2);
+    setup (arp, "1 2 3");
+    CHECK (arp.getDiagnostics().empty());
+    CHECK (arp.hasFixedLength());
+    CHECK (arp.getProgram() != nullptr);
+    CHECK (arp.getCurrentStepSource() == std::make_pair (-1, -1));
+
+    tick (arp, true);
+    CHECK (arp.getCurrentStepSource() == std::make_pair (0, 1));
+    tick (arp);
+    CHECK (arp.getCurrentStepSource() == std::make_pair (2, 3));
+    CHECK (arp.getCurrentStepIndex() == 1);
+
+    arp.setPattern ("p5 (1 2):(3 4 5)");
+    CHECK_FALSE (arp.hasFixedLength());
+}
+
+TEST_CASE("syntax 3: a chord sounds together and is released together")
+{
+    Arpeggiator arp;
+    setup3 (arp, "{135} _ 2 .");
+    const auto ev = playSteps (arp, 8);
+
+    // {135} is held for two steps: three note-ons at 0, three note-offs at 200 (before the next note-on).
+    REQUIRE (ev.size() >= 8);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK (ev[(std::size_t) i].on);
+        CHECK (ev[(std::size_t) i].t == 0);
+    }
+    CHECK (notesOn (std::vector<Ev> (ev.begin(), ev.begin() + 3)) == std::vector<int> { 48, 52, 55 });
+    for (int i = 3; i < 6; ++i)
+    {
+        CHECK_FALSE (ev[(std::size_t) i].on);
+        CHECK (ev[(std::size_t) i].t == 200);
+    }
+    CHECK (ev[6] == Ev { 200, 50, 96, true });
+    CHECK (ev[7] == Ev { 300, 50, 0, false });
+}
+
+TEST_CASE("syntax 3: (m32 1 2 3 4) 5 6 starts its notes on the sample, whatever the blocks")
+{
+    const std::vector<int> expected { 0, 50, 100, 150, 200, 300, 400, 450, 500, 550, 600, 700, 800 };
+
+    auto upTo800 = [] (std::vector<int> t)
+    {
+        t.erase (std::remove_if (t.begin(), t.end(), [] (int x) { return x > 800; }), t.end());
+        return t;
+    };
+
+    Arpeggiator a;
+    setup3 (a, "(m32 1 2 3 4) 5 6");
+    const std::vector<int> onsets = upTo800 (onsetTimes (play (a, { 1, 99, 100, 100, 100, 100, 100, 100, 100, 100 })));   // 900
+    CHECK (onsets == expected);
+
+    Arpeggiator b;
+    setup3 (b, "(m32 1 2 3 4) 5 6");
+    const auto ev = play (b, { 37, 64, 111, 5, 300, 383 });                                                // 900 in other blocks
+    CHECK (upTo800 (onsetTimes (ev)) == onsets);
+    CHECK (notesOn (ev).size() >= 12);
+    CHECK (notesOn (ev)[0] == 48);
+    CHECK (notesOn (ev)[3] == 53);
+    CHECK (notesOn (ev)[5] == 57);
+}
+
+TEST_CASE("syntax 3: a generator places its hits on the grid, pass after pass")
+{
+    Arpeggiator arp;
+    setup3 (arp, "e3/8 1");
+    const auto ev = playSteps (arp, 17);                       // two passes of 8 steps, plus the start of a third
+    CHECK (onsetTimes (ev) == std::vector<int> { 0, 300, 600, 800, 1100, 1400, 1600 });
+    for (int n : notesOn (ev))
+        CHECK (n == 48);
+}
+
+TEST_CASE("syntax 3: [a|b] changes per pass")
+{
+    Arpeggiator arp;
+    setup3 (arp, "[1|3]");
+    CHECK (notesOn (playSteps (arp, 6)) == std::vector<int> { 48, 52, 48, 52, 48, 52 });
+
+    // A restart begins again with the first part.
+    arp.reset();
+    CHECK (notesOn (playSteps (arp, 3)) == std::vector<int> { 48, 52, 48 });
+}
+
+TEST_CASE("syntax 3: O+ is reset at each pass, while syntax 2 lets it drift")
+{
+    Arpeggiator three;
+    setup3 (three, "O+ 1");
+    CHECK (notesOn (playSteps (three, 4)) == std::vector<int> { 60, 60, 60, 60 });
+
+    Arpeggiator two;
+    setup3 (two, "O+ 1", 2);
+    CHECK (notesOn (playSteps (two, 5)) == std::vector<int> { 60, 72, 84, 84, 84 });
+}
+
+TEST_CASE("setSeed makes the passes reproducible, whatever came before")
+{
+    auto run = [] (std::int64_t before, std::int64_t seed)
+    {
+        Arpeggiator arp;
+        setup3 (arp, "? ? [1|?] p5 ? (? ?)*2 v?3");
+        if (before != 0)
+        {
+            arp.setSeed (before);
+            playSteps (arp, 23);                              // the engine has been playing for a while
+        }
+        arp.setSeed (seed);
+        arp.reset();
+        std::vector<Ev> ev;
+        for (int i = 0; i < 80; ++i)
+            for (const auto& e : arp.processBlock (i == 0 ? 1 : 100))
+                ev.push_back ({ 0, e.note, e.velocity, e.noteOn });   // times are not compared: the blocks differ
+        return ev;
+    };
+
+    const auto fresh = run (0, 4242);
+    CHECK (fresh.size() > 40);
+    CHECK (run (0, 4242) == fresh);
+    CHECK (run (9, 4242) == fresh);
+    CHECK_FALSE (run (0, 777) == fresh);
+}
+
+TEST_CASE("without setSeed, a restart draws differently; two engines differ")
+{
+    auto notes = [] (Arpeggiator& arp) { return notesOn (playSteps (arp, 40)); };
+    Arpeggiator a, b;
+    setup3 (a, "? ? ? ?");
+    setup3 (b, "? ? ? ?");
+    const auto first = notes (a);
+    a.reset();
+    CHECK_FALSE (notes (a) == first);
+    CHECK_FALSE (notes (b) == first);
+}
+
+TEST_CASE("setProgram swaps a compiled program without allocating or freeing")
+{
+    pl::Options options;
+    options.syntax = 3;
+    auto p1 = std::make_shared<const pl::Program> (pl::compile ("1 2 3 4", options));
+    auto p2 = std::make_shared<const pl::Program> (pl::compile ("{135} _ 2 [4|6] ((7 8)*2 1)*3 e3/16 1", options));
+    REQUIRE (p1->ok());
+    REQUIRE (p2->ok());
+
+    Arpeggiator arp;
+    setup3 (arp, "1");
+    arp.reservePass (p1->info());
+    arp.reservePass (p2->info());
+    arp.setProgram (p1);
+    playSteps (arp, 6);
+
+    g_allocations = g_frees = 0;
+    g_countAllocations = true;
+    std::shared_ptr<const pl::Program> back1 = arp.setProgram (p2);
+    const int blocks = 3 * 18;
+    for (int i = 0; i < blocks; ++i)
+        arp.processBlock (i == 0 ? 1 : 100);
+    std::shared_ptr<const pl::Program> back2 = arp.setProgram (p1);
+    for (int i = 0; i < blocks; ++i)
+        arp.processBlock (100);
+    arp.reset();
+    arp.syncToPlayHead (1.25);
+    arp.processBlock (100);
+    arp.turnOff();
+    g_countAllocations = false;
+
+    CHECK (g_allocations == 0);
+    CHECK (g_frees == 0);
+    CHECK (back1 == p1);               // the previous program comes back to the host, which frees it where it likes
+    CHECK (back2 == p2);
+    CHECK (arp.getProgram() == p1);
+    CHECK (arp.getPattern() == "1 2 3 4");
+}
+
+TEST_CASE("setProgram takes its syntax from the program")
+{
+    pl::Options options;
+    options.syntax = 2;
+    auto p = std::make_shared<const pl::Program> (pl::compile ("O+ 1", options));
+    Arpeggiator arp;
+    setup3 (arp, "1");
+    arp.setProgram (p);
+    CHECK (arp.getPatternSyntax() == 2);
+    CHECK (notesOn (playSteps (arp, 3)) == std::vector<int> { 60, 72, 84 });
+}
+
+TEST_CASE("a tied first step keeps the sound of the previous pass ringing")
+{
+    {
+        Arpeggiator arp;
+        setup3 (arp, "_ 2");
+        const auto ev = playSteps (arp, 8);
+        // Pass 1: the tie holds nothing, '2' sounds at 100. Pass 2 starts at 200: the tie extends '2',
+        // which ends with the tie's step, at 300, when the next '2' begins.
+        CHECK (ev == std::vector<Ev> {
+            { 100, 50, 96, true },
+            { 300, 50, 0, false }, { 300, 50, 96, true },
+            { 500, 50, 0, false }, { 500, 50, 96, true },
+            { 700, 50, 0, false }, { 700, 50, 96, true } });
+    }
+    {
+        Arpeggiator arp;                       // after a rest a tie holds nothing
+        setup3 (arp, "_ 2 .");
+        const auto ev = playSteps (arp, 7);
+        CHECK (ev == std::vector<Ev> {
+            { 100, 50, 96, true }, { 200, 50, 0, false },
+            { 400, 50, 96, true }, { 500, 50, 0, false } });
+    }
+    {
+        Arpeggiator arp;                       // a chord is held as a whole
+        setup3 (arp, "_ {13}");
+        const auto ev = playSteps (arp, 5);
+        int offs = 0;
+        for (const Ev& e : ev) if (! e.on) { ++offs; CHECK (e.t == 300); }
+        CHECK (offs == 2);
+    }
+}
+
+TEST_CASE("an invalid syntax-3 text reports its diagnostics and keeps the previous pattern playing")
+{
+    Arpeggiator arp;
+    setup3 (arp, "1 2 3");
+    CHECK (arp.getDiagnostics().empty());
+    CHECK (tick (arp, true).pitch == 48);
+    CHECK (tick (arp).pitch == 50);
+
+    arp.setPattern ("1 w 2");
+    REQUIRE (! arp.getDiagnostics().empty());
+    CHECK (arp.getDiagnostics()[0].position == 2);
+    CHECK_FALSE (arp.getDiagnostics()[0].warning);
+    CHECK (arp.getPattern() == "1 w 2");                  // the editor keeps what was typed
+    CHECK (tick (arp).pitch == 52);                       // "1 2 3" goes on, without restarting
+    CHECK (tick (arp).pitch == 48);
+
+    arp.setPattern ("4 3");
+    CHECK (arp.getDiagnostics().empty());
+    CHECK (tick (arp).pitch == 53);
+    CHECK (tick (arp).pitch == 52);
+}
+
+TEST_CASE("setPatternSyntax compiles the current text again")
+{
+    Arpeggiator arp;
+    setup (arp, "1 [2|3]");                 // syntax 2 gives the signs no meaning: three steps
+    CHECK (collectPitches (arp, 3) == std::vector<int> { C4, E4, G4 });
+    arp.setPatternSyntax (3);               // now a step and a choice of two: pass 0 takes the first part
+    CHECK (arp.getDiagnostics().empty());
+    CHECK (arp.getPattern() == "1 [2|3]");
+    arp.reset();
+    CHECK (collectPitches (arp, 4) == std::vector<int> { C4, E4, C4, G4 });
+}
+
+TEST_CASE("syncToPlayHead anchors a syntax-3 pass to the song")
+{
+    Arpeggiator arp;
+    setup3 (arp, "(m32 1 2 3 4) 5 6");     // one beat; notes at 0, 1/8, 1/4, 3/8, 1/2, 3/4
+    arp.syncToPlayHead (8.5);              // half a beat into the pass: its fifth note is next
+    CHECK (arp.getSamplesUntilNextNote() == doctest::Approx (0.0));
+    const auto ev = play (arp, { 100 });
+    REQUIRE (! ev.empty());
+    CHECK (ev[0].note == 55);
+    CHECK (ev[0].t == 0);
+
+    Arpeggiator mid;
+    setup3 (mid, "(m32 1 2 3 4) 5 6");
+    mid.syncToPlayHead (8.0625);           // 1/16 beat in: the second note is 1/16 beat away, 25 samples
+    CHECK (mid.getSamplesUntilNextNote() == doctest::Approx (25.0));
 }

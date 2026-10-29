@@ -11,6 +11,49 @@ project after a break.
 
 ---
 
+## `fxme::Arpeggiator` becomes a player of the pattern language's passes (2026-10-29)
+
+**No breaking change for TeAr (syntax 2 stays the default); breaking for a class
+deriving from `Arpeggiator` that touched `scopeStack` / `probGroupStack` (Otomatotamoto's
+`Tear::Engine::reserveStacks()`): those protected members are gone.** Inside, the text is
+compiled to a `pattern::Program`; the engine realizes one `Pass` at a time and plays its
+events (onset, length in beats; several notes at once for chords, note-offs scheduled,
+a gate releases inside the step). The old interpreter (`getNext`, cursor, scope stacks) is
+removed. Every older public function keeps its meaning; `core/tests/ArpeggiatorGolden.h`
+records the old engine's output on 87 deterministic cases (the compiler tests' 37 syntax-2
+patterns, the engine's own, the three chord methods, octave wrap, sync to a host position)
+and the engine plays them identically (sample offsets, velocities, `getCurrentStepIndex()`).
+
+New API:
+
+- `setPatternSyntax (int)` / `getPatternSyntax()`: 2 (default, TeAr's) or 3. Changing it
+  compiles the current text again (and restarts the pattern).
+- `setPattern (text)` compiles (allocates: not for the audio thread any more). A text that
+  does not compile keeps the previous program playing; `getPattern()` returns the new text
+  anyway. `const std::vector<pattern::Diagnostic>& getDiagnostics() const` says why.
+- `std::shared_ptr<const pattern::Program> setProgram (std::shared_ptr<const pattern::Program>)`:
+  plays a program compiled elsewhere, from its start, taking its syntax and `defaultStepBeats`
+  from it. Allocation-free and free-free on the audio thread once `reservePass (program->info())`
+  was called (non real-time) for it. The previous program is **returned**, not released: the host
+  keeps it and drops it on its own thread. `getProgram()`; `setExpressions (pattern::Expressions*)`
+  for `'...'` values in `setPattern()`'s compiler.
+- `std::pair<int,int> getCurrentStepSource() const`: the character range of the step that played
+  last ({-1,-1} before any). `bool hasFixedLength() const` from the program's `Info`.
+- `pattern::Program::options()` (the syntax and default step a program was compiled with).
+- `setSeed (s)`: pass k draws from `mix (s ^ mix (k))` and the pass count restarts, so a host
+  that reseeds gets identical passes. Without a call the base seed is random per instance and
+  is kept by `reset()` (each restart draws differently).
+
+What is kept as it was, and why, for syntax 2: `numSteps()`, `getPatternIndexForStep()`,
+`getStepForPatternIndex()` and `getCurrentStepIndex()` count the text's musical steps (a step inside
+a probability fallback group reports the group's; the existing tests pin this), so TeAr's highlight
+is untouched. Syntax 3 counts the steps of the pass being played. `setOctave()` and the pattern's
+`O`/`V` carry over passes in syntax 2 only (syntax 3 resets them at each pass). Hits (`x`) and glides
+(`~`) play no note here. At most 32 notes sound at once; chord method 1 keeps cycling `+` / `-` in the
+chord's 7 degree slots as before.
+
+---
+
 ## New `midi/PatternLanguage.h` (+ `PatternLanguageImpl.h`): the pattern-language compiler and realizer (2026-10-29)
 
 **No breaking change; nothing to do for existing projects.** A new header-only

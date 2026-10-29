@@ -1612,6 +1612,7 @@ inline bool Program::ok() const noexcept { return impl->c.ok; }
 inline const std::vector<Diagnostic>& Program::diagnostics() const noexcept { return impl->c.diagnostics; }
 inline const Info& Program::info() const noexcept { return impl->c.info; }
 inline const std::string& Program::text() const noexcept { return impl->c.text; }
+inline const Options& Program::options() const noexcept { return impl->c.options; }
 
 inline void Program::realize (const Context& context, Pass& out, Carry* carry) const noexcept
 {
