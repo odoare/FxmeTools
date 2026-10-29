@@ -146,3 +146,12 @@ target_compile_options(FxmeCoreArpeggiatorTests PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
 add_test(NAME FxmeCoreArpeggiatorTests COMMAND FxmeCoreArpeggiatorTests)
+
+# ── The pattern language (midi/PatternLanguage.h): compiler and realizer ───
+add_executable(FxmeCorePatternLanguageTests CorePatternLanguageTests.cpp)
+target_link_libraries(FxmeCorePatternLanguageTests PRIVATE FxmeCore)
+target_include_directories(FxmeCorePatternLanguageTests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+target_compile_options(FxmeCorePatternLanguageTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow>)
+add_test(NAME FxmeCorePatternLanguageTests COMMAND FxmeCorePatternLanguageTests)

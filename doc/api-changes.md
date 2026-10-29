@@ -11,6 +11,23 @@ project after a break.
 
 ---
 
+## New `midi/PatternLanguage.h` (+ `PatternLanguageImpl.h`): the pattern-language compiler and realizer (2026-10-29)
+
+**No breaking change; nothing to do for existing projects.** A new header-only
+component in core (no JUCE, C++17, no dependency): `fxme::pattern::compile (text,
+options)` turns TeAr's pattern text into a `Program` (syntax 2, TeAr's, or syntax 3,
+Otomatotamoto's `doc/pattern-language.md`: chords, `m` note values, generators,
+repeats, variations by pass, gates, glides, `'...'` expressions), with diagnostics
+and positions; `Program::realize (context, pass, carry)` gives one pass as timed
+events (beats, scale degrees, octaves, velocities 0..1) without allocating once the
+`Pass` was reserved with `info()`. Draws are `draw (seed, k)` (splitmix64), in the
+order documented at the top of `PatternLanguageImpl.h`. `fxme::Arpeggiator` is not
+touched yet: it will become a player of these passes in a later change, keeping its
+API. Tests: `FxmeCorePatternLanguageTests`, including a step-by-step equivalence with
+`fxme::Arpeggiator` on 37 syntax-2 patterns.
+
+---
+
 ## `midi/Arpeggiator.h` moves to core: no JUCE, new output type; `setSeed`, `setOctaveWrap`, `Chord::setDegreesDirect` (2026-10-27)
 
 **Breaking for the one consumer, TeAr: done in the same change.** The include

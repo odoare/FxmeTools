@@ -243,6 +243,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/Arpeggiator.h>)
  #include <FxmeTools/midi/Arpeggiator.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/midi/PatternLanguage.h>)
+ #include <FxmeTools/midi/PatternLanguage.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/StringSequencer.h>)
  #include <FxmeTools/midi/StringSequencer.h>
 #endif
