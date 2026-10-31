@@ -26,7 +26,7 @@
     Every draw of a pass takes the next k (0, 1, 2...) of the pass, in the order
     the realizer meets them, and its value is draw (seed, k). The order is the
     text's, depth first:
-      - a prefix `pN` rolls when the prefix is met (`p'expr'`: one k for the
+      - a prefix `pN` rolls when the prefix is met (syntax 3: `p0` draws nothing; `p'expr'`: one k for the
         expression); a probability with no digit draws nothing;
       - `o?` and `v?` draw when their prefix is met;
       - `?` draws when its step is met (after its prefixes);
@@ -1130,6 +1130,10 @@ private:
     bool roll (const Value& v) noexcept
     {
         double p = 1.0;
+        // Syntax 3: `p0` never plays and draws nothing, so switching a step off with it
+        // (Otomatotamoto's steps grid) leaves the draws of the steps after it as they were.
+        if (v.kind == Value::Kind::Number && v.number == 0 && ! syn2)
+            return false;
         if (v.kind == Value::Kind::Number) p = v.number * 0.1;
         else if (v.kind == Value::Kind::Expr) p = std::min (1.0, std::max (0.0, exprValue (v)));
         else return true;

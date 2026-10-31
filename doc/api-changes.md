@@ -11,6 +11,20 @@ project after a break.
 
 ---
 
+## Pattern language: `p0` never plays and draws nothing in syntax 3 (2026-10-31)
+
+`Realizer::roll` returns false for `p0` without taking a draw, in syntax 3 only. Before,
+`p0` also never played but consumed a draw, shifting the draws of the steps after it.
+A syntax-3 text that holds `p0` and random steps after it now draws them differently
+(once); syntax 2 (TeAr's old presets and projects) is unchanged. Why: Otomatotamoto's
+`steps` switches a cell off by writing `p0` before it, and that must not reshuffle the
+rest of the pattern. Test: "syntax 3: p0 never plays and draws nothing".
+
+- TeAr: nothing to do (its factory presets have no `p0`).
+- Otomatotamoto: nothing to do.
+
+---
+
 ## `fxme::Arpeggiator` becomes a player of the pattern language's passes (2026-10-29)
 
 **No breaking change for TeAr (syntax 2 stays the default); breaking for a class

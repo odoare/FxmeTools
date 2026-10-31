@@ -1158,3 +1158,23 @@ TEST_CASE("syntax 2 plays exactly as fxme::Arpeggiator does, step by step")
         CHECK_MESSAGE (actual == expected, "pattern: ", std::string (pattern), "\n  TeAr:     ", show (expected), "\n  compiler: ", show (actual));
     }
 }
+
+TEST_CASE("syntax 3: p0 never plays and draws nothing")
+{
+    // A step switched off with p0 leaves the draws after it unchanged: `p0 x p5 x ?` plays as `. p5 x ?`.
+    for (std::uint64_t seed = 0; seed < 64; ++seed)
+    {
+        const auto off = run (build ("p0 v8 x p5 x ? p5 1"), withSeed (seed));
+        const auto rest = run (build (". p5 x ? p5 1"), withSeed (seed));
+        REQUIRE (off.events.size() == rest.events.size());
+        for (std::size_t i = 0; i < off.events.size(); ++i)
+        {
+            CHECK (off.events[i].onset == doctest::Approx (rest.events[i].onset));
+            CHECK (off.events[i].noteCount == rest.events[i].noteCount);
+        }
+        for (const auto& e : off.events)
+            CHECK (e.onset > 0.1);   // the first step never plays
+    }
+    // A group too: `p0 (x x)` is two rests.
+    CHECK (run ("p0 (x x) x").events.size() == 1);
+}
