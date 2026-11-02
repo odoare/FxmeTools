@@ -26,7 +26,10 @@ New in core (`LGPL-3.0-or-later`):
   kinds); `serialise()` on the source side, `apply()` on the mirror side,
   `scalar()` / `takePeak()` for computed and read-and-reset getters.
 - `net/NetAbi.h`: `INetPlugin`, the plain-types interface a host reaches
-  through the plugin's VST3 component (`netPluginIid`), `Role`.
+  through the plugin's VST3 component (`netPluginIid`), `Role`;
+  `queryNetPlugin (vst3Unknown)` for hosts, which needs no VST3 SDK headers
+  (`INetPlugin` derives from `UnknownCompatible`, FUnknown's three methods).
+- `doc/fxmenet-howto.md`: how to make a plugin FxmeNet-aware.
 
 New in the module: `net/NetBridge.h`, header-only, depends only on
 `juce_audio_processors` and FxmeCore, not in the umbrella header (include it

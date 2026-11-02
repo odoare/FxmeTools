@@ -62,15 +62,22 @@ enum class Role : std::int32_t
 constexpr std::int32_t resultOk           = 0;
 constexpr std::int32_t resultInvalid      = 1;
 
-class INetPlugin
+/** A VST3 FUnknown seen through its three methods (same order, same
+    convention), so a host can query a component without the VST3 SDK. */
+class UnknownCompatible
 {
 public:
-    //==============================================================================
-    // The three FUnknown methods (VST3), same order, same convention.
     virtual std::int32_t  FXME_NET_API queryInterface (const char iid[16], void** obj) = 0;
     virtual std::uint32_t FXME_NET_API addRef() = 0;
     virtual std::uint32_t FXME_NET_API release() = 0;
 
+protected:
+    ~UnknownCompatible() = default;
+};
+
+class INetPlugin : public UnknownCompatible
+{
+public:
     //==============================================================================
     // Version 1.
 
@@ -103,5 +110,20 @@ public:
 protected:
     ~INetPlugin() = default;
 };
+
+/** Host side: asks a VST3 component (any FUnknown pointer, such as JUCE's
+    getVST3Client()->getIComponentPtr()) for the FxmeNet interface. Returns
+    nullptr when the plugin is not FxmeNet-aware. Call release() on the
+    result when done with it. */
+inline INetPlugin* queryNetPlugin (void* vst3Unknown) noexcept
+{
+    if (vst3Unknown == nullptr)
+        return nullptr;
+
+    void* obj = nullptr;
+    if (static_cast<UnknownCompatible*> (vst3Unknown)->queryInterface (netPluginIid, &obj) != resultOk)
+        return nullptr;
+    return static_cast<INetPlugin*> (obj);
+}
 
 } // namespace fxme::net
