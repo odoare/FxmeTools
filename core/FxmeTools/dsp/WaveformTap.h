@@ -100,6 +100,31 @@ public:
         }
     }
 
+    /** Streams the tap (FxmeNet source side, reader thread). Copies up to
+        `maxCount` samples pushed from sample index `from` (a value of
+        getTotalPushed()) on, oldest first, and advances `from` past them. A
+        `from` older than half the ring (the part the writer cannot be
+        overwriting) jumps forward: the samples in between are skipped.
+        Returns the number copied. */
+    int readSince (std::int64_t& from, float* dest, int maxCount) const noexcept
+    {
+        if (size == 0)
+            return 0;
+
+        const auto total = totalPushed.load (std::memory_order_acquire);
+        from = fxme::jlimit (total - size / 2, total, from);
+        const int n = (int) fxme::jmin ((std::int64_t) maxCount, total - from);
+        int r = (int) (from % size);
+        for (int i = 0; i < n; ++i)
+        {
+            dest[i] = buffer[(size_t) r];
+            if (++r >= size)
+                r = 0;
+        }
+        from += n;
+        return n;
+    }
+
 private:
     std::vector<float> buffer;
     int size = 0;

@@ -11,6 +11,42 @@ project after a break.
 
 ---
 
+## New: FxmeNet telemetry (`net/`); remote-metering additions to `VuMeter`, `SpectrumTap`, `WaveformTap` (2026-11-02)
+
+Additive. **No consumer action.** Groundwork for FxmeNet (DSP on a LAN server,
+the plugin's own editor in the DAW with live meters; see the FxmeNet repo's
+`plan.md`).
+
+New in core (`LGPL-3.0-or-later`):
+
+- `net/TelemetryCodec.h`: the little-endian frame and schema format, `idOf()`
+  (FNV-1a of a channel name), `ByteWriter` / `ByteReader`.
+- `net/TelemetryRegistry.h`: what a processor declares its editor reads
+  (`addMeter`, `addValue`, `addScalar`, `addPeak`, `addTap` for both tap
+  kinds); `serialise()` on the source side, `apply()` on the mirror side,
+  `scalar()` / `takePeak()` for computed and read-and-reset getters.
+- `net/NetAbi.h`: `INetPlugin`, the plain-types interface a host reaches
+  through the plugin's VST3 component (`netPluginIid`), `Role`.
+
+New in the module: `net/NetBridge.h`, header-only, depends only on
+`juce_audio_processors` and FxmeCore, not in the umbrella header (include it
+explicitly). A processor owns one and returns it from
+`getVST3ClientExtensions()`.
+
+Added to existing core headers, nothing changed in what was there:
+
+- `VuMeter`: `getRmsGain()`, `getPeakGain()` (linear), `takeMaxGain()`
+  (returns and resets the held max), `setLevels (rms, peak)`, `raiseMax (gain)`.
+- `SpectrumTap`: `getTotalPushed()` (a monotonic counter, as `WaveformTap`
+  already had) and `readSince (from&, dest, maxCount)`. One more atomic per
+  tap; `push()` does one more relaxed load and release store.
+- `WaveformTap`: `readSince (from&, dest, maxCount)`.
+
+Tests: `core/tests/CoreNetTelemetryTests.cpp` (`FxmeCoreNetTelemetryTests`);
+the three `net/` headers are in the header self-containment test.
+
+---
+
 ## Pattern language: `p0` never plays and draws nothing in syntax 3 (2026-10-31)
 
 `Realizer::roll` returns false for `p0` without taking a draw, in syntax 3 only. Before,

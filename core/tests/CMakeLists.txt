@@ -81,6 +81,11 @@ add_executable(FxmeCoreSynthTests CoreSynthTests.cpp)
 target_link_libraries(FxmeCoreSynthTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreSynthTests COMMAND FxmeCoreSynthTests)
 
+# ── 6j. FxmeNet telemetry: codec, registry, remote meters and taps ─────────
+add_executable(FxmeCoreNetTelemetryTests CoreNetTelemetryTests.cpp)
+target_link_libraries(FxmeCoreNetTelemetryTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreNetTelemetryTests COMMAND FxmeCoreNetTelemetryTests)
+
 # ── 7. Every core header is self-contained without JUCE ────────────────────
 add_executable(FxmeCoreHeaderTest CoreHeaderCompileTest.cpp)
 target_link_libraries(FxmeCoreHeaderTest PRIVATE FxmeCore)
@@ -113,7 +118,7 @@ else()
 endif()
 
 foreach(_t FxmeCoreTests FxmeCoreMathTests FxmeCoreGeometryTests FxmeCoreSplitterTests
-           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreDynamicEqTests FxmeCoreSynthTests FxmeCoreHeaderTest)
+           FxmeCoreSpectralEffectsTests FxmeCoreEdgeBandPassTests FxmeCoreLevelMatcherTests FxmeCoreFilterBankTests FxmeCoreDelayInsertTests FxmeCoreStereoBandsTests FxmeCoreDynamicsTests FxmeCoreFrequencyShifterTests FxmeCoreDynamicEqTests FxmeCoreSynthTests FxmeCoreNetTelemetryTests FxmeCoreHeaderTest)
     target_compile_options(${_t} PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)

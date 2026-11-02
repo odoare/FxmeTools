@@ -281,6 +281,17 @@
  #include <FxmeTools/acoustics/PlateModes.h>
 #endif
 
+// -- net (FxmeNet) ----------------------------------------------------------
+#if FXME_TRY_INCLUDE(<FxmeTools/net/NetAbi.h>)
+ #include <FxmeTools/net/NetAbi.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/net/TelemetryCodec.h>)
+ #include <FxmeTools/net/TelemetryCodec.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/net/TelemetryRegistry.h>)
+ #include <FxmeTools/net/TelemetryRegistry.h>
+#endif
+
 // -- image (geometry only; the JUCE-backed sources stay on the other side) --
 #if FXME_TRY_INCLUDE(<FxmeTools/image/CameraPose.h>)
  #include <FxmeTools/image/CameraPose.h>

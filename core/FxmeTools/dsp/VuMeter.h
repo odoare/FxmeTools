@@ -82,6 +82,33 @@ public:
     float getMax()  const { return fxme::Decibels::gainToDecibels (maxLevel.load()); }
     void resetMax() { maxLevel = 0.0f; }
 
+    //==============================================================================
+    // Remote metering (FxmeNet). The meter runs on one machine and is drawn on
+    // another: the source side reads the linear levels and takes the held max
+    // (no editor there resets it), the mirror side writes them into a meter
+    // that is never fed audio, where its own editor reads and resets as usual.
+
+    /** Linear RMS and peak, as stored (any thread). */
+    float getRmsGain() const noexcept   { return rms.load(); }
+    float getPeakGain() const noexcept  { return peak.load(); }
+
+    /** Returns the held max (linear) and resets it. Source side. */
+    float takeMaxGain() noexcept        { return maxLevel.exchange (0.0f); }
+
+    /** Sets RMS and peak (linear) on a meter that is not processing. */
+    void setLevels (float rmsGain, float peakGain) noexcept
+    {
+        rms.store (rmsGain);
+        peak.store (peakGain);
+    }
+
+    /** Raises the held max to `gain` (linear) if it is higher. */
+    void raiseMax (float gain) noexcept
+    {
+        float current = maxLevel.load();
+        while (gain > current && ! maxLevel.compare_exchange_weak (current, gain)) {}
+    }
+
     void clear()
     {
         rms = 0.0f;

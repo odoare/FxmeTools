@@ -22,6 +22,7 @@
 #include <FxmeTools/util/Math.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 
 namespace fxme
 {
@@ -56,6 +57,37 @@ public:
                 w = 0;
         }
         writePos.store (w, std::memory_order_release);
+        totalPushed.store (totalPushed.load (std::memory_order_relaxed) + n,
+                           std::memory_order_release);
+    }
+
+    /** Total samples pushed since construction: sample i sits at ring index
+        i % size, so a reader can stream the tap without missing or repeating
+        samples (see readSince). */
+    std::int64_t getTotalPushed() const noexcept
+    {
+        return totalPushed.load (std::memory_order_acquire);
+    }
+
+    /** Streams the tap (FxmeNet source side, reader thread). Copies up to
+        `maxCount` samples pushed from sample index `from` on, oldest first,
+        and advances `from` past them. A `from` older than half the ring (the
+        part the writer cannot be overwriting) jumps forward: the samples in
+        between are skipped, not returned. Returns the number copied. */
+    int readSince (std::int64_t& from, float* dest, int maxCount) const noexcept
+    {
+        const auto total = totalPushed.load (std::memory_order_acquire);
+        from = fxme::jlimit (total - size / 2, total, from);
+        const int n = (int) fxme::jmin ((std::int64_t) maxCount, total - from);
+        int r = (int) (from % size);
+        for (int i = 0; i < n; ++i)
+        {
+            dest[i] = buffer[(size_t) r];
+            if (++r >= size)
+                r = 0;
+        }
+        from += n;
+        return n;
     }
 
     /** Copies the most recent `count` samples in chronological order. */
@@ -78,6 +110,7 @@ private:
     static constexpr int size = 2 * spectrumMaxFftSize;
     std::array<float, (size_t) size> buffer;
     std::atomic<int> writePos { 0 };
+    std::atomic<std::int64_t> totalPushed { 0 };
     std::atomic<bool> enabled { false };
 };
 
