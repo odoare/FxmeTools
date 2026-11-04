@@ -146,6 +146,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/CircularSpectrum.h"
 #include "components/SpectrumRegionEditor.h"
 #include "components/WaveformDisplay.h"
+#include "components/SpectrogramDisplay.h"
 #include "components/ComponentSnapshot.h"
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"

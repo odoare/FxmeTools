@@ -11,6 +11,19 @@ project after a break.
 
 ---
 
+## New: `SpectrogramDisplay` (2026-11-03)
+
+Additive. **No consumer action.** `components/SpectrogramDisplay.h`, in the
+umbrella header: a scrolling spectrogram over an `fxme::SpectrumTap`, ported
+from FxmeJuceTools' `SpectrogramComponent` (same look: one hue, brightness =
+magnitude normalised per column, skewed frequency axis, vertical drag for the
+contrast). Differences from the original: it reads a tap instead of its own
+FIFO (one tap can feed both it and a `SpectrumDisplay`), it uses a Hann
+window, and it uses `RealFft` from core rather than JUCE's FFT. Written for
+Vibe, which drops its FxmeJuceTools dependency with it.
+
+---
+
 ## New: FxmeNet telemetry (`net/`); remote-metering additions to `VuMeter`, `SpectrumTap`, `WaveformTap` (2026-11-02)
 
 Additive. **No consumer action.** Groundwork for FxmeNet (DSP on a LAN server,
