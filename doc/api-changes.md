@@ -11,6 +11,23 @@ project after a break.
 
 ---
 
+## Several live signals on one plot: `WaveformDisplay::setTaps`, `SpectrogramDisplay::addTrace` (2026-11-04)
+
+Additive. **No consumer action.** For Vibe, which shows two microphones either
+alone, overlaid or stacked.
+
+- `WaveformDisplay::setTaps (std::vector<WaveformTap*>)`: realtime monitoring of
+  several taps on one plot, tap i drawn as channel i (`setChannelColours`,
+  `setChannelNames` and the legend apply). The first tap sets the sample rate
+  and the history length. `setTap (t)` is now `setTaps ({ t })`, unchanged in
+  behaviour.
+- `SpectrogramDisplay::addTrace (tap, colour)` / `clearTraces()`: several taps
+  in one image, each in its own hue, the hues added per pixel, every column
+  normalised to the loudest bin of all traces. `setTap()` / `setColour()` keep
+  their single-trace meaning, and one trace renders exactly as before.
+
+---
+
 ## New: `SpectrogramDisplay` (2026-11-03)
 
 Additive. **No consumer action.** `components/SpectrogramDisplay.h`, in the

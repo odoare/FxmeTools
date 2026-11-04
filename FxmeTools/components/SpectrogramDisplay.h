@@ -21,6 +21,11 @@
         spectrogram.setTap (&processor.getSpectrumTap());
         spectrogram.setColour (juce::Colours::green);
 
+    Several signals can share one image (addTrace): each is drawn in its own
+    hue and the hues add up, so where both are loud the pixel takes the mixed
+    colour. Every column is then normalised to the loudest bin of all the
+    traces, so their relative levels stay comparable.
+
     Mouse: vertical drag adjusts the contrast. Message thread only (the tap's
     push() side excepted).
 
@@ -67,17 +72,41 @@ public:
         startTimerHz (30);
     }
 
-    /** The tap to read. The caller keeps ownership; nullptr detaches. The
-        tap must be enabled by its owner for anything to show. */
+    /** Shows a single tap, in the colour set by setColour(). The caller
+        keeps ownership; nullptr detaches. The tap must be enabled by its
+        owner for anything to show. */
     void setTap (SpectrumTap* newTap)
     {
-        tap = newTap;
-        lastColumnAt = tap != nullptr ? tap->getTotalPushed() : 0;
+        traces.clear();
+        if (newTap != nullptr)
+            traces.push_back ({ newTap, colour });
+        resyncClock();
     }
 
-    /** The hue of the image: each pixel is this colour at the bin's
-        brightness. */
-    void setColour (juce::Colour c)             { colour = c; }
+    /** Adds a signal in its own hue (see the file comment). The first trace
+        sets the scroll clock. */
+    void addTrace (SpectrumTap* newTap, juce::Colour traceColour)
+    {
+        if (newTap == nullptr)
+            return;
+        traces.push_back ({ newTap, traceColour });
+        resyncClock();
+    }
+
+    void clearTraces()
+    {
+        traces.clear();
+        resyncClock();
+    }
+
+    /** The hue of the image when it shows one signal: each pixel is this
+        colour at the bin's brightness. Also recolours the first trace. */
+    void setColour (juce::Colour c)
+    {
+        colour = c;
+        if (! traces.empty())
+            traces.front().colour = c;
+    }
     juce::Colour getColour() const noexcept     { return colour; }
 
     /** Exponent applied to the normalised magnitude: below 1 brings up the
@@ -108,12 +137,23 @@ public:
     }
 
 private:
+    struct Trace
+    {
+        SpectrumTap* tap;
+        juce::Colour colour;
+    };
+
+    void resyncClock()
+    {
+        lastColumnAt = traces.empty() ? 0 : traces.front().tap->getTotalPushed();
+    }
+
     void timerCallback() override
     {
-        if (tap == nullptr)
+        if (traces.empty())
             return;
 
-        const auto total = tap->getTotalPushed();
+        const auto total = traces.front().tap->getTotalPushed();
         if (total - lastColumnAt < (std::int64_t) fftSize)
             return;
 
@@ -129,17 +169,28 @@ private:
 
         image.moveImageSection (0, 0, 1, 0, right, height);
 
-        std::fill (fftData.begin(), fftData.end(), 0.0f);
-        tap->snapshot (fftData.data(), fftSize);
-        for (int i = 0; i < fftSize; ++i)
-            fftData[(size_t) i] *= window[(size_t) i];
-
-        fft.performFrequencyOnlyForwardTransform (fftData.data(), true);
-
+        // One magnitude spectrum per trace (numBins + 1 values each).
         const int numBins = fftSize / 2;
+        magnitudes.resize (traces.size() * (size_t) (numBins + 1));
         float maxLevel = 0.0f;
-        for (int i = 0; i < numBins; ++i)
-            maxLevel = juce::jmax (maxLevel, fftData[(size_t) i]);
+
+        for (size_t t = 0; t < traces.size(); ++t)
+        {
+            std::fill (fftData.begin(), fftData.end(), 0.0f);
+            traces[t].tap->snapshot (fftData.data(), fftSize);
+            for (int i = 0; i < fftSize; ++i)
+                fftData[(size_t) i] *= window[(size_t) i];
+
+            fft.performFrequencyOnlyForwardTransform (fftData.data(), true);
+
+            auto* mag = magnitudes.data() + t * (size_t) (numBins + 1);
+            for (int i = 0; i <= numBins; ++i)
+            {
+                mag[i] = fftData[(size_t) i];
+                if (i < numBins)
+                    maxLevel = juce::jmax (maxLevel, mag[i]);
+            }
+        }
         maxLevel = juce::jmax (maxLevel, 1.0e-5f);
 
         juce::Image::BitmapData bitmap { image, right, 0, 1, height, juce::Image::BitmapData::writeOnly };
@@ -150,8 +201,22 @@ private:
         {
             const float skewed = 1.0f - std::exp (std::log ((float) y / (float) height) * 0.2f);
             const int bin = juce::jlimit (0, numBins, (int) (skewed * (float) numBins));
-            const float level = std::pow (juce::jlimit (0.0f, 1.0f, fftData[(size_t) bin] / maxLevel), contrast);
-            bitmap.setPixelColour (0, y, colour.withBrightness (level));
+
+            // A single trace is exactly the original rendering; several add
+            // their colours channel by channel.
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            for (size_t t = 0; t < traces.size(); ++t)
+            {
+                const float m = magnitudes[t * (size_t) (numBins + 1) + (size_t) bin];
+                const float level = std::pow (juce::jlimit (0.0f, 1.0f, m / maxLevel), contrast);
+                const auto c = traces[t].colour.withBrightness (level);
+                r += c.getFloatRed();
+                g += c.getFloatGreen();
+                b += c.getFloatBlue();
+            }
+            bitmap.setPixelColour (0, y, juce::Colour::fromFloatRGBA (juce::jmin (1.0f, r),
+                                                                       juce::jmin (1.0f, g),
+                                                                       juce::jmin (1.0f, b), 1.0f));
         }
     }
 
@@ -161,7 +226,8 @@ private:
     std::vector<float> window;
     std::vector<float> fftData;     // 2 * fftSize, the RealFft buffer layout
 
-    SpectrumTap* tap = nullptr;
+    std::vector<Trace> traces;
+    std::vector<float> magnitudes;  // numBins + 1 per trace, reused
     std::int64_t lastColumnAt = 0;
 
     juce::Colour colour { juce::Colours::green };

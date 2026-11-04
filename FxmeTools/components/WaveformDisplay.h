@@ -16,6 +16,8 @@
       * setTap()     — realtime monitoring of a WaveformTap the audio thread
                        pushes into; the view scrolls, always ending "now"
                        (time axis is negative seconds into the past).
+      * setTaps()    — the same with several taps overlaid, tap i drawn as
+                       channel i (colours, names, legend).
 
     Markers are labelled vertical time lines, regions are labelled shaded
     time spans; both are pushed as complete sets by the owner (setMarkers /
@@ -51,6 +53,7 @@
 
 #include <JuceHeader.h>
 #include <FxmeTools/dsp/WaveformTap.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -103,6 +106,7 @@ public:
                     bool resetViewToFull = true)
     {
         tap = nullptr;
+        taps.clear();
         stopTimer();
         audio.makeCopyOf (data);
         sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
@@ -138,7 +142,21 @@ public:
         is disabled and ctrl-wheel adjusts the visible history length. */
     void setTap (WaveformTap* newTap)
     {
-        tap = newTap;
+        setTaps (newTap != nullptr ? std::vector<WaveformTap*> { newTap }
+                                   : std::vector<WaveformTap*> {});
+    }
+
+    /** Realtime monitoring of several taps overlaid on one plot (two
+        microphones, say): tap i is drawn as channel i, so setChannelColours(),
+        setChannelNames() and the clickable legend apply as for a buffer. The
+        first tap sets the sample rate and the history length: prepare the
+        others the same way. An empty vector detaches; null entries are
+        skipped. */
+    void setTaps (std::vector<WaveformTap*> newTaps)
+    {
+        newTaps.erase (std::remove (newTaps.begin(), newTaps.end(), nullptr), newTaps.end());
+        taps = std::move (newTaps);
+        tap = taps.empty() ? nullptr : taps.front();
         audio.setSize (0, 0);
         cache.clear();
         if (tap != nullptr)
@@ -158,6 +176,7 @@ public:
     void clear()
     {
         tap = nullptr;
+        taps.clear();
         stopTimer();
         audio.setSize (0, 0);
         cache.clear();
@@ -639,16 +658,22 @@ private:
 
     void drawTapTrace (juce::Graphics& g, juce::Rectangle<float> r)
     {
-        if (! channelVisible (0))
-            return;
+        for (size_t i = 0; i < taps.size(); ++i)
+        {
+            if (! channelVisible ((int) i))
+                continue;
 
-        const int want = juce::jmin (tap->getCapacity(),
-                                     (int) std::ceil (viewLengthS * sampleRate) + 1);
-        tapScratch.resize ((size_t) juce::jmax (1, want));
-        tap->snapshot (tapScratch.data(), want);
-        // The newest snapshot sample sits at t = 0.
-        drawChannel (g, r, tapScratch.data(), want,
-                     -(double) (want - 1) / sampleRate, nullptr, channelColour (0));
+            auto* t = taps[i];
+            const int want = juce::jmin (t->getCapacity(),
+                                         (int) std::ceil (viewLengthS * sampleRate) + 1);
+            if (want <= 0)
+                continue;
+            tapScratch.resize ((size_t) want);
+            t->snapshot (tapScratch.data(), want);
+            // The newest snapshot sample sits at t = 0.
+            drawChannel (g, r, tapScratch.data(), want,
+                         -(double) (want - 1) / sampleRate, nullptr, channelColour ((int) i));
+        }
     }
 
     //==========================================================================
@@ -783,7 +808,8 @@ private:
     std::vector<std::vector<std::pair<float, float>>> cache;    // per channel
     float dataPeak = 1.0f;
 
-    WaveformTap* tap = nullptr;                         // realtime source
+    WaveformTap* tap = nullptr;                         // realtime source: taps.front()
+    std::vector<WaveformTap*> taps;                     // every realtime source
     std::vector<float> tapScratch;
 
     double sampleRate = 44100.0;
