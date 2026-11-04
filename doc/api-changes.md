@@ -25,6 +25,8 @@ alone, overlaid or stacked.
   in one image, each in its own hue, the hues added per pixel, every column
   normalised to the loudest bin of all traces. `setTap()` / `setColour()` keep
   their single-trace meaning, and one trace renders exactly as before.
+- `SpectrogramDisplay::setFrequencyZoom (zoom)` / `getFrequencyZoom()`: the
+  image spans 0 Hz to Nyquist / zoom (1 to 64); changing it blanks the image.
 
 ---
 

@@ -114,6 +114,20 @@ public:
     void setContrast (float newContrast)        { contrast = juce::jlimit (0.1f, 2.0f, newContrast); }
     float getContrast() const noexcept          { return contrast; }
 
+    /** Frequency zoom: the image spans 0 Hz to Nyquist / zoom (1 = the whole
+        band, 2 = the lower half, ...; clamped to 1..64). The skewed axis is
+        kept within that span. Blanks the image, whose earlier columns were
+        drawn on another scale. */
+    void setFrequencyZoom (float newZoom)
+    {
+        newZoom = juce::jlimit (1.0f, 64.0f, newZoom);
+        if (newZoom == frequencyZoom)
+            return;
+        frequencyZoom = newZoom;
+        clear();
+    }
+    float getFrequencyZoom() const noexcept     { return frequencyZoom; }
+
     /** Blanks the image. */
     void clear()
     {
@@ -200,7 +214,7 @@ private:
         for (int y = 1; y < height; ++y)
         {
             const float skewed = 1.0f - std::exp (std::log ((float) y / (float) height) * 0.2f);
-            const int bin = juce::jlimit (0, numBins, (int) (skewed * (float) numBins));
+            const int bin = juce::jlimit (0, numBins, (int) (skewed * (float) numBins / frequencyZoom));
 
             // A single trace is exactly the original rendering; several add
             // their colours channel by channel.
@@ -232,6 +246,7 @@ private:
 
     juce::Colour colour { juce::Colours::green };
     float contrast = 1.0f;
+    float frequencyZoom = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrogramDisplay)
 };
