@@ -151,6 +151,8 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include "components/SplMeterComponent.h"
 #include "components/VuMeterComponent.h"
 #include "components/DynamicsMeter.h"
+#include "components/GainReductionMeter.h"
+#include "components/LfoPhaseDisplay.h"
 #include "components/StereoLevelMeter.h"
 #include "components/InfoButton.h"
 #include "components/ChecklistPopup.h"

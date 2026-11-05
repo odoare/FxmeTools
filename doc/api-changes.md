@@ -11,6 +11,39 @@ project after a break.
 
 ---
 
+## New: console fader style, `GainReductionMeter`, `LfoPhaseDisplay`; darker panel background (2026-11-04)
+
+Additive, apart from the background. A visual refresh of the FxmeFX dynamics
+and modulation panels, tried on Compressor and Chorus first.
+
+- **Visible in every consumer:** `paintComponentBackground` is darker (base
+  0x121212 instead of 0x181818, accent mixed in at 12 % and 4 % instead of
+  14 % and 5 %). No code change; a plugin picking this up looks slightly
+  darker, which is the intent (one family).
+
+- `FxmeLookAndFeel::LinearStyle::console` (or a slider's `"linearStyle"`
+  property set to `"console"`): a `LinearVertical` slider drawn as a desk
+  fader, a thin recessed slot, a scale in the slider's units on the left
+  (ticks in a 1-2-3-5-6 series spaced to fit the height, the origin always
+  among them, or the `"scaleTicks"` property, an array of values), a ribbed
+  cap crossed by the thumb colour, the value under it with `showLabel`. The
+  cap's body is `rotarySliderFillColourId` brightened: set that to a dark
+  grey (0xff2b2b2b). A `LinearHorizontal` slider in this style is drawn flat.
+  `consoleGeometry()` gives the parts; `FaderGeometry` gained a `scale`
+  rectangle (zero in the other styles).
+- `components/GainReductionMeter.h`: a dynamics stage's gain as LED
+  segments lit from 0 dB (-30 to 0 for a compressor, or a range across 0 for
+  a cut-and-boost stage), a held peak segment and value, a dB scale.
+  Push-style (`setValue`), no timer, repaints only on change, `setActive`
+  greys it. Replaces `VuMeterComponent` as a gain-reduction display, whose
+  bar filled from the bottom and so read backwards for a reduction.
+- `components/LfoPhaseDisplay.h`: one cycle of an `fxme::Lfo` shape with a
+  dot per reader (offset in cycles, label, secondary for extra voices), the
+  master phase pushed with `setPhase`, a caption (the rate). For the
+  chorus, flanger and phaser, whose voices read one `ModLfo` at offsets.
+
+---
+
 ## Several live signals on one plot: `WaveformDisplay::setTaps`, `SpectrogramDisplay::addTrace` (2026-11-04)
 
 Additive. **No consumer action.** For Vibe, which shows two microphones either

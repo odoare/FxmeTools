@@ -68,9 +68,9 @@ inline void paintComponentBackground (juce::Graphics& g, juce::Rectangle<float> 
     const auto perpendicular = diagonale.rotatedAboutOrigin (juce::degreesToRadians (270.0f)) / length;
     const auto height        = (bounds.getWidth() * bounds.getHeight()) / length;
 
-    const auto darkBase    = juce::Colour (0xff181818);
-    const auto lightCorner = darkBase.interpolatedWith (accent, 0.14f);
-    const auto darkCorner  = darkBase.interpolatedWith (accent, 0.05f);
+    const auto darkBase    = juce::Colour (0xff121212);   // 0xff181818 until 2026-11-04
+    const auto lightCorner = darkBase.interpolatedWith (accent, 0.12f);
+    const auto darkCorner  = darkBase.interpolatedWith (accent, 0.04f);
 
     juce::ColourGradient grad (darkCorner,  perpendicular *  height,
                                lightCorner, perpendicular * -height, false);

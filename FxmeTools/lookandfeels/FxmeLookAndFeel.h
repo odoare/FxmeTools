@@ -40,6 +40,13 @@
     it when "showLabel" is set. Classic stays the default, so existing panels
     whose knobs are flat keep their linear sliders as they were.
 
+    A third fader style, console (setLinearStyle, or "linearStyle" set to
+    "console"), draws a vertical fader as on a mixing desk: a thin recessed
+    slot, a scale in the slider's units beside it (ticks chosen to fit the
+    height, or the "scaleTicks" property, an array of values), a ribbed cap
+    crossed by the accent, and the value under it with "showLabel". A
+    horizontal slider in this style is drawn flat.
+
     A read-out that does not fit is never cut with "...": its font shrinks to
     a floor, then its unit goes (drawFittedText()).
 
@@ -151,10 +158,11 @@ public:
   void setKnobStyle (KnobStyle s) noexcept { knobStyle = s; }
   KnobStyle getKnobStyle() const noexcept  { return knobStyle; }
 
-  enum class LinearStyle { classic, flat };
+  enum class LinearStyle { classic, flat, console };
 
   /** The style of faders (LinearVertical and LinearHorizontal sliders); a
-      slider's "linearStyle" property, "classic" or "flat", overrides it. */
+      slider's "linearStyle" property, "classic", "flat" or "console",
+      overrides it. */
   void setLinearStyle (LinearStyle s) noexcept { linearStyle = s; }
   LinearStyle getLinearStyle() const noexcept  { return linearStyle; }
 
@@ -162,6 +170,7 @@ public:
   {
       const auto prop = slider.getProperties().getWithDefault ("linearStyle", juce::var()).toString();
       if (prop == "flat")    return LinearStyle::flat;
+      if (prop == "console") return LinearStyle::console;
       if (prop == "classic") return LinearStyle::classic;
       return linearStyle;
   }
@@ -173,6 +182,7 @@ public:
   {
       juce::Rectangle<float> track, labelArea;
       float thickness = 0.0f, capLength = 0.0f, capWidth = 0.0f;
+      juce::Rectangle<float> scale;   ///< console: the scale's labels, left of the track
   };
 
   static FaderGeometry faderGeometry (juce::Rectangle<float> bounds, bool vertical, bool showLabel)
@@ -188,11 +198,36 @@ public:
       return geo;
   }
 
+  /** A vertical console fader's parts: the scale's labels on the left, the
+      track (the cap travels along it) on the right, the read-out under both. */
+  static FaderGeometry consoleGeometry (juce::Rectangle<float> bounds, bool showLabel)
+  {
+      FaderGeometry geo;
+      const float labelHeight = showLabel ? juce::jlimit (0.0f, bounds.getHeight() * 0.4f, juce::jmax (bounds.getHeight() * 0.1f, 13.0f)) : 0.0f;
+      geo.labelArea = bounds.removeFromBottom (labelHeight);
+      const float scaleWidth = bounds.getWidth() >= 34.0f ? juce::jmin (24.0f, bounds.getWidth() * 0.4f) : 0.0f;
+      geo.scale = bounds.removeFromLeft (scaleWidth);
+      geo.track = bounds;
+      geo.thickness = 4.0f;
+      geo.capWidth = juce::jlimit (8.0f, 36.0f, bounds.getWidth() * 0.8f);
+      geo.capLength = juce::jlimit (14.0f, 26.0f, geo.capWidth * 0.62f);
+      geo.scale = geo.scale.withTrimmedTop (geo.capLength * 0.5f).withTrimmedBottom (geo.capLength * 0.5f);
+      return geo;
+  }
+
   bool isFlatFader (const juce::Slider& slider) const
   {
       const auto style = slider.getSliderStyle();
+      const auto linear = linearStyleFor (slider);
       return (style == juce::Slider::LinearVertical || style == juce::Slider::LinearHorizontal)
-          && linearStyleFor (slider) == LinearStyle::flat;
+          && (linear == LinearStyle::flat
+              || (linear == LinearStyle::console && style == juce::Slider::LinearHorizontal));
+  }
+
+  bool isConsoleFader (const juce::Slider& slider) const
+  {
+      return slider.getSliderStyle() == juce::Slider::LinearVertical
+          && linearStyleFor (slider) == LinearStyle::console;
   }
 
   KnobStyle styleFor (const juce::Slider& slider) const
@@ -414,6 +449,11 @@ public:
       positions this far from each end, for the mouse as for the drawing. */
   int getSliderThumbRadius (juce::Slider& slider) override
   {
+      if (isConsoleFader (slider))
+      {
+          const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+          return juce::roundToInt (consoleGeometry (slider.getLocalBounds().toFloat(), showLabel).capLength * 0.5f);
+      }
       if (isFlatFader (slider))
       {
           const bool vertical = slider.getSliderStyle() == juce::Slider::LinearVertical;
@@ -426,6 +466,16 @@ public:
   juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
   {
       auto style = slider.getSliderStyle();
+
+      // A console fader travels along its track, right of its scale.
+      if (isConsoleFader (slider))
+      {
+          const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+          juce::Slider::SliderLayout layout;
+          layout.sliderBounds = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel).track.toNearestInt();
+          layout.textBoxBounds = {};
+          return layout;
+      }
 
       // A flat fader travels along its track; the read-out below is drawn by us.
       if (isFlatFader (slider))
@@ -558,6 +608,12 @@ public:
           juce::Slider& slider) override
   {
     const bool enabled = slider.isEnabled();
+
+    if (isConsoleFader (slider))
+    {
+        drawConsoleFader (g, sliderPos, slider, enabled, enabled && slider.isMouseOverOrDragging());
+        return;
+    }
 
     if (isFlatFader (slider))
     {
@@ -1003,6 +1059,132 @@ private:
       if (showLabel && geo.labelArea.getHeight() > 4.0f)
       {
           g.setColour (slider.findColour (juce::Slider::textBoxTextColourId).withMultipliedAlpha (textAlpha (0.85f, enabled)));
+          const float size = juce::jmin (13.0f, geo.labelArea.getHeight() * 0.9f);
+          drawFittedText (g, slider.getTextFromValue (slider.getValue()), geo.labelArea, geo.labelArea, size, juce::jmin (size, 7.5f));
+      }
+  }
+
+  /** The values marked on a console fader's scale: the "scaleTicks"
+      property when set, otherwise multiples of the smallest step in a
+      1-2-3-5-6 series that leaves `minSpacing` pixels between ticks, with
+      the origin always among them. */
+  static std::vector<double> consoleTicks (juce::Slider& slider, float trackLength, float minSpacing)
+  {
+      std::vector<double> ticks;
+      const auto range = slider.getRange();
+      if (const auto* given = slider.getProperties().getVarPointer ("scaleTicks"); given != nullptr && given->isArray())
+      {
+          for (const auto& v : *given->getArray())
+              if (range.contains ((double) v) || juce::approximatelyEqual ((double) v, range.getEnd()))
+                  ticks.push_back ((double) v);
+          return ticks;
+      }
+
+      const double length = range.getLength();
+      if (length <= 0.0 || trackLength <= 0.0f)
+          return ticks;
+      double step = length;
+      for (double decade = 1.0e-3; decade <= 1.0e6; decade *= 10.0)
+      {
+          bool found = false;
+          for (double m : { 1.0, 2.0, 3.0, 5.0, 6.0 })
+              if (trackLength * (float) (m * decade / length) >= minSpacing)
+              {
+                  step = m * decade;
+                  found = true;
+                  break;
+              }
+          if (found)
+              break;
+      }
+
+      const double origin = slider.proportionOfLengthToValue (originProportion (slider));
+      const double first = origin - std::floor ((origin - range.getStart()) / step + 1.0e-9) * step;
+      for (double v = first; v <= range.getEnd() + step * 1.0e-6; v += step)
+          ticks.push_back (std::abs (v) < step * 1.0e-6 ? 0.0 : v);
+      return ticks;
+  }
+
+  /** The console fader: a recessed slot, ticks either side of it and the
+      scale's labels on the left, the value filled thinly from its origin,
+      a ribbed cap crossed by the accent, the value under it. */
+  void drawConsoleFader (juce::Graphics& g, float pos, juce::Slider& slider, bool enabled, bool hovered)
+  {
+      const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
+      const auto geo = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel);
+      const auto area = geo.track;
+      const float x = area.getCentreX();
+      const float inset = geo.capLength * 0.5f;
+      const float top = area.getY() + inset, bottom = area.getBottom() - inset;
+      const auto textColour = slider.findColour (juce::Slider::textBoxTextColourId);
+
+      // Scale: ticks either side of the slot, labels on the left.
+      const float labelSize = juce::jlimit (7.5f, 10.0f, geo.scale.getWidth() * 0.42f);
+      const double origin = slider.proportionOfLengthToValue (originProportion (slider));
+      const float tickHalf = juce::jmin (geo.capWidth * 0.5f, area.getWidth() * 0.5f);
+      g.setFont (juce::Font (juce::FontOptions (labelSize)));
+      for (double v : consoleTicks (slider, bottom - top, juce::jmax (12.0f, labelSize + 4.0f)))
+      {
+          const float y = (float) slider.getPositionOfValue (v);
+          const bool isOrigin = juce::approximatelyEqual (v, origin);
+          g.setColour (textColour.withMultipliedAlpha (textAlpha (isOrigin ? 0.55f : 0.3f, enabled)));
+          g.fillRect (juce::Rectangle<float> (x - tickHalf, y - 0.5f, tickHalf - geo.thickness, 1.0f));
+          g.fillRect (juce::Rectangle<float> (x + geo.thickness, y - 0.5f, tickHalf - geo.thickness, 1.0f));
+
+          if (! geo.scale.isEmpty())
+          {
+              const int rounded = juce::roundToInt (v);
+              const auto text = std::abs (v - rounded) < 1.0e-6 ? (rounded > 0 ? "+" + juce::String (rounded) : juce::String (rounded))
+                                                                 : juce::String (v, 1);
+              g.setColour (textColour.withMultipliedAlpha (textAlpha (isOrigin ? 0.8f : 0.55f, enabled)));
+              g.drawText (text, juce::Rectangle<float> (geo.scale.getX(), y - labelSize * 0.6f, geo.scale.getWidth() - 3.0f, labelSize * 1.2f),
+                          juce::Justification::centredRight, false);
+          }
+      }
+
+      // The slot, recessed.
+      const auto slot = juce::Rectangle<float> (x - geo.thickness * 0.5f, top - 2.0f, geo.thickness, bottom - top + 4.0f);
+      g.setColour (juce::Colours::black.withAlpha (enabled ? 0.75f : 0.4f));
+      g.fillRoundedRectangle (slot, geo.thickness * 0.5f);
+      g.setColour (forState (slider.findColour (juce::Slider::rotarySliderOutlineColourId), enabled));
+      g.drawRoundedRectangle (slot, geo.thickness * 0.5f, 1.0f);
+
+      // The value, a thin line in the slot from its origin.
+      const float originY = (float) slider.getPositionOfValue (origin);
+      if (std::abs (pos - originY) > 0.5f)
+      {
+          g.setColour (forHover (forState (slider.findColour (juce::Slider::trackColourId), enabled), hovered));
+          g.fillRect (juce::Rectangle<float> (x - 1.0f, juce::jmin (pos, originY), 2.0f, std::abs (pos - originY)));
+      }
+
+      // The cap: a shadow, a shaded body, two ribs either side of the accent line.
+      const auto cap = juce::Rectangle<float> (geo.capWidth, geo.capLength).withCentre ({ x, pos });
+      const float corner = 2.0f;
+      g.setColour (juce::Colours::black.withAlpha (enabled ? 0.45f : 0.2f));
+      g.fillRoundedRectangle (cap.translated (0.0f, 2.0f), corner);
+
+      const auto body = forState (slider.findColour (juce::Slider::rotarySliderFillColourId).brighter (0.5f), enabled, 0.9f);
+      g.setGradientFill (juce::ColourGradient (body.brighter (0.35f), 0.0f, cap.getY(), body.darker (0.45f), 0.0f, cap.getBottom(), false));
+      g.fillRoundedRectangle (cap, corner);
+      g.setColour (juce::Colours::black.withAlpha (0.6f));
+      g.drawRoundedRectangle (cap, corner, 1.0f);
+
+      const float ribInset = cap.getWidth() * 0.12f;
+      for (float k : { -0.3f, 0.3f })
+      {
+          const float y = pos + k * cap.getHeight();
+          g.setColour (juce::Colours::black.withAlpha (0.45f));
+          g.fillRect (juce::Rectangle<float> (cap.getX() + ribInset, y - 1.0f, cap.getWidth() - 2.0f * ribInset, 1.0f));
+          g.setColour (juce::Colours::white.withAlpha (0.12f));
+          g.fillRect (juce::Rectangle<float> (cap.getX() + ribInset, y, cap.getWidth() - 2.0f * ribInset, 1.0f));
+      }
+      g.setColour (forHover (forState (slider.findColour (juce::Slider::thumbColourId), enabled), hovered));
+      g.fillRect (juce::Rectangle<float> (cap.getX() + 2.0f, pos - 1.0f, cap.getWidth() - 4.0f, 2.0f));
+
+      // The value under it, fitted (never cut with "...").
+      if (showLabel && geo.labelArea.getHeight() > 4.0f)
+      {
+          g.setColour (textColour.withMultipliedAlpha (textAlpha (0.85f, enabled)));
           const float size = juce::jmin (13.0f, geo.labelArea.getHeight() * 0.9f);
           drawFittedText (g, slider.getTextFromValue (slider.getValue()), geo.labelArea, geo.labelArea, size, juce::jmin (size, 7.5f));
       }
