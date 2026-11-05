@@ -132,6 +132,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 #include <FxmeTools/dsp/DelayLine.h>
 #include <FxmeTools/dsp/ModDelayLine.h>
 #include <FxmeTools/dsp/AllpassChain.h>
+#include <FxmeTools/dsp/Sanitise.h>
 #include <FxmeTools/dsp/StereoCrossDelay.h>
 #include <FxmeTools/dsp/DelayTimeResolver.h>
 #include <FxmeTools/dsp/DeterministicRandom.h>

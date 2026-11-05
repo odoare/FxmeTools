@@ -11,6 +11,43 @@ project after a break.
 
 ---
 
+## New: `dsp/Sanitise.h` (core): `sanitiseSample`, `isOutOfBounds` (2026-11-05)
+
+Additive. Two inline functions that keep NaN and infinities out of a
+recursive path (a feedback loop, a delay line fed back into itself, an IIR
+filter's state), where one stray sample from upstream otherwise stays for
+good and the effect outputs NaN from then on:
+
+- `fxme::sanitiseSample (x, limit)`: x clamped to +-limit, NaN and
+  infinities to 0. For what enters the loop. Note that `juce::jlimit` and
+  `std::clamp` alone let a NaN through (every comparison with it is false).
+- `fxme::isOutOfBounds (x, limit)`: true for |x| > limit, NaN or infinity.
+  For a state that went bad anyway; the caller clears it.
+- `fxme::sanitiseBlock (data, numChannels, numSamples, limit)`: the first on
+  a whole block, in place, and `fxme::kMainPathLimit` (1000, +60 dBFS), a
+  limit for a main signal path that changes nothing but NaN and infinities.
+  For an effect whose main path itself holds state (filters, level
+  detectors, an FFT): cleaning its input is then the whole fix.
+
+First users: all of FxmeFX's effects with state (StereoDelay, Flanger,
+Phaser, Chorus, Equalizer, Tube, Oct, Compressor, Transient, Freeze, Cab,
+ConvolReverb). Any project with a feedback path or a filter on its main
+path may want them; nothing has to change otherwise.
+
+## New: `FxmeSlider::setLogarithmic` (2026-11-05)
+
+Additive. `setLogarithmic (true)` gives a slider logarithmic travel (equal
+movements, equal ratios), for frequency knobs: over 20 Hz to 20 kHz, 200 Hz
+sits a third of the way along and 2 kHz two thirds, where a linear knob put
+everything below 2 kHz in its first tenth.
+
+Only the slider's travel changes. The parameter (its range, values,
+automation and host display) is untouched, so turning it on in a shipped
+plugin changes nothing in sessions or automation. Works before or after
+`setAttachment` (which re-applies it over the range the attachment sets); a
+later `setRange` makes the slider linear again. Ignored for a range that is
+not positive. The range's interval is kept.
+
 ## New: console fader style, `GainReductionMeter`, `LfoPhaseDisplay`; darker panel background (2026-11-04)
 
 Additive, apart from the background. A visual refresh of the FxmeFX dynamics
