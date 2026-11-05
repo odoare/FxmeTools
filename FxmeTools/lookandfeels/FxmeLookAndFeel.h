@@ -45,7 +45,8 @@
     slot, a scale in the slider's units beside it (ticks chosen to fit the
     height, or the "scaleTicks" property, an array of values), a ribbed cap
     crossed by the accent, and the value under it with "showLabel". A
-    horizontal slider in this style is drawn flat.
+    horizontal one is the same turned on its side: the scale under the slot
+    (when the slider is tall enough for its labels), the value on the right.
 
     A read-out that does not fit is never cut with "...": its font shrinks to
     a floor, then its unit goes (drawFittedText()).
@@ -198,20 +199,36 @@ public:
       return geo;
   }
 
-  /** A vertical console fader's parts: the scale's labels on the left, the
-      track (the cap travels along it) on the right, the read-out under both. */
-  static FaderGeometry consoleGeometry (juce::Rectangle<float> bounds, bool showLabel)
+  /** A console fader's parts. Vertical: the scale's labels on the left,
+      the track (the cap travels along it) on the right, the read-out under
+      both. Horizontal: the track above the scale's labels (only when there
+      is room for them), the read-out on the right. */
+  static FaderGeometry consoleGeometry (juce::Rectangle<float> bounds, bool showLabel, bool vertical = true)
   {
       FaderGeometry geo;
-      const float labelHeight = showLabel ? juce::jlimit (0.0f, bounds.getHeight() * 0.4f, juce::jmax (bounds.getHeight() * 0.1f, 13.0f)) : 0.0f;
-      geo.labelArea = bounds.removeFromBottom (labelHeight);
-      const float scaleWidth = bounds.getWidth() >= 34.0f ? juce::jmin (24.0f, bounds.getWidth() * 0.4f) : 0.0f;
-      geo.scale = bounds.removeFromLeft (scaleWidth);
-      geo.track = bounds;
       geo.thickness = 4.0f;
-      geo.capWidth = juce::jlimit (8.0f, 36.0f, bounds.getWidth() * 0.8f);
-      geo.capLength = juce::jlimit (14.0f, 26.0f, geo.capWidth * 0.62f);
-      geo.scale = geo.scale.withTrimmedTop (geo.capLength * 0.5f).withTrimmedBottom (geo.capLength * 0.5f);
+      if (vertical)
+      {
+          const float labelHeight = showLabel ? juce::jlimit (0.0f, bounds.getHeight() * 0.4f, juce::jmax (bounds.getHeight() * 0.1f, 13.0f)) : 0.0f;
+          geo.labelArea = bounds.removeFromBottom (labelHeight);
+          const float scaleWidth = bounds.getWidth() >= 34.0f ? juce::jmin (24.0f, bounds.getWidth() * 0.4f) : 0.0f;
+          geo.scale = bounds.removeFromLeft (scaleWidth);
+          geo.track = bounds;
+          geo.capWidth = juce::jlimit (8.0f, 36.0f, bounds.getWidth() * 0.8f);
+          geo.capLength = juce::jlimit (14.0f, 26.0f, geo.capWidth * 0.62f);
+          geo.scale = geo.scale.withTrimmedTop (geo.capLength * 0.5f).withTrimmedBottom (geo.capLength * 0.5f);
+      }
+      else
+      {
+          const float labelWidth = showLabel ? juce::jlimit (0.0f, bounds.getWidth() * 0.35f, juce::jmax (bounds.getWidth() * 0.2f, 48.0f)) : 0.0f;
+          geo.labelArea = bounds.removeFromRight (labelWidth);
+          const float scaleHeight = bounds.getHeight() >= 38.0f ? juce::jmin (11.0f, bounds.getHeight() * 0.3f) : 0.0f;
+          geo.scale = bounds.removeFromBottom (scaleHeight);
+          geo.track = bounds;
+          geo.capWidth = juce::jlimit (8.0f, 30.0f, bounds.getHeight() * 0.8f);
+          geo.capLength = juce::jlimit (10.0f, 20.0f, geo.capWidth * 0.62f);
+          geo.scale = geo.scale.withTrimmedLeft (geo.capLength * 0.5f).withTrimmedRight (geo.capLength * 0.5f);
+      }
       return geo;
   }
 
@@ -220,13 +237,13 @@ public:
       const auto style = slider.getSliderStyle();
       const auto linear = linearStyleFor (slider);
       return (style == juce::Slider::LinearVertical || style == juce::Slider::LinearHorizontal)
-          && (linear == LinearStyle::flat
-              || (linear == LinearStyle::console && style == juce::Slider::LinearHorizontal));
+          && linear == LinearStyle::flat;
   }
 
   bool isConsoleFader (const juce::Slider& slider) const
   {
-      return slider.getSliderStyle() == juce::Slider::LinearVertical
+      const auto style = slider.getSliderStyle();
+      return (style == juce::Slider::LinearVertical || style == juce::Slider::LinearHorizontal)
           && linearStyleFor (slider) == LinearStyle::console;
   }
 
@@ -452,7 +469,8 @@ public:
       if (isConsoleFader (slider))
       {
           const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
-          return juce::roundToInt (consoleGeometry (slider.getLocalBounds().toFloat(), showLabel).capLength * 0.5f);
+          return juce::roundToInt (consoleGeometry (slider.getLocalBounds().toFloat(), showLabel,
+                                                    slider.getSliderStyle() == juce::Slider::LinearVertical).capLength * 0.5f);
       }
       if (isFlatFader (slider))
       {
@@ -472,7 +490,8 @@ public:
       {
           const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
           juce::Slider::SliderLayout layout;
-          layout.sliderBounds = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel).track.toNearestInt();
+          layout.sliderBounds = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel,
+                                                 style == juce::Slider::LinearVertical).track.toNearestInt();
           layout.textBoxBounds = {};
           return layout;
       }
@@ -1106,30 +1125,46 @@ private:
   }
 
   /** The console fader: a recessed slot, ticks either side of it and the
-      scale's labels on the left, the value filled thinly from its origin,
-      a ribbed cap crossed by the accent, the value under it. */
+      scale's labels beside it (left of a vertical fader, under a horizontal
+      one), the value filled thinly from its origin, a ribbed cap crossed by
+      the accent, the value under it (vertical) or on its right (horizontal).
+
+      Drawn along the travel ("along": y for a vertical fader, x for a
+      horizontal one) and across it, so both orientations share one path. */
   void drawConsoleFader (juce::Graphics& g, float pos, juce::Slider& slider, bool enabled, bool hovered)
   {
+      const bool vertical = slider.getSliderStyle() == juce::Slider::LinearVertical;
       const bool showLabel = slider.getProperties().getWithDefault ("showLabel", false);
-      const auto geo = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel);
+      const auto geo = consoleGeometry (slider.getLocalBounds().toFloat(), showLabel, vertical);
       const auto area = geo.track;
-      const float x = area.getCentreX();
+      const float c = vertical ? area.getCentreX() : area.getCentreY();   // the slot's line, across
       const float inset = geo.capLength * 0.5f;
-      const float top = area.getY() + inset, bottom = area.getBottom() - inset;
+      const float start = (vertical ? area.getY() : area.getX()) + inset;
+      const float end = (vertical ? area.getBottom() : area.getRight()) - inset;
       const auto textColour = slider.findColour (juce::Slider::textBoxTextColourId);
 
-      // Scale: ticks either side of the slot, labels on the left.
-      const float labelSize = juce::jlimit (7.5f, 10.0f, geo.scale.getWidth() * 0.42f);
-      const double origin = slider.proportionOfLengthToValue (originProportion (slider));
-      const float tickHalf = juce::jmin (geo.capWidth * 0.5f, area.getWidth() * 0.5f);
-      g.setFont (juce::Font (juce::FontOptions (labelSize)));
-      for (double v : consoleTicks (slider, bottom - top, juce::jmax (12.0f, labelSize + 4.0f)))
+      // A rectangle from along a0..a1 and across c0..c1.
+      const auto rect = [vertical] (float a0, float a1, float c0, float c1)
       {
-          const float y = (float) slider.getPositionOfValue (v);
+          return vertical ? juce::Rectangle<float> (c0, a0, c1 - c0, a1 - a0)
+                          : juce::Rectangle<float> (a0, c0, a1 - a0, c1 - c0);
+      };
+
+      // Scale: ticks either side of the slot, the labels beside it.
+      const float labelSize = vertical ? juce::jlimit (7.5f, 10.0f, geo.scale.getWidth() * 0.42f)
+                                       : juce::jlimit (7.5f, 10.0f, geo.scale.getHeight() * 0.9f);
+      const double origin = slider.proportionOfLengthToValue (originProportion (slider));
+      const float acrossSize = vertical ? area.getWidth() : area.getHeight();
+      const float tickHalf = juce::jmin (geo.capWidth * 0.5f, acrossSize * 0.5f);
+      const float minSpacing = vertical ? juce::jmax (12.0f, labelSize + 4.0f) : juce::jmax (18.0f, labelSize * 2.8f);
+      g.setFont (juce::Font (juce::FontOptions (labelSize)));
+      for (double v : consoleTicks (slider, end - start, minSpacing))
+      {
+          const float a = (float) slider.getPositionOfValue (v);
           const bool isOrigin = juce::approximatelyEqual (v, origin);
           g.setColour (textColour.withMultipliedAlpha (textAlpha (isOrigin ? 0.55f : 0.3f, enabled)));
-          g.fillRect (juce::Rectangle<float> (x - tickHalf, y - 0.5f, tickHalf - geo.thickness, 1.0f));
-          g.fillRect (juce::Rectangle<float> (x + geo.thickness, y - 0.5f, tickHalf - geo.thickness, 1.0f));
+          g.fillRect (rect (a - 0.5f, a + 0.5f, c - tickHalf, c - geo.thickness));
+          g.fillRect (rect (a - 0.5f, a + 0.5f, c + geo.thickness, c + tickHalf));
 
           if (! geo.scale.isEmpty())
           {
@@ -1137,28 +1172,33 @@ private:
               const auto text = std::abs (v - rounded) < 1.0e-6 ? (rounded > 0 ? "+" + juce::String (rounded) : juce::String (rounded))
                                                                  : juce::String (v, 1);
               g.setColour (textColour.withMultipliedAlpha (textAlpha (isOrigin ? 0.8f : 0.55f, enabled)));
-              g.drawText (text, juce::Rectangle<float> (geo.scale.getX(), y - labelSize * 0.6f, geo.scale.getWidth() - 3.0f, labelSize * 1.2f),
-                          juce::Justification::centredRight, false);
+              if (vertical)
+                  g.drawText (text, juce::Rectangle<float> (geo.scale.getX(), a - labelSize * 0.6f, geo.scale.getWidth() - 3.0f, labelSize * 1.2f),
+                              juce::Justification::centredRight, false);
+              else
+                  g.drawText (text, juce::Rectangle<float> (a - labelSize * 2.0f, geo.scale.getY(), labelSize * 4.0f, geo.scale.getHeight()),
+                              juce::Justification::centred, false);
           }
       }
 
       // The slot, recessed.
-      const auto slot = juce::Rectangle<float> (x - geo.thickness * 0.5f, top - 2.0f, geo.thickness, bottom - top + 4.0f);
+      const auto slot = rect (start - 2.0f, end + 2.0f, c - geo.thickness * 0.5f, c + geo.thickness * 0.5f);
       g.setColour (juce::Colours::black.withAlpha (enabled ? 0.75f : 0.4f));
       g.fillRoundedRectangle (slot, geo.thickness * 0.5f);
       g.setColour (forState (slider.findColour (juce::Slider::rotarySliderOutlineColourId), enabled));
       g.drawRoundedRectangle (slot, geo.thickness * 0.5f, 1.0f);
 
       // The value, a thin line in the slot from its origin.
-      const float originY = (float) slider.getPositionOfValue (origin);
-      if (std::abs (pos - originY) > 0.5f)
+      const float originPos = (float) slider.getPositionOfValue (origin);
+      if (std::abs (pos - originPos) > 0.5f)
       {
           g.setColour (forHover (forState (slider.findColour (juce::Slider::trackColourId), enabled), hovered));
-          g.fillRect (juce::Rectangle<float> (x - 1.0f, juce::jmin (pos, originY), 2.0f, std::abs (pos - originY)));
+          g.fillRect (rect (juce::jmin (pos, originPos), juce::jmax (pos, originPos), c - 1.0f, c + 1.0f));
       }
 
-      // The cap: a shadow, a shaded body, two ribs either side of the accent line.
-      const auto cap = juce::Rectangle<float> (geo.capWidth, geo.capLength).withCentre ({ x, pos });
+      // The cap: a shadow, a shaded body (lit from above), two ribs either
+      // side of the accent line.
+      const auto cap = rect (pos - geo.capLength * 0.5f, pos + geo.capLength * 0.5f, c - geo.capWidth * 0.5f, c + geo.capWidth * 0.5f);
       const float corner = 2.0f;
       g.setColour (juce::Colours::black.withAlpha (enabled ? 0.45f : 0.2f));
       g.fillRoundedRectangle (cap.translated (0.0f, 2.0f), corner);
@@ -1169,23 +1209,25 @@ private:
       g.setColour (juce::Colours::black.withAlpha (0.6f));
       g.drawRoundedRectangle (cap, corner, 1.0f);
 
-      const float ribInset = cap.getWidth() * 0.12f;
+      const float ribInset = geo.capWidth * 0.12f;
+      const float c0 = c - geo.capWidth * 0.5f + ribInset, c1 = c + geo.capWidth * 0.5f - ribInset;
       for (float k : { -0.3f, 0.3f })
       {
-          const float y = pos + k * cap.getHeight();
+          const float a = pos + k * geo.capLength;
           g.setColour (juce::Colours::black.withAlpha (0.45f));
-          g.fillRect (juce::Rectangle<float> (cap.getX() + ribInset, y - 1.0f, cap.getWidth() - 2.0f * ribInset, 1.0f));
+          g.fillRect (rect (a - 1.0f, a, c0, c1));
           g.setColour (juce::Colours::white.withAlpha (0.12f));
-          g.fillRect (juce::Rectangle<float> (cap.getX() + ribInset, y, cap.getWidth() - 2.0f * ribInset, 1.0f));
+          g.fillRect (rect (a, a + 1.0f, c0, c1));
       }
       g.setColour (forHover (forState (slider.findColour (juce::Slider::thumbColourId), enabled), hovered));
-      g.fillRect (juce::Rectangle<float> (cap.getX() + 2.0f, pos - 1.0f, cap.getWidth() - 4.0f, 2.0f));
+      g.fillRect (rect (pos - 1.0f, pos + 1.0f, c - geo.capWidth * 0.5f + 2.0f, c + geo.capWidth * 0.5f - 2.0f));
 
-      // The value under it, fitted (never cut with "...").
-      if (showLabel && geo.labelArea.getHeight() > 4.0f)
+      // The value, fitted (never cut with "...").
+      if (showLabel && geo.labelArea.getHeight() > 4.0f && geo.labelArea.getWidth() > 4.0f)
       {
           g.setColour (textColour.withMultipliedAlpha (textAlpha (0.85f, enabled)));
-          const float size = juce::jmin (13.0f, geo.labelArea.getHeight() * 0.9f);
+          const float size = vertical ? juce::jmin (13.0f, geo.labelArea.getHeight() * 0.9f)
+                                      : juce::jmin (13.0f, geo.labelArea.getHeight() * 0.5f);
           drawFittedText (g, slider.getTextFromValue (slider.getValue()), geo.labelArea, geo.labelArea, size, juce::jmin (size, 7.5f));
       }
   }

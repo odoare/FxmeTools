@@ -28,8 +28,10 @@ and modulation panels, tried on Compressor and Chorus first.
   among them, or the `"scaleTicks"` property, an array of values), a ribbed
   cap crossed by the thumb colour, the value under it with `showLabel`. The
   cap's body is `rotarySliderFillColourId` brightened: set that to a dark
-  grey (0xff2b2b2b). A `LinearHorizontal` slider in this style is drawn flat.
-  `consoleGeometry()` gives the parts; `FaderGeometry` gained a `scale`
+  grey (0xff2b2b2b). A `LinearHorizontal` slider in this style is the same on
+  its side: the scale under the slot when the slider is at least 38 px tall
+  (ticks only below that), the value on the right. `consoleGeometry (bounds,
+  showLabel, vertical)` gives the parts; `FaderGeometry` gained a `scale`
   rectangle (zero in the other styles).
 - `components/GainReductionMeter.h`: a dynamics stage's gain as LED
   segments lit from 0 dB (-30 to 0 for a compressor, or a range across 0 for
