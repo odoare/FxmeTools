@@ -83,6 +83,28 @@ public:
     void setAttachment(juce::AudioProcessorValueTreeState::SliderAttachment* a)
     {
         attachment.reset(a);
+        // An attachment sets the slider's range from its parameter's: put the
+        // logarithmic travel back on top of it.
+        if (logarithmic)
+            applyLogarithmicRange();
+    }
+
+    /** Logarithmic travel, for a frequency: equal movements make equal
+        ratios, so the low end gets as much room as the high end (20 Hz to
+        20 kHz puts 200 Hz a third of the way and 2 kHz two thirds).
+
+        Only the knob's travel changes: the parameter, its values, its
+        automation and its host-side display are untouched. Before or after
+        setAttachment(), either works; a later setRange() makes it linear
+        again (call this again after it). Ignored unless the range is
+        positive. Keeps the range's interval. */
+    void setLogarithmic(bool shouldBeLogarithmic = true)
+    {
+        logarithmic = shouldBeLogarithmic;
+        if (logarithmic)
+            applyLogarithmicRange();
+        else
+            setNormalisableRange(juce::NormalisableRange<double>(getMinimum(), getMaximum(), getInterval()));
     }
 
     void setCentralValue(double value)
@@ -98,6 +120,28 @@ public:
 
 private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment{nullptr};
+    bool logarithmic = false;
+
+    void applyLogarithmicRange()
+    {
+        const double start = getMinimum(), end = getMaximum(), interval = getInterval();
+        if (start <= 0.0 || end <= start)
+            return;
+
+        juce::NormalisableRange<double> range(start, end,
+            [](double s, double e, double proportion) { return s * std::pow(e / s, proportion); },
+            [](double s, double e, double value)      { return std::log(value / s) / std::log(e / s); },
+            [interval](double s, double e, double value)
+            {
+                if (interval > 0.0)
+                    value = s + interval * std::round((value - s) / interval);
+                return juce::jlimit(s, e, value);
+            });
+        range.interval = interval;
+        const double value = getValue();
+        setNormalisableRange(range);
+        setValue(value, juce::dontSendNotification);
+    }
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxmeSlider)
 };
