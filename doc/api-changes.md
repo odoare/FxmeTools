@@ -11,6 +11,29 @@ project after a break.
 
 ---
 
+## New: `dsp/TapeHysteresis.h`, `dsp/TapeEq.h` (core) (2026-11-06)
+
+Additive. The magnetic and equalisation stages of a tape machine, for
+FxmeFX's Tape and a later tape delay:
+
+- `fxme::TapeHysteresis`: the Jiles-Atherton magnetisation model in
+  normalised units (Ms = 1, a = 1/3), one RK4 step per sample with the alpha
+  transform (0.9) for dH/dt. `process (h)` returns M. Run it oversampled.
+  `paramsFor (TapeType, bias01)` maps a tape type (modern, vintage, high
+  output) and a bias (0.5 calibrated) to its c, k and alpha;
+  `headroomDb (type)` and `hissOffsetDb (type)` give each type's level
+  offsets, and `approxGain (params)` the gain near the reference level
+  (within 0.15 dB of the model over paramsFor's range) for normalising the
+  output. About 4 % of a core for stereo at 48 kHz, 2x oversampled.
+- `fxme::tape` (TapeEq.h): `Speed` (7.5, 15, 30 ips), `EqStandard` (NAB,
+  IEC) and their time constants; `EmphasisFilter`, the record pre-emphasis
+  or its exact inverse, the playback de-emphasis (bilinear from the same
+  prototype, so the pair cancels to rounding); `headLossDb` /
+  `headLossCutoffHz`, the playback head's gap and spacing loss and its -3 dB
+  point; `headBumpFor`, the head bump's bell, dip and low roll-off per speed.
+
+Tests: `core/tests/CoreTapeTests.cpp`. First user: FxmeFX's Tape.
+
 ## `dsp/BitCrusher.h`, `dsp/Downsampler.h` (core): quantizer laws, dither, jitter (2026-11-06)
 
 Additive; the defaults behave exactly as before.

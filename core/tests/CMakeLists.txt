@@ -140,6 +140,11 @@ add_executable(FxmeCoreCrusherTests CoreCrusherTests.cpp)
 target_link_libraries(FxmeCoreCrusherTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreCrusherTests COMMAND FxmeCoreCrusherTests)
 
+# ── 8. Tape: hysteresis model and the machine's equalisation ───────────────
+add_executable(FxmeCoreTapeTests CoreTapeTests.cpp)
+target_link_libraries(FxmeCoreTapeTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreTapeTests COMMAND FxmeCoreTapeTests)
+
 # Written with doctest, unlike the tests above; fetched at configure time and
 # scoped to this one executable.
 include(FetchContent)

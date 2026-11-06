@@ -66,6 +66,12 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/GateStateMachine.h>)
  #include <FxmeTools/dsp/GateStateMachine.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/TapeHysteresis.h>)
+ #include <FxmeTools/dsp/TapeHysteresis.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/TapeEq.h>)
+ #include <FxmeTools/dsp/TapeEq.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/DelayLine.h>)
  #include <FxmeTools/dsp/DelayLine.h>
 #endif
