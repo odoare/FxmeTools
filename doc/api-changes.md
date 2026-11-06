@@ -11,6 +11,27 @@ project after a break.
 
 ---
 
+## New: `dsp/TankReverb.h`, `dsp/EarlyReflections.h` (core) (2026-11-06)
+
+Additive. The two halves of an algorithmic reverb, for StairwellToHeaven:
+
+- `fxme::TankReverb`: Dattorro's figure-eight tank, every line a
+  `ModDelayLine` (Size glides). Calibrated decay: each branch's loss is the
+  gain its length needs for RT60, made frequency dependent by two
+  first-order shelves (bass multiplier below the crossover, hfRatio above
+  the damping frequency), stable for any setting; `rt60At (settings, hz,
+  sampleRate)` gives the decay at any frequency for a display. Modulation
+  (quadrature sine plus seeded drift), Freeze (losses ramped to unity, input
+  muted, a soft limit as safety net), Shimmer (`SplicePitchShifter` in the
+  loop, gain scaled by the loop's headroom). `Settings` + `Voicing` (the
+  diffusion coefficients and input band-limit a mode chooses). About 5 % of
+  a core at 48 kHz. Measured T30 within 1 to 12 % of the setting.
+- `fxme::EarlyReflections`: eight taps (time, gain, equal-power pan, a
+  low-pass per tap), four patterns (room, hall, plate, stairwell: a
+  regular flutter), a time scale; `getTaps (pattern)` for drawing them.
+
+Tests: `core/tests/CoreReverbTests.cpp`.
+
 ## New: `dsp/TapeHysteresis.h`, `dsp/TapeEq.h` (core) (2026-11-06)
 
 Additive. The magnetic and equalisation stages of a tape machine, for

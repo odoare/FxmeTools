@@ -72,6 +72,12 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/TapeEq.h>)
  #include <FxmeTools/dsp/TapeEq.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/TankReverb.h>)
+ #include <FxmeTools/dsp/TankReverb.h>
+#endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/EarlyReflections.h>)
+ #include <FxmeTools/dsp/EarlyReflections.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/DelayLine.h>)
  #include <FxmeTools/dsp/DelayLine.h>
 #endif

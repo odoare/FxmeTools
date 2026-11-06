@@ -145,6 +145,11 @@ add_executable(FxmeCoreTapeTests CoreTapeTests.cpp)
 target_link_libraries(FxmeCoreTapeTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreTapeTests COMMAND FxmeCoreTapeTests)
 
+# ── 9. Reverb: Dattorro tank (calibrated decay, freeze, shimmer), early reflections
+add_executable(FxmeCoreReverbTests CoreReverbTests.cpp)
+target_link_libraries(FxmeCoreReverbTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreReverbTests COMMAND FxmeCoreReverbTests)
+
 # Written with doctest, unlike the tests above; fetched at configure time and
 # scoped to this one executable.
 include(FetchContent)
