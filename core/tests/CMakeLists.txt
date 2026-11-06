@@ -135,6 +135,11 @@ add_executable(FxmeCoreGateTests CoreGateTests.cpp)
 target_link_libraries(FxmeCoreGateTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreGateTests COMMAND FxmeCoreGateTests)
 
+# ── 7. BitCrusher laws and dither, Downsampler jitter ───────────────────────
+add_executable(FxmeCoreCrusherTests CoreCrusherTests.cpp)
+target_link_libraries(FxmeCoreCrusherTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreCrusherTests COMMAND FxmeCoreCrusherTests)
+
 # Written with doctest, unlike the tests above; fetched at configure time and
 # scoped to this one executable.
 include(FetchContent)

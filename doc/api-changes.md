@@ -11,6 +11,25 @@ project after a break.
 
 ---
 
+## `dsp/BitCrusher.h`, `dsp/Downsampler.h` (core): quantizer laws, dither, jitter (2026-11-06)
+
+Additive; the defaults behave exactly as before.
+
+- `BitCrusher::setMode (Mode)`: `midTread` (the default, the old rounding),
+  `midRise` (levels at odd half steps: silence toggles at +-half a step) or
+  `muLaw` (mu = 255 companding around a mid-tread quantizer: fine steps near
+  0, coarse near full scale). `getStep()` gives the step, and
+  `processSample (x, dither)` adds `dither` steps before rounding, in the
+  quantizer's domain; the caller draws the noise.
+- `Downsampler::setJitter (amount, seed)`: each hold's length is the factor
+  times a random amount within +-amount (0..1), drawn at each latch through
+  `fxme::detrand` on the seed and a latch counter, so instances with the same
+  seed hold in lockstep and `reset()` replays the sequence. 0 (the default)
+  is the old fixed hold. Downsampler.h now includes DeterministicRandom.h.
+
+Tests: `core/tests/CoreCrusherTests.cpp`. First user: FxmeFX's Crusher.
+Dede uses both classes with their defaults: nothing changes for it.
+
 ## New: `dsp/GateStateMachine.h` (core) (2026-11-06)
 
 Additive. `fxme::GateStateMachine`, the open / hold / closed logic of a
