@@ -11,6 +11,19 @@ project after a break.
 
 ---
 
+## New: `dsp/GateStateMachine.h` (core) (2026-11-06)
+
+Additive. `fxme::GateStateMachine`, the open / hold / closed logic of a
+noise gate, apart from its ballistics and its gain law: an open threshold, a
+close threshold `hysteresisDb` under it (so a decaying note does not make
+the gate chatter), and a hold time that rides over the dips between peaks.
+Fed a level in dB per sample (`process (levelDb)`), it returns the state;
+`isOpen()` is true in hold too. What the caller does with the state (0 dB
+unless closed, an expander curve, a ducker's inverse) is its own business.
+Tests: `core/tests/CoreGateTests.cpp`.
+
+First user: FxmeFX's Gate. Nothing to do elsewhere.
+
 ## New: `dsp/Sanitise.h` (core): `sanitiseSample`, `isOutOfBounds` (2026-11-05)
 
 Additive. Two inline functions that keep NaN and infinities out of a

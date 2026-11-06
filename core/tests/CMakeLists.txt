@@ -130,6 +130,11 @@ target_link_libraries(FxmeCoreBlockOverridesTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreBlockOverridesTests COMMAND FxmeCoreBlockOverridesTests)
 
 # ── The text-pattern arpeggiator (midi/Arpeggiator.h) ──────────────────────
+# ── 6. The gate's open / hold / closed logic (GateStateMachine) ────────────
+add_executable(FxmeCoreGateTests CoreGateTests.cpp)
+target_link_libraries(FxmeCoreGateTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreGateTests COMMAND FxmeCoreGateTests)
+
 # Written with doctest, unlike the tests above; fetched at configure time and
 # scoped to this one executable.
 include(FetchContent)
