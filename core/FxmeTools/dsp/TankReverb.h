@@ -50,7 +50,10 @@
     and through fxme::SplicePitchShifter (+12 semitones by default), is fed
     back into the tank input. Its gain is the Shimmer amount times
     shimmerHeadroom (1 - the loop's gain): a long decay leaves less room,
-    so the pitched copies build up without running away.
+    so the pitched copies build up without running away. A second voice
+    (shimmer2, its own interval, a second shifter on the same feed) climbs
+    alongside, in a chord; the two share that headroom (their gains sum to
+    at most one full voice's), so two voices are as stable as one.
 
     Safety: the input is clamped (sanitiseSample, +-16); a branch output that
     goes bad anyway (NaN, or beyond +-8) clears the tank.
@@ -109,6 +112,8 @@ public:
         bool  freeze = false;
         float shimmer = 0.0f;           // 0 .. 1
         float shimmerSemitones = 12.0f;
+        float shimmer2 = 0.0f;          // a second voice, 0 .. 1 (0: off)
+        float shimmerSemitones2 = 7.0f;
         Voicing voicing;
     };
 
@@ -132,6 +137,7 @@ public:
         }
 
         shifter.prepare (fs, 1, 40.0f);
+        shifter2.prepare (fs, 1, 40.0f);
         sizeCoef = 1.0f - (float) std::exp (-1.0 / (0.2 * fs));
         freezeStep = (float) (1.0 / (0.05 * fs));
         driftCoef = 1.0f - (float) std::exp (-2.0 * 3.141592653589793 * 0.3 / fs);
@@ -153,6 +159,7 @@ public:
             br.drift = 0.0f;
         }
         shifter.reset();
+        shifter2.reset();
         bandState = shimmerHpState = shimmerFeed = 0.0f;
         lfoPhase = 0.0;
         rng = 0x5eed5eedu;
@@ -163,6 +170,7 @@ public:
         settings = s;
         targetSize = std::clamp (s.size, minSize, maxSize);
         shifter.setPitchSemitones (std::clamp (s.shimmerSemitones, -24.0f, 24.0f));
+        shifter2.setPitchSemitones (std::clamp (s.shimmerSemitones2, -24.0f, 24.0f));
         updateCoefficients();
     }
 
@@ -220,11 +228,14 @@ public:
         }
 
         // Shimmer: the tank's output, high-passed, pitched, fed back.
-        if (shimmerGain > 0.0f && f < 1.0f)
+        if ((shimmerGain > 0.0f || shimmerGain2 > 0.0f) && f < 1.0f)
         {
             const float s = 0.5f * (branches[0].end + branches[1].end);
             shimmerHpState += shimmerHpCoef * (s - shimmerHpState);
-            shimmerFeed = shimmerGain * shifter.processSample (s - shimmerHpState);
+            const float hp = s - shimmerHpState;
+            shimmerFeed = 0.0f;
+            if (shimmerGain > 0.0f)  shimmerFeed += shimmerGain  * shifter.processSample (hp);
+            if (shimmerGain2 > 0.0f) shimmerFeed += shimmerGain2 * shifter2.processSample (hp);
         }
         else
         {
@@ -343,7 +354,12 @@ private:
         excursion = 24.0f * rateScale * std::clamp (settings.modDepth, 0.0f, 1.0f);
 
         shimmerHpCoef = 1.0f - (float) std::exp (-2.0 * pi * 400.0 / fs);
-        shimmerGain = std::clamp (settings.shimmer, 0.0f, 1.0f) * shimmerHeadroom * (float) (1.0 - loopGain);
+        // The two voices share the loop's headroom: their gains sum to at
+        // most what one voice at full amount gets.
+        const float a1 = std::clamp (settings.shimmer, 0.0f, 1.0f), a2 = std::clamp (settings.shimmer2, 0.0f, 1.0f);
+        const float budget = shimmerHeadroom * (float) (1.0 - loopGain) / std::max (1.0f, a1 + a2);
+        shimmerGain = a1 * budget;
+        shimmerGain2 = a2 * budget;
     }
 
     float absorb (Branch& br, float x, int /*branch*/, float freeze) noexcept
@@ -413,7 +429,7 @@ private:
 
     std::array<ModDelayLine, 4> diffusers;
     std::array<Branch, 2> branches;
-    SplicePitchShifter shifter;
+    SplicePitchShifter shifter, shifter2;
 
     std::array<float, 4> inputCoefs {};
     float bandCoef = 0.5f, bandState = 0.0f;
@@ -422,7 +438,7 @@ private:
     float freezeAmount = 0.0f, freezeStep = 0.001f;
     double lfoPhase = 0.0, modIncrement = 0.0;
     float excursion = 0.0f, driftCoef = 0.001f;
-    float shimmerGain = 0.0f, shimmerHpCoef = 0.05f, shimmerHpState = 0.0f, shimmerFeed = 0.0f;
+    float shimmerGain = 0.0f, shimmerGain2 = 0.0f, shimmerHpCoef = 0.05f, shimmerHpState = 0.0f, shimmerFeed = 0.0f;
     std::uint32_t rng = 0x5eed5eedu;
 };
 

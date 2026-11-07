@@ -15,7 +15,8 @@
          the tank keeps working afterwards.
       5. Freeze holds: after 4 s frozen the energy is within 3 dB of where it
          was, and it decays again once released.
-      6. Shimmer at full amount on a 20 s decay stays bounded (no runaway).
+      6. Shimmer at full amount on a 20 s decay stays bounded (no runaway),
+         with one voice and with two (an octave and a fifth) at full.
       7. reset() is bit-exact.
       8. Early reflections: the first tap arrives at its time, scaled by the
          time scale; the stairwell pattern is regular.
@@ -218,28 +219,35 @@ int main()
 
     std::printf ("6. Shimmer\n");
     {
-        fxme::TankReverb t;
-        auto s = plainSettings (20.0f, 2.0f);
-        s.shimmer = 1.0f;
-        s.hfRatio = 0.7f;
-        t.setSettings (s);
-        t.prepare (fs);
-        fxme::Random rng (9);
-        float l, r, peak = 0.0f;
-        bool finite = true;
-        double late = 0.0, early = 0.0;
-        for (int i = 0; i < 20 * 48000; ++i)
+        auto runShimmer = [] (float second)
         {
-            const float x = i < 24000 ? 0.5f * (rng.nextFloat() * 2.0f - 1.0f) : 0.0f;
-            t.process (x, x, l, r);
-            finite = finite && std::isfinite (l);
-            peak = std::max (peak, std::abs (l));
-            if (i >= 48000 && i < 96000) early += (double) l * l;
-            if (i >= 18 * 48000 && i < 19 * 48000) late += (double) l * l;
-        }
-        std::printf ("     peak %.2f, energy 1-2 s vs 18-19 s: %+.1f dB\n", peak, 10.0 * std::log10 (late / early));
-        check (finite && peak < 4.0f, "bounded");
-        check (late < early, "and decaying");
+            fxme::TankReverb t;
+            auto s = plainSettings (20.0f, 2.0f);
+            s.shimmer = 1.0f;
+            s.shimmer2 = second;
+            s.shimmerSemitones2 = 7.0f;
+            s.hfRatio = 0.7f;
+            t.setSettings (s);
+            t.prepare (fs);
+            fxme::Random rng (9);
+            float l, r, peak = 0.0f;
+            bool finite = true;
+            double late = 0.0, early = 0.0;
+            for (int i = 0; i < 20 * 48000; ++i)
+            {
+                const float x = i < 24000 ? 0.5f * (rng.nextFloat() * 2.0f - 1.0f) : 0.0f;
+                t.process (x, x, l, r);
+                finite = finite && std::isfinite (l);
+                peak = std::max (peak, std::abs (l));
+                if (i >= 48000 && i < 96000) early += (double) l * l;
+                if (i >= 18 * 48000 && i < 19 * 48000) late += (double) l * l;
+            }
+            std::printf ("     %s: peak %.2f, energy 1-2 s vs 18-19 s: %+.1f dB\n",
+                         second > 0.0f ? "two voices" : "one voice", peak, 10.0 * std::log10 (late / early));
+            return finite && peak < 4.0f && late < early;
+        };
+        check (runShimmer (0.0f), "one voice: bounded and decaying");
+        check (runShimmer (1.0f), "two voices: bounded and decaying");
     }
 
     std::printf ("7. Reset\n");

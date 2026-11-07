@@ -23,7 +23,8 @@ Additive. The two halves of an algorithmic reverb, for StairwellToHeaven:
   sampleRate)` gives the decay at any frequency for a display. Modulation
   (quadrature sine plus seeded drift), Freeze (losses ramped to unity, input
   muted, a soft limit as safety net), Shimmer (`SplicePitchShifter` in the
-  loop, gain scaled by the loop's headroom). `Settings` + `Voicing` (the
+  loop, gain scaled by the loop's headroom), with an optional second voice
+  (`shimmer2`, `shimmerSemitones2`) sharing that headroom. `Settings` + `Voicing` (the
   diffusion coefficients and input band-limit a mode chooses). About 5 % of
   a core at 48 kHz. Measured T30 within 1 to 12 % of the setting.
 - `fxme::EarlyReflections`: eight taps (time, gain, equal-power pan, a
