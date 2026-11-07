@@ -117,7 +117,7 @@ struct Value
 
 struct Prefix
 {
-    char type = 0;                     // o O v V p g G m # b ~
+    char type = 0;                     // o O v V p g G m # b
     Value value;
     double beats = 0.0;                // m
     int pos = 0;
@@ -167,6 +167,8 @@ struct Item
     GenSpec gen;                       // Generator
     std::vector<Item> what;            // Generator: what the hits play (one item)
     std::vector<Item> alt;             // the other branch of a probability (a step or a group)
+    char link = 0;                     // `~` or `^` written after it: it goes on into what follows
+    int linkPos = 0;
 };
 
 struct Compiled
@@ -177,7 +179,7 @@ struct Compiled
     Info info;
     bool ok = true;
     std::vector<Item> items;
-    bool pitched = false, multi = false, glides = false;
+    bool pitched = false, multi = false, glides = false, legato = false;
 };
 
 //==============================================================================
@@ -194,6 +196,8 @@ public:
         parseSequence (out.items, 0, 0);
         if (syn3 && quoteOpen >= 0)
             error (quoteOpen, "unbalanced '\"'");
+        if (syn3 && ! out.items.empty() && out.items.back().link != 0)
+            warn (out.items.back().linkPos, std::string ("nothing after '") + out.items.back().link + "': ignored (no link across passes)");
     }
 
 private:
@@ -249,7 +253,7 @@ private:
     {
         if (c == 'o' || c == 'O' || c == 'v' || c == 'V' || c == 'p' || c == '#' || c == 'b')
             return true;
-        return syn3 && (c == 'g' || c == 'G' || c == 'm' || c == '~');
+        return syn3 && (c == 'g' || c == 'G' || c == 'm');
     }
 
     bool isStepStart (char c) const noexcept
@@ -440,10 +444,6 @@ private:
         switch (pf.type)
         {
             case '#': case 'b':
-                pre.push_back (pf);
-                return true;
-            case '~':
-                out.glides = true;
                 pre.push_back (pf);
                 return true;
             case 'm':
@@ -776,6 +776,24 @@ private:
             }
             seen = true;
 
+            if (syn3 && (c == '~' || c == '^'))
+            {
+                // A link between the step before and the next one: it marks the step before.
+                if (! pre.empty())
+                    error (at, std::string ("'") + c + "' after a prefix: it links two steps (write it after a step)");
+                else if (items.empty())
+                    error (at, std::string ("'") + c + "' needs a sound before it");
+                else if (items.back().link != 0)
+                    error (at, "two links in a row");
+                else
+                {
+                    items.back().link = c;
+                    items.back().linkPos = at;
+                    (c == '~' ? out.glides : out.legato) = true;
+                }
+                ++at;
+                continue;
+            }
             if (isPrefixStart (c))
             {
                 parsePrefix (pre);
@@ -1030,7 +1048,6 @@ struct Pending
     float velocity = -1.0f;
     int accidental = 0;
     double gate = -1.0;
-    bool glide = false;
     bool forcedRest = false;
 };
 
@@ -1091,6 +1108,10 @@ private:
     double now = 0.0;
     bool tiedRun = true;               // no step but tied holds so far
     int cur = -1;                      // the event that sounds
+    Event::Link link = Event::Link::None;   // a `~` or `^` waiting for the next event
+    int linkFrom = -1;                 // the event it starts from
+    double linkStartBeat = 0.0;        // the onset of the step written before it
+    bool linkAcross = false;           // a rest came since
     double curHeld = 0.0, curGate = 1.0;
     std::uint64_t k = 0;
     bool full = false;
@@ -1208,7 +1229,6 @@ private:
                 break;
             }
             case 'm': noteValue = p.beats; break;
-            case '~': pend.glide = true; break;
             default: break;
         }
     }
@@ -1285,6 +1305,8 @@ private:
 
         if (act == Act::Rest || (act == Act::Hold && cur < 0))
         {
+            if (link != Event::Link::None)
+                linkAcross = true;
             // A hold before anything sounded in this pass belongs to the previous pass's last sound.
             const bool tied = act == Act::Hold && tiedRun;
             cur = -1;
@@ -1305,10 +1327,17 @@ private:
         const double g = pend.gate >= 0.0 ? pend.gate : gate;
         e.length = dur * g;
         e.velocity = pend.velocity >= 0.0f ? pend.velocity : velocity;
-        e.glide = pend.glide;
         e.firstNote = firstNote;
         e.noteCount = act == Act::Notes ? noteCount : 0;
         e.firstStep = static_cast<int> (out.steps.size());
+        if (link != Event::Link::None)
+        {
+            auto& from = out.events[uz (linkFrom)];
+            from.link = link;
+            from.linkStart = std::max (0.0, linkStartBeat - from.onset);
+            from.linkAcrossRest = linkAcross;
+            link = Event::Link::None;
+        }
         out.events.push_back (e);
         cur = static_cast<int> (out.events.size()) - 1;
         curHeld = dur;
@@ -1401,7 +1430,21 @@ private:
         {
             if (full) return;
             item (it, muted);
+            if (it.link != 0)
+                startLink (it.link);
         }
+    }
+
+    // `~` / `^` after an item: from the event sounding at its last step to the next event.
+    void startLink (char sign) noexcept
+    {
+        link = Event::Link::None;
+        if (cur < 0 || out.steps.empty())
+            return;   // it ended on a rest: nothing goes on
+        link = sign == '~' ? Event::Link::Glide : Event::Link::Legato;
+        linkFrom = cur;
+        linkStartBeat = out.steps.back().onset;
+        linkAcross = false;
     }
 
     static int countUnits (const std::vector<Item>& v) noexcept
@@ -1667,6 +1710,7 @@ inline Program compile (std::string_view text, const Options& options)
             Info& i = c.info;
             i.kind = c.multi ? Info::Kind::Chords : c.pitched ? Info::Kind::Melody : Info::Kind::Rhythm;
             i.glides = c.glides;
+            i.legato = c.legato;
             i.fixedLength = ! m.variable;
             i.lengthBeats = m.beats;
             i.shortestStepBeats = m.shortest;

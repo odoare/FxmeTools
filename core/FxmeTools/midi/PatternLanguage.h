@@ -78,7 +78,8 @@ struct Info
 {
     enum class Kind { Rhythm, Melody, Chords };
     Kind kind = Kind::Rhythm;
-    bool glides = false;               ///< it has `~`
+    bool glides = false;               ///< it has `~` (a glide between two steps)
+    bool legato = false;               ///< it has `^` (a legato between two steps)
     bool fixedLength = true;           ///< every pass lasts the same (false: syntax-2 probability groups of different lengths)
     double lengthBeats = 0.0;          ///< a pass's length when fixed
     double shortestStepBeats = 0.0;
@@ -105,7 +106,13 @@ struct Event
     double onset = 0.0;                ///< beats from the pass's start
     double length = 0.0;               ///< beats it sounds (its steps, holds included, times its gate)
     float velocity = -1.0f;            ///< 0..1; < 0: the host's (the text set none)
-    bool glide = false;                ///< `~`
+
+    /** How this event goes on into the next one (doc/pattern-language.md, links between steps):
+        `3~5` glides, `3^5` is legato. The next event is not attacked. */
+    enum class Link : unsigned char { None, Glide, Legato };
+    Link link = Link::None;
+    double linkStart = 0.0;            ///< Glide: beats from the onset to where the move starts (the step written before `~`)
+    bool linkAcrossRest = false;       ///< a rest lies between: a player of notes plays no link (the note ends), a player of values still glides
     int firstNote = 0, noteCount = 0;  ///< in Pass::notes; 0 notes: a hit
     int firstStep = 0;                 ///< the step (in Pass::steps) it starts on
 };

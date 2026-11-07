@@ -308,15 +308,97 @@ TEST_CASE("section 2: key-scale block")
 
 TEST_CASE("section 2: glide and plain numbers between quotes")
 {
-    Program prog = build ("~v'0.2' x . . v'0.9' x");
+    Program prog = build ("v'0.2' x~ . . v'0.9' x");
     REQUIRE (prog.ok());
     const Pass p = run (prog);
     REQUIRE (p.events.size() == 2);
-    CHECK (ev (p, 0).glide);
-    CHECK_FALSE (ev (p, 1).glide);
+    CHECK (ev (p, 0).link == Event::Link::Glide);
+    CHECK (ev (p, 0).linkStart == doctest::Approx (0.0));
+    CHECK (ev (p, 0).linkAcrossRest);                 // values glide over the rests; notes would not
+    CHECK (ev (p, 1).link == Event::Link::None);
     CHECK (ev (p, 0).velocity == doctest::Approx (0.2f));
     CHECK (ev (p, 1).velocity == doctest::Approx (0.9f));
     CHECK (prog.info().glides);
+    CHECK_FALSE (prog.info().legato);
+}
+
+TEST_CASE("links: ~ and ^ between two steps, the glide from the step before the sign")
+{
+    {
+        // 3 for three steps, then a glide over the last hold before `~` and the two after; 4 on step 7.
+        const Pass p = run ("3___~__4");
+        REQUIRE (p.events.size() == 2);
+        CHECK (ev (p, 0).link == Event::Link::Glide);
+        CHECK (ev (p, 0).linkStart == doctest::Approx (0.75));
+        CHECK_FALSE (ev (p, 0).linkAcrossRest);
+        CHECK (ev (p, 0).length == doctest::Approx (1.5));
+        CHECK (ev (p, 1).onset == doctest::Approx (1.5));
+    }
+    {
+        const Pass p = run ("3~5 1");
+        REQUIRE (p.events.size() == 3);
+        CHECK (ev (p, 0).link == Event::Link::Glide);
+        CHECK (ev (p, 0).linkStart == doctest::Approx (0.0));   // over 3's whole step
+        CHECK (ev (p, 1).link == Event::Link::None);
+    }
+    {
+        Program prog = build ("3^5^1 2");
+        REQUIRE (prog.ok());
+        CHECK (prog.info().legato);
+        const Pass p = run (prog);
+        CHECK (ev (p, 0).link == Event::Link::Legato);
+        CHECK (ev (p, 1).link == Event::Link::Legato);
+        CHECK (ev (p, 2).link == Event::Link::None);
+    }
+    {
+        // A rest between: the link is kept, marked, for players of notes to drop.
+        const Pass p = run ("3~ . 5");
+        CHECK (ev (p, 0).link == Event::Link::Glide);
+        CHECK (ev (p, 0).linkAcrossRest);
+    }
+    {
+        // After a group: from its last step; chords too.
+        const Pass p = run ("(1 2)~5 {135}__~_{246}");
+        REQUIRE (p.events.size() == 5);
+        CHECK (ev (p, 0).link == Event::Link::None);
+        CHECK (ev (p, 1).link == Event::Link::Glide);
+        CHECK (ev (p, 3).link == Event::Link::Glide);
+        CHECK (ev (p, 3).linkStart == doctest::Approx (0.5));
+    }
+    {
+        // A glide shorter than a step: a finer duration.
+        const Pass p = run ("(m32 3 _ _ _~) 5");
+        CHECK (ev (p, 0).linkStart == doctest::Approx (0.375));
+    }
+    {
+        // Ended on a rest (a probability that failed): nothing goes on.
+        const Pass p = run ("p0 3~5");
+        REQUIRE (p.events.size() == 1);
+        CHECK (ev (p, 0).link == Event::Link::None);
+    }
+}
+
+TEST_CASE("links: errors and warnings")
+{
+    auto firstError = [] (const std::string& text)
+    {
+        Program p = build (text);
+        for (const auto& d : p.diagnostics())
+            if (! d.warning)
+                return d.message;
+        return std::string();
+    };
+    CHECK (firstError ("~3 5").find ("needs a sound before it") != std::string::npos);
+    CHECK (firstError ("3 o5~ 4").find ("after a prefix") != std::string::npos);
+    CHECK (firstError ("3~^4").find ("two links in a row") != std::string::npos);
+    CHECK (firstError ("{1~3}") != "");
+    Program end = build ("1 2~");
+    CHECK (end.ok());
+    bool warned = false;
+    for (const auto& d : end.diagnostics())
+        warned = warned || (d.warning && d.message.find ("nothing after") != std::string::npos);
+    CHECK (warned);
+    CHECK (build ("3~5", 2).ok());   // syntax 2: still ignored characters
 }
 
 TEST_CASE("section 2: comments to the end of the line")
@@ -947,7 +1029,7 @@ TEST_CASE("Info: kind, glides, length, shortest step, bounds")
         CHECK (p.info().lengthBeats == doctest::Approx (1.0));
     }
     {
-        Program p = build ("1 {135} ~2");
+        Program p = build ("1 {135}~2");
         CHECK (p.info().kind == Info::Kind::Chords);
         CHECK (p.info().glides);
         CHECK (p.info().maxNotesPerPass == 5);

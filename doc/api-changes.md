@@ -11,6 +11,27 @@ project after a break.
 
 ---
 
+## Pattern language: `~` and `^` are links between two steps (2026-11-07)
+
+**Breaking for a host that read `Event::glide`** (none did: no player played it).
+In syntax 3, `~` (glide) and `^` (legato) are written **between** two steps, not as
+prefixes: `3~5`, `3^5`, `3___~__4`. The step written just before the sign is where a
+glide starts; the next sound is not attacked. `Event::glide` is replaced by
+`Event::link` (`None`, `Glide`, `Legato`), `Event::linkStart` (beats from the
+event's onset to where the move starts) and `Event::linkAcrossRest` (a rest lies
+between: players of notes drop the link, players of values still glide).
+`Info::legato` says a text has `^`. Errors: a sign with no step before it, after a
+prefix, two in a row; a sign at the end of the text is ignored with a warning (no
+link across passes). Syntax 2 is unchanged (the signs stay ignored characters).
+Design: Otomatotamoto's `doc/melody-generator.md` §11. Tests: "links: …".
+
+- TeAr: nothing breaks; `fxme::Arpeggiator` does not play links yet (to do: legato
+  as overlapping notes, glides as pitch bends).
+- Otomatotamoto: done (`host::HeldNotes`, the `steps` and `player` sources; the clip
+  carries the link). `tear` waits for `fxme::Arpeggiator`.
+
+---
+
 ## New: `dsp/TankReverb.h`, `dsp/EarlyReflections.h` (core) (2026-11-06)
 
 Additive. The two halves of an algorithmic reverb, for StairwellToHeaven:
