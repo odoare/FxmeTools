@@ -11,6 +11,24 @@ project after a break.
 
 ---
 
+## New: `midi/Mpe.h`, `midi/HeldNotes.h`, `midi/PassNotes.h`; `Arpeggiator` plays through them (2026-11-09)
+
+Additive, with one thing to do for a host of `Arpeggiator` that turns on MPE. Moved from Otomatotamoto so that every player of pattern passes shares them:
+
+- `fxme::MpeOut`, `fxme::MpeIn`: MPE both ways. The output is any object with `noteOn (time, channel, note, velocity)`, `noteOff (time, channel, note)`, `pitchBend (time, channel, value)`, `controller (time, channel, number, value)`, channels 0-based.
+- `fxme::HeldNotes`: a source's sounding notes, their ends, links `~` and `^`.
+- `pattern::playEvent`, `pattern::tiedBeats`: one event of a pass through `HeldNotes`, for any clock.
+- `Arpeggiator::setMpeOut (MpeOut*)`, off (`nullptr`) by default. Its notes go through `HeldNotes` on a beat clock of its step boundaries; the golden recordings are unchanged. It now plays links: with MPE, glides by bend; without, overlapping notes.
+- `ArpMidiEvent` gained `kind` (`Note`, `PitchBend`, `Controller`) and `value`. **Without `setMpeOut`, every event stays a `Note`.**
+
+Tests: `CoreMpeTests.cpp`, "with MPE: …" in `CoreArpeggiatorTests.cpp`.
+
+- TeAr: nothing to do until it wants MPE: `doc/mpe-plan.md` in TeAr. A host that turns it on must read `kind`.
+- Camshaft: `fxme::MpeIn` when it wants MPE: `doc/mpe-plan.md` in Camshaft.
+- Otomatotamoto: done; `tear` no longer uses `Arpeggiator`.
+
+---
+
 ## Pattern language: `~` and `^` are links between two steps (2026-11-07)
 
 **Breaking for a host that read `Event::glide`** (none did: no player played it).
@@ -25,10 +43,8 @@ prefix, two in a row; a sign at the end of the text is ignored with a warning (n
 link across passes). Syntax 2 is unchanged (the signs stay ignored characters).
 Design: Otomatotamoto's `doc/melody-generator.md` §11. Tests: "links: …".
 
-- TeAr: nothing breaks; `fxme::Arpeggiator` does not play links yet (to do: legato
-  as overlapping notes, glides as pitch bends).
-- Otomatotamoto: done (`host::HeldNotes`, the `steps` and `player` sources; the clip
-  carries the link). `tear` waits for `fxme::Arpeggiator`.
+- TeAr: nothing breaks. `fxme::Arpeggiator` plays links since 2026-11-09 (above).
+- Otomatotamoto: done (the `steps`, `player` and `tear` sources; the clip carries the link).
 
 ---
 

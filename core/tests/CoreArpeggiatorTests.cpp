@@ -1486,3 +1486,91 @@ TEST_CASE("syncToPlayHead anchors a syntax-3 pass to the song")
     mid.syncToPlayHead (8.0625);           // 1/16 beat in: the second note is 1/16 beat away, 25 samples
     CHECK (mid.getSamplesUntilNextNote() == doctest::Approx (25.0));
 }
+
+// ---------------------------------------------------------------------------
+// Links and MPE (syntax 3)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    struct Heard
+    {
+        int ons = 0, offs = 0, bends = 0, controllers = 0;
+        std::set<int> channels;
+        int lastBend = 0;
+    };
+
+    Heard play (Arpeggiator& arp, int samples)
+    {
+        Heard p;
+        for (const auto& e : arp.processBlock (samples, 3))
+        {
+            if (e.kind == fxme::ArpMidiEvent::Kind::PitchBend) { ++p.bends; p.lastBend = e.value; }
+            else if (e.kind == fxme::ArpMidiEvent::Kind::Controller) ++p.controllers;
+            else if (e.noteOn) { ++p.ons; p.channels.insert (e.channel); }
+            else ++p.offs;
+        }
+        return p;
+    }
+
+    void linked (Arpeggiator& arp, const char* text)
+    {
+        setup (arp, "1");
+        arp.setPatternSyntax (3);
+        arp.setPattern (text);
+        arp.setTempo (60.0);   // a beat is 1000 samples
+    }
+}
+
+TEST_CASE("without MPE: only notes, on the channel asked for; a link overlaps them")
+{
+    Arpeggiator arp;
+    linked (arp, "m4 1~3 . .");
+    int previous = -1;
+    bool overlap = false;
+    for (const auto& e : arp.processBlock (1500, 3))
+    {
+        CHECK (e.kind == fxme::ArpMidiEvent::Kind::Note);
+        CHECK (e.channel == 3);
+        if (e.noteOn)
+            previous = e.note;
+        else
+            overlap = overlap || previous != e.note;   // the next note came first
+    }
+    CHECK (overlap);
+}
+
+TEST_CASE("with MPE: a glide is one attack and a moving bend; a legato one attack; engines share the channels")
+{
+    fxme::MpeOut mpe;   // on
+    {
+        Arpeggiator arp;
+        linked (arp, "m4 1~3 . .");
+        arp.setMpeOut (&mpe);
+        const auto p = play (arp, 1500);
+        CHECK (p.ons == 1);
+        CHECK (p.controllers == 6 * 16);       // the zone announced
+        CHECK (p.bends > 60);                  // a point every 1/64 beat, and the arrival
+        CHECK (p.lastBend == fxme::MpeOut::bendValue (7.0f));   // C to G: degree 3 of the triad
+        CHECK_FALSE (p.channels.count (3));    // not the plain channel: a member's
+    }
+    {
+        Arpeggiator arp;
+        linked (arp, "m4 1^3 . .");
+        arp.setMpeOut (&mpe);
+        const auto p = play (arp, 1500);
+        CHECK (p.ons == 1);
+        CHECK (p.bends == 2);                  // the note's, and the jump
+    }
+    {
+        Arpeggiator a, b;
+        linked (a, "m4 1 _ _ _");
+        linked (b, "m4 3 _ _ _");
+        a.setMpeOut (&mpe);
+        b.setMpeOut (&mpe);
+        const auto pa = play (a, 100), pb = play (b, 100);
+        REQUIRE (pa.channels.size() == 1);
+        REQUIRE (pb.channels.size() == 1);
+        CHECK (*pa.channels.begin() != *pb.channels.begin());
+    }
+}

@@ -13,7 +13,8 @@
     pattern language's passes (PatternLanguage.h): the text is compiled to a
     pattern::Program, the program realizes one pass at a time (timed events with
     notes as scale degrees), and the engine maps the degrees to MIDI notes
-    through its chords and plays the events on its own clock. Random choices
+    through its chords and plays the events on its own clock, through HeldNotes and
+    PassNotes.h (links `~`, `^`; MPE with setMpeOut()). Random choices
     ('?', 'pN', 'v?', 'o?') are draws of the pass's seed: setSeed() makes them
     reproducible.
 
@@ -30,6 +31,7 @@
 #pragma once
 
 #include <FxmeTools/midi/MidiTools.h>
+#include <FxmeTools/midi/PassNotes.h>
 #include <FxmeTools/midi/PatternLanguage.h>
 #include <FxmeTools/util/ArrayView.h>
 #include <FxmeTools/util/Math.h>
@@ -51,14 +53,19 @@
 namespace fxme
 {
 
-/** One MIDI event of an arpeggiator, at a sample offset in the block. */
+/** One MIDI event of an arpeggiator, at a sample offset in the block. Without MPE
+    (setMpeOut()) every event is a note. */
 struct ArpMidiEvent
 {
+    enum class Kind { Note, PitchBend, Controller };
+
     int sample = 0;          ///< offset in the block
     int channel = 1;         ///< 1..16
-    int note = 0;            ///< 0..127
+    int note = 0;            ///< 0..127; Controller: its number
     int velocity = 0;        ///< 1..127 for a note-on, 0 for a note-off
     bool noteOn = false;
+    Kind kind = Kind::Note;
+    int value = 0;           ///< PitchBend: -8192..8191; Controller: 0..127
 };
 
 /**
@@ -297,7 +304,7 @@ public:
         // 512 events is well beyond what one block of the fastest subdivision
         // can produce; if some pathological block ever exceeds it, the vector
         // grows once and then stays grown.
-        outEvents.reserve (512);
+        outEvents.reserve (1024);   // MPE announces its zone in 96 controllers
     }
 
     //=========================================================================
@@ -357,16 +364,31 @@ public:
 
             // Sleep until the next thing: the step boundary or a note-off.
             double wait = samplesUntilNextStep;
-            for (int i = 0; i < soundingCount; ++i)
-                wait = std::min (wait, samplesUntilNextStep + sounding[(std::size_t) i].endRel * samplesPerBeat);
+            if (held.sounding() > 0)
+                wait = std::min (wait, samplesUntilNextStep + (held.nextEnd() - boundaryBeat) * samplesPerBeat);
 
             // Always advance, even if the wait rounds to nothing.
             const int advance = fxme::jmin (numSamples - time, fxme::jmax (1, (int) std::ceil (wait - timeTolerance)));
+
+            // The glides' bend points in what is about to pass.
+            if (held.sounding() > 0 && mpeOut().mpe())
+            {
+                const double beat = boundaryBeat - samplesUntilNextStep / samplesPerBeat;
+                Output out { *this, time, beat };
+                held.glide (out, mpeOut(), beat, beat + advance / samplesPerBeat);
+            }
             time += advance;
             samplesUntilNextStep -= advance;
         }
         return outEvents;
     }
+
+    /** Sends the notes as MPE through `shared` (several engines on one MIDI output share one, so
+        that their notes get channels of their own), which then decides whether MPE is on; nullptr:
+        back to plain notes on the channel given to processBlock(). With MPE, processBlock() also
+        returns pitch bends and controllers (ArpMidiEvent::kind). Links `~` and `^` then glide; without
+        MPE they overlap the notes. Change it between blocks, after turnOff(). */
+    void setMpeOut (MpeOut* shared) noexcept { sharedMpe = shared; }
 
     /** Returns the number of samples remaining until the next step boundary. */
     double getSamplesUntilNextNote() const
@@ -1164,18 +1186,52 @@ private:
     // The player. `currentPass` is the realized pass being played, `nextStep` the
     // step that starts at the next boundary (== the number of steps when the pass is over:
     // the boundary then starts the next pass). `samplesUntilNextStep` counts down to that
-    // boundary. A sounding note remembers when it ends in beats *after that boundary*
-    // (negative: before it), so it needs no correction when the pass changes.
+    // boundary. `boundaryBeat` is that boundary on a clock of beats that only the steps move: a
+    // sounding note ends at a date on that clock, so it needs no correction when the pass
+    // changes, and a tempo change moves what is left of it.
 
-    static constexpr int maxSounding = 32;            ///< notes that sound at once (chords, ties)
     static constexpr double timeTolerance = 1.0e-6;   ///< samples; beats for the ends of notes
 
-    struct Sounding { int note = 0; int channel = 1; double endRel = 0.0; };
+    /** Where HeldNotes and MpeOut write: into outEvents, at this sample. */
+    struct Output
+    {
+        Arpeggiator& arp;
+        int time = 0;
+        double beat = 0.0;    // the date of `time`: a glide's points fall after it
+
+        int sampleOf (double date) const noexcept
+        {
+            return date <= beat ? time : time + (int) std::lround ((date - beat) * arp.samplesPerBeat);
+        }
+        void noteOn (double, int channel, int note, int velocity)
+        {
+            arp.outEvents.push_back ({ time, channel + 1, note, velocity, true });
+            arp.lastPlayedMidiNote = note;
+            arp.noteOnCounter.bump();
+        }
+        void noteOff (double, int channel, int note)
+        {
+            arp.outEvents.push_back ({ time, channel + 1, note, 0, false });
+            if (arp.lastPlayedMidiNote == note)
+                arp.lastPlayedMidiNote = -1;
+        }
+        void pitchBend (double date, int channel, int value)
+        {
+            arp.outEvents.push_back ({ sampleOf (date), channel + 1, 0, 0, false, ArpMidiEvent::Kind::PitchBend, value });
+        }
+        void controller (double, int channel, int number, int value)
+        {
+            arp.outEvents.push_back ({ time, channel + 1, number, 0, false, ArpMidiEvent::Kind::Controller, value });
+        }
+    };
+
+    MpeOut& mpeOut() noexcept { return sharedMpe != nullptr ? *sharedMpe : ownMpe; }
 
     void initialise (StringRef text)
     {
         baseSeed = pattern::mix (static_cast<std::uint64_t> (rng.getSeed()));
-        outEvents.reserve (512);
+        outEvents.reserve (1024);
+        ownMpe.setMpe (false);
         pattern.assign (text.data(), text.length());
         compilePattern();
     }
@@ -1277,17 +1333,9 @@ private:
 
         if (! continuing)
             return;
-        double tied = 0.0;
-        for (const pattern::Step& s : currentPass.steps)
-        {
-            if (! s.tied)
-                break;
-            tied += s.duration;
-        }
+        const double tied = pattern::tiedBeats (currentPass);
         if (tied > 0.0)
-            for (int i = 0; i < soundingCount; ++i)
-                if (sounding[(std::size_t) i].endRel >= -timeTolerance)
-                    sounding[(std::size_t) i].endRel += tied;
+            held.extend (boundaryBeat - timeTolerance, tied);
     }
 
     /** The step boundary has come (and its pass is ready): start its events and set the next boundary. */
@@ -1313,34 +1361,22 @@ private:
 
         const double duration = std::max (step.duration, 1.0e-9);
         samplesUntilNextStep += duration * samplesPerBeat;
-        for (int i = 0; i < soundingCount; ++i)
-            sounding[(std::size_t) i].endRel -= duration;
+        boundaryBeat += duration;
     }
 
     void startEvent (const pattern::Event& e, int time, int midiChannel)
     {
         if (e.length <= 0.0)
             return;
-        for (int k = 0; k < e.noteCount; ++k)
-        {
-            const int midi = midiNoteFor (currentPass.notes[(std::size_t) (e.firstNote + k)]);
-            // A note outside 0..127 is not emitted, and is not remembered either:
-            // there would be no note-off to send for it.
-            if (midi < 0 || midi > 127 || soundingCount >= maxSounding)
-                continue;
-            bool again = false;
-            for (int i = 0; i < soundingCount; ++i)
-                again = again || (sounding[(std::size_t) i].note == midi && sounding[(std::size_t) i].channel == midiChannel);
-            if (again)
-                continue;
-
-            const int velocity = e.velocity < 0.0f ? playedVelocity
-                                                   : fxme::jlimit (1, 127, (int) std::lround (e.velocity * 127.0f));
-            outEvents.push_back ({ time, midiChannel, midi, velocity, true });
-            sounding[(std::size_t) soundingCount++] = { midi, midiChannel, e.length };
-            lastPlayedMidiNote = midi;
-            noteOnCounter.bump();
-        }
+        const int velocity = e.velocity < 0.0f ? playedVelocity
+                                               : fxme::jlimit (1, 127, (int) std::lround (e.velocity * 127.0f));
+        Output out { *this, time, boundaryBeat };
+        mpeOut().setChannel (midiChannel - 1);
+        // A note already sounding rings on. A note outside 0..127 is not emitted, and is not
+        // remembered either: there would be no note-off to send for it.
+        pattern::playEvent (held, mpeOut(), out, currentPass, e, boundaryBeat, boundaryBeat, boundaryBeat + e.length, velocity, -1.0f,
+                            [this] (const pattern::Note& n, double) { return static_cast<float> (midiNoteFor (n)); },
+                            HeldNotes::SameNote::Keep);
     }
 
     /** The MIDI note of a pattern note: its degree through the chord (or the root chord, for the
@@ -1363,36 +1399,14 @@ private:
     /** Note-offs for the notes whose end has come. @return true if there was any. */
     bool releaseDueNotes (int time)
     {
-        bool any = false;
-        for (int i = 0; i < soundingCount;)
-        {
-            const Sounding s = sounding[(std::size_t) i];
-            if (samplesUntilNextStep + s.endRel * samplesPerBeat <= timeTolerance)
-            {
-                release (i, time);
-                any = true;
-            }
-            else
-                ++i;
-        }
-        return any;
-    }
-
-    void release (int index, int time)
-    {
-        const Sounding s = sounding[(std::size_t) index];
-        outEvents.push_back ({ time, s.channel, s.note, 0, false });
-        for (int j = index + 1; j < soundingCount; ++j)
-            sounding[(std::size_t) (j - 1)] = sounding[(std::size_t) j];
-        --soundingCount;
-        if (lastPlayedMidiNote == s.note)
-            lastPlayedMidiNote = -1;
+        Output out { *this, time, boundaryBeat };
+        return held.releaseDue (out, mpeOut(), boundaryBeat + (timeTolerance - samplesUntilNextStep) / samplesPerBeat) > 0;
     }
 
     void releaseAllNotes()
     {
-        while (soundingCount > 0)
-            release (0, 0);
+        Output out { *this, 0, boundaryBeat };
+        held.silence (out, mpeOut(), boundaryBeat);
         lastPlayedMidiNote = -1;
     }
 
@@ -1441,8 +1455,10 @@ private:
     int passIndex = 0;                        ///< chooses the parts of [a|b]; restarts with the pattern
     std::uint64_t baseSeed = 0, seedCounter = 0;   ///< pass k draws from mix (baseSeed ^ mix (k))
 
-    std::array<Sounding, maxSounding> sounding {};
-    int soundingCount = 0;
+    HeldNotes held;
+    double boundaryBeat = 0.0;                ///< the next step boundary, on the clock the notes' ends are dated on
+    MpeOut ownMpe;                            ///< off: plain notes, unless setMpeOut() gives a shared one
+    MpeOut* sharedMpe = nullptr;
 
     // What GUI threads read about the step that played last (plain ints, as before).
     int shownStep = -1, shownSourceStart = 0, shownSourceEnd = 0;

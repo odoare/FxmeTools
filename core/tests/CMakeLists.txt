@@ -180,3 +180,12 @@ target_compile_options(FxmeCorePatternLanguageTests PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow>)
 add_test(NAME FxmeCorePatternLanguageTests COMMAND FxmeCorePatternLanguageTests)
+
+# ── MPE and the notes of passes (midi/Mpe.h, HeldNotes.h, PassNotes.h) ─────
+add_executable(FxmeCoreMpeTests CoreMpeTests.cpp)
+target_link_libraries(FxmeCoreMpeTests PRIVATE FxmeCore)
+target_include_directories(FxmeCoreMpeTests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+target_compile_options(FxmeCoreMpeTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow>)
+add_test(NAME FxmeCoreMpeTests COMMAND FxmeCoreMpeTests)
