@@ -150,6 +150,11 @@ add_executable(FxmeCoreReverbTests CoreReverbTests.cpp)
 target_link_libraries(FxmeCoreReverbTests PRIVATE FxmeCore)
 add_test(NAME FxmeCoreReverbTests COMMAND FxmeCoreReverbTests)
 
+# ── 10. Sample-rate conversion: Resampler, ResamplingContainer ─────────────
+add_executable(FxmeCoreResamplerTests CoreResamplerTests.cpp)
+target_link_libraries(FxmeCoreResamplerTests PRIVATE FxmeCore)
+add_test(NAME FxmeCoreResamplerTests COMMAND FxmeCoreResamplerTests)
+
 # Written with doctest, unlike the tests above; fetched at configure time and
 # scoped to this one executable.
 include(FetchContent)

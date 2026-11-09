@@ -78,6 +78,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/EarlyReflections.h>)
  #include <FxmeTools/dsp/EarlyReflections.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/dsp/Resampler.h>)
+ #include <FxmeTools/dsp/Resampler.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/dsp/DelayLine.h>)
  #include <FxmeTools/dsp/DelayLine.h>
 #endif

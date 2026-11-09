@@ -1,6 +1,6 @@
 # Neural amp models in FxmeTools: plan
 
-Status: decided, 2026-11-09; phase 0 (measurement) done the same day, nothing else written yet. The project (the FxmeFX
+Status: decided, 2026-11-09; phase 0 (measurement) and phase 1 (`dsp/Resampler.h`) done the same day; `FxmeNeural` not written yet. The project (the FxmeFX
 effect FxmeNeuralAmp, its phases, the decisions) is section 6 of FxmeFX's
 `todo.md`;
 this note is the shared library's side, for whoever picks it up from any
@@ -144,13 +144,20 @@ namespace fxme::neural
 - **Calibration:** input in dBu as the model expects, the recommended
   adjustments applied, so models of different loudness come out comparable.
 
-## `fxme::Resampler` (FxmeCore)
+## `fxme::Resampler` (FxmeCore): done (phase 1)
 
-JUCE-free, polyphase windowed-sinc (or Lanczos, as NAM's own plugin does
-through AudioDSPTools' `ResamplingContainer`), arbitrary ratio, fixed
-latency, no allocation after `prepare()`. Tested: flat to 20 kHz at 44.1 to
-48 kHz, aliasing rejection, latency exact. Useful beyond neural models (any
-fixed-rate kernel in a host at another rate).
+`core/FxmeTools/dsp/Resampler.h`: `Resampler` (one direction, any ratio)
+and `ResamplingContainer` (the round trip around a fixed-rate process:
+`process (io, n, inner)`, exactly `n` host samples back, an exact integer
+latency, a pass-through at equal rates). Polyphase windowed sinc (Kaiser,
+64 zero crossings, cutoff 0.952 of the lower Nyquist, 256 phases
+interpolated), vectorised without fast-math. Measured in
+`CoreResamplerTests`: round trip error -100 dB, flat to 20 kHz at 44.1 kHz,
+aliasing under -100 dB, any block sizes; 0.3 to 0.55 % of a core at
+44.1 kHz, 1 to 2 % at 192 kHz; latency 139 samples at 44.1 kHz, 275 at
+96 kHz. `NeuralAmpEngine` wraps its model in a `ResamplingContainer`; the
+container's maximum inner block is what the loader's
+`SetDefaultMaxAudioBufferSize` gets.
 
 ## Tests (CoreNeuralTests)
 

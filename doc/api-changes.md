@@ -48,6 +48,30 @@ Design: Otomatotamoto's `doc/melody-generator.md` §11. Tests: "links: …".
 
 ---
 
+## New: `dsp/Resampler.h` (core) (2026-11-09)
+
+Additive. JUCE-free sample-rate conversion, no allocation after `prepare()`:
+
+- `fxme::Resampler`: one direction, streaming, any ratio (rational or not):
+  `process (in, numIn, out)` returns the outputs completed; each output is
+  the input band-limited and read at exactly its own time. Polyphase
+  windowed sinc (Kaiser, beta 9, 64 zero crossings, cutoff 0.952 of the
+  lower Nyquist, 256 phases linearly interpolated), vectorised without
+  fast-math.
+- `fxme::ResamplingContainer`: the round trip around a process that must
+  run at a fixed rate: `process (io, n, inner)` calls `inner (in, out, m)`
+  at the inner rate and returns exactly `n` host samples, delayed by
+  `getLatencySamples()`, an exact integer (so a dry / wet mix lines up to
+  the sample). A pass-through with no latency at equal rates.
+
+Measured (`core/tests/CoreResamplerTests.cpp`): round trip error -100 dB,
+flat to 20 kHz at 44.1 kHz, aliasing under -100 dB, any block sizes, the
+round trip around 48 kHz 0.3 to 0.55 % of one core at 44.1 kHz and 1 to 2 %
+at 192 kHz; latency 139 samples at 44.1 kHz, 275 at 96 kHz.
+
+First user: FxmeNeuralAmp (`doc/neural-plan.md`), where the model always
+runs at its own rate. Usable anywhere a fixed-rate kernel meets a host.
+
 ## New: `dsp/TankReverb.h`, `dsp/EarlyReflections.h` (core) (2026-11-06)
 
 Additive. The two halves of an algorithmic reverb, for StairwellToHeaven:
