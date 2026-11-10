@@ -1,6 +1,6 @@
 # Neural amp models in FxmeTools: plan
 
-Status: decided, 2026-11-09; phase 0 (measurement) and phase 1 (`dsp/Resampler.h`) done the same day; `FxmeNeural` not written yet. The project (the FxmeFX
+Status: decided, 2026-11-09; phase 0 (measurement), phase 1 (`dsp/Resampler.h`) and phase 2 (`FxmeNeural`, `neural/`) done the same day; phase 3, the FxmeFX effect FxmeNeuralAmp, done 2026-11-10 (released plugins built for x86-64-v3); next, Otomato (phase 4). The project (the FxmeFX
 effect FxmeNeuralAmp, its phases, the decisions) is section 6 of FxmeFX's
 `todo.md`;
 this note is the shared library's side, for whoever picks it up from any
@@ -39,6 +39,67 @@ in the design:
   (i7-10810U); block size hardly matters.
 - The test models NeuralAudio ships are CC BY-NC-ND: the golden test needs
   another model.
+
+## Phase 2 outcome (2026-11-09)
+
+`neural/` as planned (`ModelData.h`, `ModelLoader.h/.cpp`,
+`NeuralAmpEngine.h/.cpp`, `fxmetools_attach_neural`), tests in
+`neural/tests/CoreNeuralTests.cpp`, all passing. What the implementation
+found:
+
+- **Test models: NAM Core's `example_models`** (MIT, in the NeuralAudio
+  tree the build already has, read in place, nothing copied):
+  `wavenet.nam` (small WaveNet), `lstm.nam`, `wavenet_a1_standard.nam`,
+  `A2.nam`. The golden test compares our default backend with NAM Core
+  itself (`LoadOptions::forceNamCore`): identical (-142 dB to bit-exact).
+  Local models of any licence (the Boss set) only feed the bench, through
+  `FXME_NAM_MODELS=<dir>`, never the repository. No need to train our own.
+- **LSTMs to NAM Core** need the *WaveNet* load mode set to NAM Core: at
+  this NeuralAudio commit the LSTM mode only chooses between its own LSTMs.
+  The loader reads the architecture first and does so.
+- **NAM Core's architectures register through static objects**, which a
+  static-library link drops when nothing references their file
+  ("No config parser registered for architecture: LSTM"). `NamRegistry.cpp`
+  takes the address of each `create_config`, which pulls them in for every
+  consumer.
+- **NeuralAudio's WaveNets allocated on every block** (Eigen temporaries:
+  a product inside a sum with the bias, and `const MatrixXf&` parameters
+  given maps): 30 to 90 malloc/free pairs per block. Fixed in
+  our fork's commit `2aeff04` (product, then bias;
+  `Eigen::Ref` parameters); with it, no allocation or free at all in
+  `process()`, swaps included, every model, every rate (the test counts
+  malloc and free). In our fork, https://github.com/odoare/NeuralAudio
+  (branch `fxme-no-audio-alloc`), which every consumer pins; a pull request
+  to mikeoliphant/NeuralAudio once FxmeNeuralAmp's first version is done.
+- **A new model starts from an empty history**: silent for its latency,
+  then the signal at once. The engine runs it unheard for its latency +
+  10 ms before the 20 ms crossfade (without: a step 3 x the signal's own).
+- **Instruction set** (`FXME_NEURAL_ARCH`), CPU % of one core, one mono
+  model at 48 kHz, i7-10810U, two runs:
+
+  | Model | x86-64 (SSE2) | x86-64-v3 (AVX2, FMA) |
+  |---|---:|---:|
+  | WaveNet nano (Boss) | 0.9 to 1.0 | 0.6 to 0.7 |
+  | WaveNet feather (Boss) | 3.0 to 3.2 | 1.9 to 2.3 |
+  | WaveNet standard (Boss) | 9.8 to 11 | 5.5 to 6.1 |
+  | WaveNet A2 (Boss) | 14.6 to 16.5 | 9.8 to 10.8 |
+  | LSTM 1x16, 2x8 (Boss) | 1.0 to 1.3 | 0.55 to 0.75 |
+
+  The phase 0 figures were `-march=native` (and `MULTIFRAME_8X8_CONVOLUTION`
+  0, NeuralAudio's default with GCC 13; 8 makes the A2 models 2 to 3 x
+  slower with GCC 13). At 44.1 and 96 kHz add the resampler (0.3 to 1 %).
+  Load times 0.1 to 10 ms.
+- **Latency**: the same for every model at a given host rate (the round
+  trip to 48 kHz), and for "no model" (dry, delayed the same): 0 at
+  48 kHz, 139 samples at 44.1 kHz, 275 at 96 kHz. A model trained at
+  another rate is padded to it (or late by the difference when its own
+  round trip is longer).
+
+Decided 2026-11-10: the fix lives in our fork, pinned, and goes upstream
+after FxmeNeuralAmp v1; the released plugins are built for x86-64-v3
+(`fxmefx_attach_neural`), with a CPU check. Was to decide: `FXME_NEURAL_ARCH` for the released plugins
+(x86-64-v3 halves the cost; a CPU older than 2013 could not load the plugin
+at all, or the effect would have to check the CPU and refuse to run).
 
 ## Goal
 
@@ -97,8 +158,9 @@ optional fallback (`-DBUILD_NAMCORE=ON`). NeuralAudio:
   write the embedded model to a temporary file, or load through NAM Core's
   JSON entry point).
 
-Pinned with `fxme_dependency (NeuralAudio ... SIBLING NeuralAudio)` in each
-top-level consumer, submodules included. Behind our interface, so the
+Pinned with `fxme_dependency (NeuralAudio https://github.com/odoare/NeuralAudio
+<sha> SIBLING NeuralAudio)` in each top-level consumer, submodules
+included: our fork, until its fixes are merged upstream. Behind our interface, so the
 backend can change without touching a consumer.
 
 ## The interface (first proposal)
@@ -161,8 +223,8 @@ container's maximum inner block is what the loader's
 
 ## Tests (CoreNeuralTests)
 
-- Golden output: a model we may redistribute (trained by us, small), its
-  output for a fixed input compared with NAM Core's to a tolerance.
+- Golden output: NAM Core's example models (MIT), our backend's output for
+  a fixed input compared with NAM Core's (done, see Phase 2 outcome).
 - A model swap under a running sine: no step larger than the signal's own.
 - 44.1, 48 and 96 kHz: same response within the resampler's tolerance.
 - No allocation in `process()` (a counting allocator in the test).

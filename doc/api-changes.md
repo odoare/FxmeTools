@@ -48,6 +48,74 @@ Design: Otomatotamoto's `doc/melody-generator.md` §11. Tests: "links: …".
 
 ---
 
+## New: `presets/EmbeddedData.h`; FxmeNeural: CPU check, size class, per-platform `FXME_NEURAL_ARCH` (2026-11-10)
+
+Additive.
+
+- `fxme::EmbeddedData` (JUCE module, beside `EmbeddedAudio` and
+  `EmbeddedImage`): any file's bytes in a state tree (`embed`, `embedFile`,
+  `read`, `hasEmbedded`, `getEmbeddedName`, `getStoredSize`,
+  `removeEmbedded`), deflated and Base64, exact round trip; or on an element
+  of the caller's (`writeEntry` / `readEntry`, e.g. a module preset's
+  `<Extra>`). First user: FxmeNeuralAmp, which keeps its model this way.
+- `ModelInfo::sizeClass` ("Nano", "Feather", "Lite", "Standard", "A2",
+  "LSTM 1x16"...) and `cpuClass()` (light, medium, heavy), from the config.
+- `ModelLoader::isCpuSupported()`: with `FXME_NEURAL_ARCH` set on x86, a
+  CPU without AVX2 / FMA gets `load()` refusing every model with a message,
+  instead of an illegal instruction.
+- `FXME_NEURAL_ARCH` per platform: `-march` on Linux x86, `/arch:AVX2` on
+  MSVC, only the `x86_64` slice of a macOS universal build
+  (`-Xarch_x86_64`); ignored on ARM.
+- macOS: FxmeNeural raises its consumer to 10.15 (NeuralAudio uses
+  `std::filesystem`), whatever `CMAKE_OSX_DEPLOYMENT_TARGET` says.
+
+- FxmeFX: FxmeNeuralAmp uses all of it (`fxmefx_attach_neural`, which
+  defaults `FXME_NEURAL_ARCH` to `x86-64-v3`).
+
+---
+
+## New: `FxmeNeural`, neural amp models (optional target) (2026-11-09)
+
+Additive, and invisible to anyone who does not ask for it: a new, optional,
+JUCE-free target beside FxmeCore, `neural/` (include root, same spelling
+`<FxmeTools/neural/...>`), added by `fxmetools_attach_neural (<target>)`.
+It plays NAM models (`.nam`: WaveNet A1 and A2, LSTM) and Keras models
+(`.json`, through RTNeural), on NeuralAudio (MIT), pinned by the consumer:
+`fxme_dependency (NeuralAudio https://github.com/odoare/NeuralAudio <sha> SIBLING NeuralAudio)`
+(our fork of mikeoliphant/NeuralAudio, until the fix below is merged upstream)
+(else a sibling clone, else the pin in `neural/CMakeLists.txt`).
+
+- `fxme::neural::ModelData` (the file's bytes and name, kept in a session as
+  they are), `ModelInfo` (metadata: name, gear, rate, loudness, input level).
+- `ModelLoader::readInfo`, `ModelLoader::load (data, hostRate, maxBlock)`
+  (not real time: 0.1 to 10 ms) returning a `PreparedModel` or an error;
+  `makeDry`, `nominalLatency (hostRate)`.
+- `NeuralAmpEngine` (mono): `prepare`, `install (model)` from any non-audio
+  thread (lock-free; pre-roll, then a 20 ms crossfade, no click),
+  `unload`, `collectGarbage` (retired models are freed off the audio
+  thread), calibration (input level in dBu, output loudness to -18 dB),
+  `process` (no allocation, no free, no lock; NaN-proof).
+- The model always runs at the rate it was trained at, inside
+  `fxme::ResamplingContainer`; the latency is the same for every model at a
+  host rate (0 at 48 kHz, 139 samples at 44.1 kHz, 275 at 96 kHz).
+- `FXME_NEURAL_ARCH` (cache): the networks' instruction set. Empty (the
+  compiler's default) runs everywhere; `x86-64-v3` (AVX2, FMA) halves the
+  WaveNets' cost and needs a CPU from 2013 on.
+
+Tests: `neural/tests/CoreNeuralTests.cpp` (on NAM Core's MIT example models,
+read in place; `FXME_NAM_MODELS=<dir>` adds local models to the bench).
+
+**Needs a NeuralAudio fix** (odoare/NeuralAudio `2aeff04`, branch `fxme-no-audio-alloc`, the pin in `neural/CMakeLists.txt`):
+upstream (`b98dfbd`, 2026-10-09) its WaveNets allocate on every block
+(Eigen temporaries). The test fails without the fix. It lives in our fork,
+odoare/NeuralAudio, branch `fxme-no-audio-alloc`, proposed upstream once
+FxmeNeuralAmp's first version is done; pin a commit of that branch.
+
+- FxmeFX: phase 3 of its `todo.md` section 6 (FxmeNeuralAmp).
+- Otomato, Camshaft, Mechanodd: nothing until they want it.
+
+---
+
 ## New: `dsp/Resampler.h` (core) (2026-11-09)
 
 Additive. JUCE-free sample-rate conversion, no allocation after `prepare()`:

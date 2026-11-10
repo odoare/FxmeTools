@@ -23,6 +23,7 @@
 #include "threading/BackgroundTaskRunner.cpp"
 #include "presets/EmbeddedAudio.cpp"
 #include "presets/EmbeddedImage.cpp"
+#include "presets/EmbeddedData.cpp"
 #include "presets/PresetManager.cpp"
 #include "presets/ModulePresetLibrary.cpp"
 #include "presets/ModulePresetTarget.cpp"

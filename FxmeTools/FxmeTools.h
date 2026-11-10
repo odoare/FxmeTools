@@ -198,9 +198,11 @@ BEGIN_JUCE_MODULE_DECLARATION
 // Preset management (factory presets from BinaryData + user XML files) and
 // its ready-made browser component + compact name/prev/next strip.
 // EmbeddedAudio stores audio files (e.g. impulse responses) inside the state
-// tree as FLAC+Base64 so presets and sessions are self-contained.
+// tree as FLAC+Base64 so presets and sessions are self-contained;
+// EmbeddedImage pictures, EmbeddedData any other file (a neural model).
 #include "presets/EmbeddedAudio.h"
 #include "presets/EmbeddedImage.h"
+#include "presets/EmbeddedData.h"
 #include "presets/PresetBank.h"
 #include "presets/PresetManager.h"
 #include "presets/ModulePresetLibrary.h"

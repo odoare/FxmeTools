@@ -18,6 +18,13 @@
 #       decoding (FFmpeg via pkg-config). Both degrade gracefully when
 #       unavailable, so calling it is safe on any machine.
 #
+#   fxmetools_attach_neural(<target>)
+#       links FxmeNeural (neural amp models, <FxmeTools/neural/...>): an
+#       optional target, configured only by the first consumer that asks.
+#       The top-level project pins NeuralAudio (NEURALAUDIO_DIR), as for
+#       clap-juce-extensions below; FXME_NEURAL_ARCH sets the networks'
+#       instruction set (see neural/CMakeLists.txt).
+#
 #   fxmetools_add_clap(<target> ID <clap-id> FEATURES <feature>...)
 #       adds a <target>_CLAP format target through clap-juce-extensions,
 #       which the consumer pins as ClapJuceExtensions (CLAPJUCEEXTENSIONS_DIR).
@@ -127,6 +134,27 @@ function(fxmetools_attach_video target)
     target_compile_definitions(${target} PUBLIC
         FXME_HAS_JUCE_CAMERA=${_has_camera}
         FXME_HAS_FFMPEG=${_has_ffmpeg})
+endfunction()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Neural amp models: FxmeNeural (neural/), JUCE-free like core.
+#
+#   fxmetools_attach_neural(MyPlugin)
+#
+# NeuralAudio (MIT; NAM Core MIT, RTNeural BSD-3, Eigen MPL-2) is pinned by
+# the top-level project, submodules included:
+#     fxme_dependency(NeuralAudio
+#         https://github.com/odoare/NeuralAudio <sha>
+# (our fork of mikeoliphant/NeuralAudio until its fixes are merged upstream)
+#         SIBLING NeuralAudio)
+# which sets NEURALAUDIO_DIR. Without it, neural/CMakeLists.txt falls back to
+# a sibling clone, then to its own pin.
+# ──────────────────────────────────────────────────────────────────────────
+function(fxmetools_attach_neural target)
+    if(NOT TARGET FxmeNeural)
+        add_subdirectory("${FXMETOOLS_ROOT}/neural" "${CMAKE_BINARY_DIR}/FxmeNeural")
+    endif()
+    target_link_libraries(${target} PRIVATE FxmeNeural)
 endfunction()
 
 # ──────────────────────────────────────────────────────────────────────────

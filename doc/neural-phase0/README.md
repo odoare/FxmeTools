@@ -11,7 +11,9 @@ FxmeFX's `todo.md`).
 - Built Release (`-O3 -DNDEBUG`) with `-march=native` for both engines (the
   same code generation, AVX2 and FMA), NeuralAudio's defaults otherwise:
   NAM Core on, static internal WaveNet (A1 and A2) on, static LSTM off,
-  `MULTIFRAME_8X8_CONVOLUTION` 8 (256-bit SIMD). The build: 1 min 17 s at
+  `MULTIFRAME_8X8_CONVOLUTION` 0 (NeuralAudio's default with GCC 13; an
+  earlier version of this note said 8, wrongly: see `../neural-plan.md`,
+  phase 2, where 8 turned out 2 to 3 x slower for A2 with GCC 13). The build: 1 min 17 s at
   `-j2`.
 - Intel Core i7-10810U (6 cores, up to 4.9 GHz, a laptop part), Linux 7.0,
   GCC 13.3; the benchmark pinned to one core (`taskset -c 2`).
