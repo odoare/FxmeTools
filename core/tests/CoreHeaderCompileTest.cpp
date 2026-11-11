@@ -264,6 +264,9 @@
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/PatternLanguage.h>)
  #include <FxmeTools/midi/PatternLanguage.h>
 #endif
+#if FXME_TRY_INCLUDE(<FxmeTools/midi/MelodyMaker.h>)
+ #include <FxmeTools/midi/MelodyMaker.h>
+#endif
 #if FXME_TRY_INCLUDE(<FxmeTools/midi/StringSequencer.h>)
  #include <FxmeTools/midi/StringSequencer.h>
 #endif

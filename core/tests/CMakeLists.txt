@@ -186,6 +186,15 @@ target_compile_options(FxmeCorePatternLanguageTests PRIVATE
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow>)
 add_test(NAME FxmeCorePatternLanguageTests COMMAND FxmeCorePatternLanguageTests)
 
+# ── Melody makers (midi/MelodyMaker.h): texts in the pattern language ──────
+add_executable(FxmeCoreMelodyMakerTests CoreMelodyMakerTests.cpp)
+target_link_libraries(FxmeCoreMelodyMakerTests PRIVATE FxmeCore)
+target_include_directories(FxmeCoreMelodyMakerTests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+target_compile_options(FxmeCoreMelodyMakerTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wconversion -Wshadow>)
+add_test(NAME FxmeCoreMelodyMakerTests COMMAND FxmeCoreMelodyMakerTests)
+
 # ── MPE and the notes of passes (midi/Mpe.h, HeldNotes.h, PassNotes.h) ─────
 add_executable(FxmeCoreMpeTests CoreMpeTests.cpp)
 target_link_libraries(FxmeCoreMpeTests PRIVATE FxmeCore)

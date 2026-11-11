@@ -11,6 +11,17 @@ project after a break.
 
 ---
 
+## New: `midi/MelodyMaker.h`, melody makers that write pattern-language texts (2026-11-11)
+
+Additive. `fxme::melody`: a `Maker` gets a `Context` (the chords of one cycle: dates, chord scales from each chord's root, chord tones as degrees, roots), a set of `Values` by parameter id and a seed, and returns a `Melody`, one pattern-language text per bar (`byBar()`: `m8 [bar | bar…]`; `flat()`: one long pass). `find (id)`, `all()`; the first maker is `phrase` (form, rhythm by metric weight, pitches by range, proximity and contour, approach notes, the best of twelve candidates). Each maker declares its parameters (`ParameterInfo`), for a host's knobs. Header-only, C++17, not real-time.
+
+Design: Otomatotamoto's `doc/melody-generator.md`. Tests: `CoreMelodyMakerTests.cpp`.
+
+- Otomatotamoto: done (the conductor's melodies, `oto-melody`). Pin FxmeTools in its `cmake/FxmeToolsCore.cmake` once this is committed.
+- TeAr: nothing to do. A "Generate" button could call a maker with an empty context (one chord) and write `flat()` into a pattern.
+
+---
+
 ## New: `midi/Mpe.h`, `midi/HeldNotes.h`, `midi/PassNotes.h`; `Arpeggiator` plays through them (2026-11-09)
 
 Additive, with one thing to do for a host of `Arpeggiator` that turns on MPE. Moved from Otomatotamoto so that every player of pattern passes shares them:
@@ -41,7 +52,7 @@ between: players of notes drop the link, players of values still glide).
 `Info::legato` says a text has `^`. Errors: a sign with no step before it, after a
 prefix, two in a row; a sign at the end of the text is ignored with a warning (no
 link across passes). Syntax 2 is unchanged (the signs stay ignored characters).
-Design: Otomatotamoto's `doc/melody-generator.md` §11. Tests: "links: …".
+Design: Otomatotamoto's `doc/archive/melody-generator-discussion.md` §11. Tests: "links: …".
 
 - TeAr: nothing breaks. `fxme::Arpeggiator` plays links since 2026-11-09 (above).
 - Otomatotamoto: done (the `steps`, `player` and `tear` sources; the clip carries the link).
