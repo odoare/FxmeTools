@@ -55,8 +55,13 @@
     alongside, in a chord; the two share that headroom (their gains sum to
     at most one full voice's), so two voices are as stable as one.
 
-    Safety: the input is clamped (sanitiseSample, +-16); a branch output that
-    goes bad anyway (NaN, or beyond +-8) clears the tank.
+    The low shelf is computed with the gain applied, g x + (gLow - g) LP (x),
+    never through kLow: at short decays in long loops g is tiny and kLow
+    huge. Freeze blends each band's gain (g, gLow, gHigh) to 1 on its own,
+    so the loop never gains during the glide.
+
+    Safety: the input is clamped (sanitiseSample, +-16); a branch whose
+    absorption or end goes bad anyway (NaN, or beyond +-8) clears the tank.
 
     Threading: prepare() allocates (prepareToPlay); setSettings() and
     process() are realtime safe. setSettings() once per block is enough:
@@ -124,13 +129,15 @@ public:
         rateScale = (float) (fs / referenceRate);
 
         const float longest = maxSize * rateScale;
-        const float excursion = 32.0f * rateScale;
+        // The modulated allpass swings by up to 1.6 x the excursion (the sine
+        // plus 0.6 of the drift), the excursion at most 24 x rateScale.
+        const float maxSwing = 1.6f * 24.0f * rateScale;
         for (int i = 0; i < 4; ++i)
             diffusers[(size_t) i].prepare (fs, (diffuserLengths[i] * longest + 8.0f) / (float) fs);
         for (int b = 0; b < 2; ++b)
         {
             auto& br = branches[(size_t) b];
-            br.modAp.prepare (fs, (tankLengths[b][0] * longest + excursion + 8.0f) / (float) fs);
+            br.modAp.prepare (fs, (tankLengths[b][0] * longest + maxSwing + 8.0f) / (float) fs);
             br.delay1.prepare (fs, (tankLengths[b][1] * longest + 8.0f) / (float) fs);
             br.ap2.prepare (fs, (tankLengths[b][2] * longest + 8.0f) / (float) fs);
             br.delay2.prepare (fs, (tankLengths[b][3] * longest + 8.0f) / (float) fs);
@@ -215,6 +222,12 @@ public:
                                -settings.voicing.decayDiffusion1);
             v = delay (br.delay1, v, tankLengths[b][1] * scale);
             v = absorb (br, v, b, f);
+            if (isOutOfBounds (v, 8.0f))   // caught before it fills the lines the output taps read
+            {
+                reset();
+                outL = outR = 0.0f;
+                return;
+            }
             v = allpass (br.ap2, v, tankLengths[b][2] * scale, settings.voicing.decayDiffusion2);
             v = delay (br.delay2, v, tankLengths[b][3] * scale);
 
@@ -266,9 +279,9 @@ public:
         const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
         const double L = branchLength (0, std::clamp (s.size, minSize, maxSize) * (float) (sr / referenceRate));
         const auto g = gains (s, L, sr);
-        const double low = shelfMagnitude (hz, s.crossoverHz, g.kLow, true, sr);
-        const double high = shelfMagnitude (hz, s.dampHz, g.kHigh, false, sr);
-        const double perPass = (double) g.mid * low * high;
+        const double low = shelfMagnitude (hz, s.crossoverHz, g.low / g.mid, true, sr);
+        const double high = shelfMagnitude (hz, s.dampHz, g.high / g.mid, false, sr);
+        const double perPass = g.mid * low * high;
         if (perPass >= 1.0)
             return std::numeric_limits<double>::infinity();
         return -3.0 * L / (sr * std::log10 (perPass));
@@ -284,7 +297,8 @@ private:
     {
         ModDelayLine modAp, delay1, ap2, delay2;
         float lowState = 0.0f, highState = 0.0f;
-        float gMid = 0.9f, kLow = 1.0f, kHigh = 1.0f;
+        float gMid = 0.9f, gLow = 0.9f, gHigh = 0.9f;   // per-pass gains, each <= 1
+        float kHigh = 1.0f;                              // gHigh / gMid, <= 1
         float end = 0.0f, drift = 0.0f;
     };
 
@@ -296,7 +310,9 @@ private:
         { { 0, 1,  353.0f, +1.0f }, { 0, 1, 3627.0f, +1.0f }, { 0, 2, 1228.0f, -1.0f }, { 0, 3, 2673.0f, +1.0f },
           { 1, 1, 2111.0f, -1.0f }, { 1, 2,  335.0f, -1.0f }, { 1, 3,  121.0f, -1.0f } } };
 
-    struct Gains { float mid, kLow, kHigh; };
+    /** Per-pass gains at mid, low and high frequencies (double: at short
+        decays and long loops they are tiny, and their ratios huge). */
+    struct Gains { double mid, low, high; };
 
     static double branchLength (int b, float scale) noexcept
     {
@@ -313,7 +329,7 @@ private:
         const double mid  = gainFor (rt);
         const double low  = gainFor (rt * std::clamp ((double) s.bassMultiplier, 0.25, 4.0));
         const double high = gainFor (rt * std::clamp ((double) s.hfRatio, 0.05, 1.0));
-        return { (float) mid, (float) (low / mid), (float) (high / mid) };
+        return { mid, low, high };
     }
 
     /** |x + (k - 1) LP (x)| (low) or |x + (k - 1) HP (x)| (high), one-pole
@@ -344,10 +360,11 @@ private:
         {
             const auto g = gains (settings, branchLength (b, targetSize * rateScale), fs);
             auto& br = branches[(size_t) b];
-            br.gMid = g.mid;
-            br.kLow = g.kLow;
-            br.kHigh = g.kHigh;
-            loopGain *= (double) g.mid;
+            br.gMid = (float) g.mid;
+            br.gLow = (float) g.low;
+            br.gHigh = (float) g.high;
+            br.kHigh = g.mid > 0.0 ? (float) std::min (1.0, g.high / g.mid) : 0.0f;
+            loopGain *= g.mid;
         }
 
         modIncrement = std::clamp ((double) settings.modRateHz, 0.01, 20.0) / fs;
@@ -364,27 +381,35 @@ private:
 
     float absorb (Branch& br, float x, int /*branch*/, float freeze) noexcept
     {
-        // Frozen: every loss blends to unity.
-        const float gMid  = br.gMid  + freeze * (1.0f - br.gMid);
-        const float kLow  = br.kLow  + freeze * (1.0f - br.kLow);
-        const float kHigh = br.kHigh + freeze * (1.0f - br.kHigh);
+        // Frozen: each band's per-pass gain blends to unity on its own, so
+        // none passes 1 during the glide. (Blending the mid gain and the
+        // shelves' ratios instead multiplied them: with a short decay and
+        // Bass above 1, gMid x kLow reached thousands halfway.)
+        float gMid = br.gMid, gLow = br.gLow, kHigh = br.kHigh;
+        if (freeze > 0.0f)
+        {
+            gMid = br.gMid + freeze * (1.0f - br.gMid);
+            gLow = br.gLow + freeze * (1.0f - br.gLow);
+            const float gHigh = br.gHigh + freeze * (1.0f - br.gHigh);
+            kHigh = gMid > 0.0f ? std::min (1.0f, gHigh / gMid) : 0.0f;
+        }
 
-        // One-pole TPT low-pass at the crossover: the low shelf.
+        // One-pole TPT low-pass at the crossover: the low shelf, with the
+        // mid gain applied, gMid at high frequencies and gLow at DC. (Not
+        // as gMid x (x + (gLow / gMid - 1) LP): that ratio overflows.)
         const float lowCoef = lowG / (1.0f + lowG);
         const float vLow = (x - br.lowState) * lowCoef;
         const float lp = vLow + br.lowState;
         br.lowState = lp + vLow;
-        float y = x + (kLow - 1.0f) * lp;
+        float y = gMid * x + (gLow - gMid) * lp;
 
         // One-pole TPT low-pass at the damping frequency; its complement is
-        // the high-pass of the high shelf.
+        // the high-pass of the high shelf (kHigh <= 1).
         const float highCoef = highG / (1.0f + highG);
         const float vHigh = (y - br.highState) * highCoef;
         const float lp2 = vHigh + br.highState;
         br.highState = lp2 + vHigh;
-        y = y + (kHigh - 1.0f) * (y - lp2);
-
-        return gMid * y;
+        return y + (kHigh - 1.0f) * (y - lp2);
     }
 
     static float allpass (ModDelayLine& line, float x, float delaySamples, float g) noexcept

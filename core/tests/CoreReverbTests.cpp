@@ -20,6 +20,13 @@
       7. reset() is bit-exact.
       8. Early reflections: the first tap arrives at its time, scaled by the
          time scale; the stairwell pattern is regular.
+      9. Freeze on and off with a short decay, Bass up and strong damping in
+         a long loop (where the low shelf's ratio is in the thousands): no
+         burst through the glides (the output never passes its level before),
+         and the frozen tail is held, not cleared by the guard.
+     10. fxme::ModDelayLine read a hair further back than the write position
+         (rp a tiny negative, which plus the size rounds to the size in
+         float): position 0, not one past the buffer's end.
 
     Exit code 0 when everything passes.
 
@@ -29,6 +36,7 @@
 */
 
 #include <FxmeTools/dsp/EarlyReflections.h>
+#include <FxmeTools/dsp/ModDelayLine.h>
 #include <FxmeTools/dsp/TankReverb.h>
 #include <FxmeTools/util/Random.h>
 
@@ -301,6 +309,57 @@ int main()
         for (size_t i = 1; i < taps.size(); ++i)
             regular = regular && std::abs ((taps[i].ms - taps[i - 1].ms) - 8.5f) < 1.0e-4f;
         check (regular, "stairwell: a regular flutter");
+    }
+
+    std::printf ("9. Freeze glide, short decay, Bass up\n");
+    {
+        for (double rate : { 44100.0, 96000.0 })
+        {
+            fxme::TankReverb t;
+            fxme::TankReverb::Settings s;
+            s.rt60 = 0.2f;
+            s.size = 2.5f;
+            s.bassMultiplier = 2.5f;
+            s.hfRatio = 0.25f;
+            s.modDepth = 0.4f;
+            t.setSettings (s);
+            t.prepare (rate);
+            fxme::Random rng (9);
+            float l, r, peakBefore = 0.0f, peakDuring = 0.0f;
+            const int n = (int) (0.5 * rate);
+            auto run = [&] (int count, bool feed, float& peak)
+            {
+                for (int i = 0; i < count; ++i)
+                {
+                    const float x = feed ? 0.5f * (rng.nextFloat() * 2.0f - 1.0f) : 0.0f;
+                    t.process (x, x, l, r);
+                    peak = std::max (peak, std::max (std::abs (l), std::abs (r)));
+                }
+            };
+            run (n, true, peakBefore);
+            s.freeze = true;
+            t.setSettings (s);
+            run (n, true, peakDuring);
+            const float frozenEnergy = t.getEnergy();
+            s.freeze = false;
+            t.setSettings (s);
+            run (n, true, peakDuring);
+            std::printf ("     %.0f Hz: peak before %.3f, through freeze on and off %.3f, frozen energy %.2g\n",
+                         rate, peakBefore, peakDuring, frozenEnergy);
+            check (peakDuring <= 1.5f * peakBefore, "no burst through the freeze glides");
+            check (frozenEnergy > 1.0e-8f, "the frozen tail is held");
+        }
+    }
+
+    std::printf ("10. Delay line: read just behind the write position\n");
+    {
+        fxme::ModDelayLine line;
+        line.prepare (48000.0, 1.0f);   // 48004 slots: a float step there is 0.004
+        for (int i = 0; i < 5; ++i)
+            line.write ((float) (i + 1));
+        const float y = line.read (std::nextafter (5.0f, 6.0f));
+        std::printf ("     read %.6f (the first sample written, 1)\n", y);
+        check (std::abs (y - 1.0f) < 1.0e-3f, "position 0, inside the buffer");
     }
 
     std::printf (failures == 0 ? "All reverb tests passed\n" : "%d reverb test(s) FAILED\n", failures);

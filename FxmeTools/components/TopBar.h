@@ -69,6 +69,18 @@ public:
         gradient. */
     void setDecoration (juce::Image image) { decoration = std::move (image); repaint(); }
 
+    /** Optional artwork drawn in place of the plugin name (a lettered title,
+        for a font the plugin does not embed): fitted to `heightRatio` of the
+        bar's height, aspect preserved, left-aligned where the name would
+        be. A transparent PNG, drawn as it is (not tinted). An invalid image
+        brings the text name back. */
+    void setTitleImage (juce::Image image, float heightRatio = 0.62f)
+    {
+        titleImage = std::move (image);
+        titleHeightRatio = juce::jlimit (0.2f, 1.0f, heightRatio);
+        repaint();
+    }
+
     /** Fired when the company logo or the decoration artwork is clicked —
         plugins hang an about / splash screen off this (see
         fxme::SplashOverlay). The hit areas are whatever those two images
@@ -182,14 +194,25 @@ public:
             logoHit = {};
         }
 
-        // Plugin name, large.
-        g.setColour (text);
-        g.setFont (juce::Font (juce::FontOptions ((float) getHeight() * 0.52f,
-                                                  juce::Font::bold)));
-        const int nameWidth = juce::GlyphArrangement::getStringWidthInt (
-                                  g.getCurrentFont(), name) + 8;
-        g.drawText (name, area.removeFromLeft (nameWidth),
-                    juce::Justification::centredLeft);
+        // Plugin name, large: the title artwork when there is one.
+        if (titleImage.isValid() && titleImage.getHeight() > 0)
+        {
+            const float h = (float) getHeight() * titleHeightRatio;
+            const float w = h * (float) titleImage.getWidth() / (float) titleImage.getHeight();
+            auto titleArea = area.removeFromLeft (juce::roundToInt (w) + 8).toFloat();
+            g.drawImage (titleImage, titleArea.withWidth (w).withSizeKeepingCentre (w, h),
+                         juce::RectanglePlacement::centred);
+        }
+        else
+        {
+            g.setColour (text);
+            g.setFont (juce::Font (juce::FontOptions ((float) getHeight() * 0.52f,
+                                                      juce::Font::bold)));
+            const int nameWidth = juce::GlyphArrangement::getStringWidthInt (
+                                      g.getCurrentFont(), name) + 8;
+            g.drawText (name, area.removeFromLeft (nameWidth),
+                        juce::Justification::centredLeft);
+        }
 
         // Version, right, and the company name after it: a link when there
         // is a URL (brighter and underlined under the pointer).
@@ -280,7 +303,8 @@ private:
     static constexpr int kDecorationGap  = 12;
 
     juce::String name, blurb, version;
-    juce::Image logo, decoration;
+    juce::Image logo, decoration, titleImage;
+    float titleHeightRatio = 0.62f;
     juce::Rectangle<int> logoHit, decorationHit;   // set while painting them
     juce::Rectangle<int> companyHit;               // "FX-Mechanics", as last painted
     juce::URL companyUrl { "https://fx-mechanics.com" };

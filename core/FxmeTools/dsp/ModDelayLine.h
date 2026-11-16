@@ -67,8 +67,12 @@ public:
         if (rp < 0.0f)
             rp += (float) size;
 
-        const int   i1   = (int) rp;
+        int i1 = (int) rp;
         const float frac = rp - (float) i1;
+        // A tiny negative rp plus size rounds to size itself in float: that
+        // is position 0, not one past the end of the buffer.
+        if (i1 >= size)
+            i1 -= size;
         const int   i0   = (i1 + size - 1) % size;
         const int   i2   = (i1 + 1) % size;
         const int   i3   = (i1 + 2) % size;
