@@ -32,7 +32,7 @@ namespace
         return *found;
     }
 
-    struct Played { double onset; float pitch; int degree; bool tone; };
+    struct Played { double onset; float pitch; int degree; bool tone; float velocity; bool key; };
 
     /** The melody compiled and realized bar by bar, as the conductor plays it; its pitches through the context. */
     std::vector<Played> play (const melody::Melody& m, const melody::Context& c)
@@ -56,13 +56,19 @@ namespace
                 const auto& n = pass.notes[static_cast<std::size_t> (e.firstNote)];
                 const double onset = bar * c.barBeats + e.onset;
                 const auto& ch = chordAt (c, onset);
+                const float octave = 12.0f * static_cast<float> (n.octave - 4) + static_cast<float> (n.accidental);
+                if (n.scale == pattern::ScaleKind::Key)
+                {
+                    REQUIRE (n.degree < static_cast<int> (c.key.size()));
+                    out.push_back ({ onset, c.key[static_cast<std::size_t> (n.degree)] + octave, n.degree, false, e.velocity, true });
+                    continue;
+                }
                 REQUIRE (n.degree < static_cast<int> (ch.scale.size()));
                 bool tone = false;
                 for (int t : ch.tones)
                     tone = tone || t == n.degree;
-                out.push_back ({ onset, ch.root + ch.scale[static_cast<std::size_t> (n.degree)] + 12.0f * static_cast<float> (n.octave - 4)
-                                            + static_cast<float> (n.accidental),
-                                 n.degree, tone && n.accidental == 0 });
+                out.push_back ({ onset, ch.root + ch.scale[static_cast<std::size_t> (n.degree)] + octave,
+                                 n.degree, tone && n.accidental == 0, e.velocity, false });
             }
         }
         return out;
@@ -170,6 +176,8 @@ TEST_CASE ("melody: a repeated unit keeps its onsets; the cycle ends on a long c
         const auto m = phrase().generate ({ { "repetition", 1.0f }, { "form", 3.0f } }, c, seed);   // aaba
         auto rhythm = [] (std::string bar)
         {
+            for (std::size_t at; (at = bar.find_first_of ("vV")) != std::string::npos;)
+                bar.erase (at, 2);   // velocities: not the rhythm
             std::string r;
             for (char ch : bar)
                 r += ch == ' ' ? ' ' : ch == '.' || ch == '_' ? '.' : ch == 'o' || ch == '+' || ch == '-' || ch == '#' || ch == 'b' ? '\0' : 'n';
@@ -210,4 +218,62 @@ TEST_CASE ("melody: odd contexts: no chord, one bar, 7/8, a 5-note scale, a long
     const auto sixteen = phrase().generate ({ { "bars", 4.0f } }, longCycle, 5);   // phrases of 8 bars
     CHECK (sixteen.bars.size() == 16);
     CHECK (pattern::compile (sixteen.byBar()).ok());
+}
+
+TEST_CASE ("melody: velocities follow the metre and the phrase; dynamics 0 writes none")
+{
+    const auto c = progression();
+    double strong = 0.0, weak = 0.0;
+    int strongCount = 0, weakCount = 0;
+    std::set<float> levels;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        const auto m = phrase().generate ({ { "dynamics", 1.0f }, { "density", 0.8f } }, c, seed);
+        CHECK (m.bars[0].rfind ("V", 0) == 0);
+        for (const auto& n : play (m, c))
+        {
+            REQUIRE (n.velocity > 0.0f);
+            levels.insert (n.velocity);
+            const bool onBeat = std::abs (n.onset - std::round (n.onset)) < 1e-9;
+            (onBeat ? strong : weak) += n.velocity;
+            (onBeat ? strongCount : weakCount) += 1;
+        }
+    }
+    CHECK (levels.size() >= 4);
+    CHECK (strong / strongCount > weak / weakCount + 0.05);
+
+    for (std::uint64_t seed = 1; seed <= 10; ++seed)
+    {
+        const auto m = phrase().generate ({ { "dynamics", 0.0f } }, c, seed);
+        CHECK (m.byBar().find ('V') == std::string::npos);
+        CHECK (m.byBar().find ('v') == std::string::npos);
+        for (const auto& n : play (m, c))
+            CHECK (n.velocity < 0.0f);
+    }
+}
+
+TEST_CASE ("melody: passing tones in the key scale, between quotes, never on the chord's notes")
+{
+    // A borrowed bVII (Bb in C): its chord scale has Bb, the key scale B.
+    auto c = progression();
+    c.chords[2] = { 8.0, { 0, 2, 4, 5, 7, 9, 10 }, { 0, 2, 4 }, 10.0f };   // Bb mixolydian from Bb
+    int keyNotes = 0;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        const auto m = phrase().generate ({ { "passing", 1.0f }, { "consonance", 0.3f } }, c, seed);
+        CHECK (m.byBar().find ('"') != std::string::npos);
+        for (const auto& n : play (m, c))
+            if (n.key)
+            {
+                ++keyNotes;
+                const int pc = static_cast<int> (std::lround (n.pitch)) % 12;
+                CHECK (pc >= 0);
+                CHECK (std::set<int> { 0, 2, 4, 5, 7, 9, 11 }.count ((pc + 12) % 12) == 1);   // C major's notes
+            }
+    }
+    CHECK (keyNotes > 20);
+
+    // Without `passing`, no quote.
+    for (std::uint64_t seed = 1; seed <= 10; ++seed)
+        CHECK (phrase().generate ({ { "consonance", 0.3f } }, c, seed).byBar().find ('"') == std::string::npos);
 }

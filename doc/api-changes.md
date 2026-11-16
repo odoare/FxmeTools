@@ -13,7 +13,7 @@ project after a break.
 
 ## New: `midi/MelodyMaker.h`, melody makers that write pattern-language texts (2026-11-11)
 
-Additive. `fxme::melody`: a `Maker` gets a `Context` (the chords of one cycle: dates, chord scales from each chord's root, chord tones as degrees, roots), a set of `Values` by parameter id and a seed, and returns a `Melody`, one pattern-language text per bar (`byBar()`: `m8 [bar | bar…]`; `flat()`: one long pass). `find (id)`, `all()`; the first maker is `phrase` (form, rhythm by metric weight, pitches by range, proximity and contour, approach notes, the best of twelve candidates). Each maker declares its parameters (`ParameterInfo`), for a host's knobs. Header-only, C++17, not real-time.
+Additive. `fxme::melody`: a `Maker` gets a `Context` (the chords of one cycle: dates, chord scales from each chord's root, chord tones as degrees, roots), a set of `Values` by parameter id and a seed, and returns a `Melody`, one pattern-language text per bar (`byBar()`: `m8 [bar | bar…]`; `flat()`: one long pass). `find (id)`, `all()`; the first maker is `phrase` (form, rhythm by metric weight, pitches by range, proximity and contour, approach notes, the best of twelve candidates). Each maker declares its parameters (`ParameterInfo`), for a host's knobs. `phrase` writes velocities (`dynamics`: a `V` level per bar, `v` on the notes that differ) and, with `passing`, passing tones in the context's key scale (`Context::key`, between double quotes). Header-only, C++17, not real-time.
 
 Design: Otomatotamoto's `doc/melody-generator.md`. Tests: `CoreMelodyMakerTests.cpp`.
 
@@ -122,7 +122,7 @@ upstream (`b98dfbd`, 2026-10-09) its WaveNets allocate on every block
 odoare/NeuralAudio, branch `fxme-no-audio-alloc`, proposed upstream once
 FxmeNeuralAmp's first version is done; pin a commit of that branch.
 
-- FxmeFX: phase 3 of its `todo.md` section 6 (FxmeNeuralAmp).
+- FxmeFX: phase 3 of the neural plan (FxmeNeuralAmp, `release-notes/v0.6.0.md`).
 - Otomato, Camshaft, Mechanodd: nothing until they want it.
 
 ---

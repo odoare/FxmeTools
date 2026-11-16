@@ -62,6 +62,7 @@ struct Chord
 struct Context
 {
     std::vector<Chord> chords;       ///< in time order, the first at 0
+    std::vector<float> key { 0, 2, 4, 5, 7, 9, 11 };   ///< the key scale from the key's root (the text's "…" degrees)
     double lengthBeats = 16.0;       ///< the cycle
     double barBeats = 4.0;
 };
@@ -93,11 +94,12 @@ struct Melody
         return t + "]";
     }
 
-    std::string flat() const
+    /** One long pass: the step, then the bars, separated by `separator` (a line end shows a bar per line). */
+    std::string flat (const char* separator = " ") const
     {
         std::string t = step;
         for (const auto& b : bars)
-            t += " " + b;
+            t += separator + b;
         return t;
     }
 };
@@ -146,22 +148,56 @@ struct Note
     int octave = 0;                  ///< -1, 0, +1 around the player's octave
     int accidental = 0;              ///< -1, 0, +1 semitone
     float pitch = 0.0f;              ///< semitones above the key's root at the player's octave: what the line is led by
+    bool keyScale = false;           ///< a degree of the key scale (written between double quotes), not of the chord's
+    float velocity = -1.0f;          ///< 0..1; < 0: none written (the player's)
     enum class Link { None, Legato, Glide };
     Link link = Link::None;          ///< into the next note (which then starts where this one ends)
 };
 
-/** The notes as text, one string per bar: degrees with `o+` / `o-`, `#` / `b`, holds, rests, `^`, `~`. */
+/** A velocity as the language's level, 1..15 (`v1`…`vF`). */
+inline int velocityLevel (float velocity) noexcept
+{
+    return std::min (15, std::max (1, static_cast<int> (std::lround (velocity * 15.0f))));
+}
+
+/** The notes as text, one string per bar: degrees with `o+` / `o-`, `#` / `b`, holds, rests, `^`, `~`;
+    key-scale degrees between double quotes. With velocities, each bar starts with its most common
+    level (`VB`) and the notes that differ carry their own (`vD`). */
 inline std::vector<std::string> writeBars (const std::vector<Note>& notes, int barSteps, int barCount)
 {
+    static constexpr const char* digits = "123456789ABCDEF";
     const int total = barSteps * barCount;
     std::vector<std::string> tokens (static_cast<std::size_t> (total), ".");
+
+    // The most common level of each bar (the lowest on a tie): written once, as `V`.
+    std::vector<int> barLevel (static_cast<std::size_t> (barCount), 0);
+    for (int b = 0; b < barCount; ++b)
+    {
+        int counts[16] = {};
+        for (const auto& n : notes)
+            if (n.velocity >= 0.0f && n.step / barSteps == b && n.step >= 0 && n.step < total)
+                ++counts[velocityLevel (n.velocity)];
+        for (int l = 1; l < 16; ++l)
+            if (counts[l] > counts[barLevel[static_cast<std::size_t> (b)]])
+                barLevel[static_cast<std::size_t> (b)] = l;
+    }
+
     for (const auto& n : notes)
     {
         if (n.step < 0 || n.step >= total)
             continue;
-        std::string t = n.octave > 0 ? "o+" : n.octave < 0 ? "o-" : "";
+        std::string t;
+        if (n.velocity >= 0.0f)
+        {
+            const int level = velocityLevel (n.velocity);
+            if (level != barLevel[static_cast<std::size_t> (n.step / barSteps)])
+                t += std::string ("v") + digits[level - 1];
+        }
+        t += n.octave > 0 ? "o+" : n.octave < 0 ? "o-" : "";
         t += n.accidental > 0 ? "#" : n.accidental < 0 ? "b" : "";
-        t += "123456789ABCDEF"[std::min (14, std::max (0, n.degree))];
+        t += digits[std::min (14, std::max (0, n.degree))];
+        if (n.keyScale)
+            t = "\"" + t + "\"";
         const int barEnd = (n.step / barSteps + 1) * barSteps;
         const int end = std::min (barEnd, n.step + std::max (1, n.length));
         tokens[static_cast<std::size_t> (n.step)] = t;
@@ -172,6 +208,9 @@ inline std::vector<std::string> writeBars (const std::vector<Note>& notes, int b
     }
 
     std::vector<std::string> bars (static_cast<std::size_t> (barCount));
+    for (int b = 0; b < barCount; ++b)
+        if (const int level = barLevel[static_cast<std::size_t> (b)]; level > 0)
+            bars[static_cast<std::size_t> (b)] = std::string ("V") + digits[level - 1];
     for (int s = 0; s < total; ++s)
     {
         auto& bar = bars[static_cast<std::size_t> (s / barSteps)];
@@ -211,6 +250,8 @@ public:
             { "chromatic", "Chromatic", 0.0f, 1.0f, 0.0f, true, {} },
             { "legato", "Legato", 0.0f, 1.0f, 0.0f, true, {} },
             { "slide", "Slide", 0.0f, 1.0f, 0.0f, true, {} },
+            { "dynamics", "Dynamics", 0.0f, 1.0f, 0.5f, true, {} },
+            { "passing", "Passing in key", 0.0f, 1.0f, 0.0f, true, {} },
             { "contour", "Contour", 0.0f, 4.0f, 0.0f, true, { "arch", "rise", "fall", "wave", "free" } },
             { "form", "Form", 0.0f, 4.0f, 0.0f, true, { "auto", "sentence", "period", "aaba", "free" } },
             { "bars", "Phrase", 0.0f, 4.0f, 0.0f, true, { "auto", "1", "2", "4", "8" } },
@@ -254,7 +295,8 @@ private:
         bool sixteenths = false;
         double stepBeats = 0.5;
         int barSteps = 8, barCount = 4, phraseBars = 4, unitBars = 1, unitsPerPhrase = 4;
-        float density, span, leaps, consonance, repetition, centre, syncopation, colour, chromatic, legato, slide;
+        std::vector<float> key;
+        float density, span, leaps, consonance, repetition, centre, syncopation, colour, chromatic, legato, slide, dynamics, passing;
         int contour = 0, form = 0;
     };
 
@@ -286,8 +328,10 @@ private:
                 ch.scale = { 0.0f };
             if (ch.tones.empty())
                 ch.tones = { 0 };
-            ch.root = ch.root - 12.0f * std::floor (ch.root / 12.0f);
         }
+        s.key = c.key.empty() ? std::vector<float> { 0.0f } : c.key;
+        if (s.key.size() > 15)
+            s.key.resize (15);
         s.sixteenths = value (v, "grid") >= 0.5f;
         s.stepBeats = s.sixteenths ? 0.25 : 0.5;
         const double barBeats = c.barBeats > 0.0 ? c.barBeats : 4.0;
@@ -311,6 +355,8 @@ private:
         s.chromatic = value (v, "chromatic");
         s.legato = value (v, "legato");
         s.slide = value (v, "slide");
+        s.dynamics = value (v, "dynamics");
+        s.passing = value (v, "passing");
         s.contour = static_cast<int> (std::lround (value (v, "contour")));
         s.form = static_cast<int> (std::lround (value (v, "form")));
         return s;
@@ -344,6 +390,20 @@ private:
     static bool isTone (const Chord& c, int degree) noexcept
     {
         return std::find (c.tones.begin(), c.tones.end(), degree) != c.tones.end();
+    }
+
+    /** A pitch (above the key's root) that sounds one of the chord's tones, in any octave. */
+    static bool isTonePitch (const Chord& c, float pitch) noexcept
+    {
+        for (int t : c.tones)
+        {
+            if (t < 0 || t >= static_cast<int> (c.scale.size()))
+                continue;
+            const double d = pitch - (c.root + c.scale[static_cast<std::size_t> (t)]);
+            if (std::abs (d - 12.0 * std::round (d / 12.0)) < 0.01)
+                return true;
+        }
+        return false;
     }
 
     std::vector<Role> roles (const Setup& s, Rng& rng) const
@@ -522,7 +582,7 @@ private:
         }
 
         //--- pitches
-        struct Cand { int degree, octave; float pitch; bool tone; };
+        struct Cand { int degree, octave; float pitch; bool tone, key; };
         std::vector<Note> notes;
         std::vector<Cand> cands;
         std::vector<double> weights;
@@ -545,6 +605,10 @@ private:
             if (wantTone && strong && ! sl.firstOfPhrase && ! sl.lastOfPhrase && rng.chance (0.4 * s.colour))
                 wantTone = false;   // a tension on a strong beat
 
+            // A passing tone may come from the key scale (written in quotes): it stays in the key
+            // when the text is played over a borrowed chord, or over another progression.
+            const bool fromKey = ! wantTone && s.passing > 0.0f && rng.chance (s.passing);
+
             const int src = pitchSource[static_cast<std::size_t> (sl.unit)];
             const bool follows = src >= 0 && sl.indexInUnit < static_cast<int> (unitPitches[static_cast<std::size_t> (src)].size());
             const float target = follows ? unitPitches[static_cast<std::size_t> (src)][static_cast<std::size_t> (sl.indexInUnit)]
@@ -554,10 +618,21 @@ private:
             cands.clear();
             weights.clear();
             double sum = 0.0;
+            const int candidates = fromKey ? static_cast<int> (s.key.size()) : size;
             for (int k = -1; k <= 1; ++k)
-                for (int d = 0; d < size; ++d)
+                for (int d = 0; d < candidates; ++d)
                 {
-                    Cand c { d, k, ch.root + ch.scale[static_cast<std::size_t> (d)] + 12.0f * static_cast<float> (k), isTone (ch, d) };
+                    Cand c { d, k, 0.0f, false, fromKey };
+                    if (fromKey)
+                    {
+                        c.pitch = s.key[static_cast<std::size_t> (d)] + 12.0f * static_cast<float> (k);
+                        c.tone = isTonePitch (ch, c.pitch);
+                    }
+                    else
+                    {
+                        c.pitch = ch.root + ch.scale[static_cast<std::size_t> (d)] + 12.0f * static_cast<float> (k);
+                        c.tone = isTone (ch, d);
+                    }
                     double w = 1.0 / (1.0 + sq ((c.pitch - centre) / (halfRange * 0.6)));
                     if (std::abs (c.pitch - s.centre) > halfRange + 0.01)
                         w = 0.0;
@@ -579,7 +654,7 @@ private:
                     }
                     if (follows)
                         w *= 0.05 + 1.0 / (1.0 + sq ((c.pitch - target) / 1.2));
-                    if (sl.lastOfPhrase && d == ch.tones.front())
+                    if (sl.lastOfPhrase && ! fromKey && d == ch.tones.front())
                         w *= finalPhrase ? 4.0 : 0.3;   // closed at the cycle's end, open before
                     cands.push_back (c);
                     weights.push_back (w);
@@ -620,6 +695,7 @@ private:
             n.degree = c.degree;
             n.octave = c.octave;
             n.pitch = c.pitch;
+            n.keyScale = c.key;
             if (hasPrev)
                 prevInterval = c.pitch - prev;
             prev = c.pitch;
@@ -637,21 +713,24 @@ private:
             const Slot& b = slots[i + 1];
             const Note& to = notes[i + 1];
             if (a.weight >= 0.6f || b.weight < 0.6f || a.lastOfPhrase || a.firstOfPhrase
-                || ! isTone (chordAt (s, b.step), to.degree) || to.accidental != 0)
+                || to.keyScale || ! isTone (chordAt (s, b.step), to.degree) || to.accidental != 0)
                 continue;
             if (! rng.chance ((1.0 - s.consonance) * 0.5 + s.chromatic * 0.5))
                 continue;
             const Chord& ch = chordAt (s, a.step);
             const int size = std::min (15, static_cast<int> (ch.scale.size()));
             const bool chromatic = rng.chance (s.chromatic);
+            const bool fromKey = ! chromatic && s.passing > 0.0f && rng.chance (s.passing);
+            const int candidates = fromKey ? static_cast<int> (s.key.size()) : size;
             const float from = notes[i - 1].pitch;
             Note n = notes[i];
             double bestCost = 1e30;
             for (int k = -1; k <= 1; ++k)
-                for (int d = 0; d < size; ++d)
+                for (int d = 0; d < candidates; ++d)
                     for (int acc = chromatic ? -1 : 0; acc <= (chromatic ? 1 : 0); ++acc)
                     {
-                        const float p = ch.root + ch.scale[static_cast<std::size_t> (d)] + 12.0f * static_cast<float> (k) + static_cast<float> (acc);
+                        const float p = (fromKey ? s.key[static_cast<std::size_t> (d)] : ch.root + ch.scale[static_cast<std::size_t> (d)])
+                                        + 12.0f * static_cast<float> (k) + static_cast<float> (acc);
                         const double gap = std::abs (p - to.pitch);
                         if (gap < 0.01 || gap > (chromatic ? 1.01 : 2.5) || (chromatic && std::abs (gap - 1.0) > 0.01))
                             continue;
@@ -664,6 +743,7 @@ private:
                             n.octave = k;
                             n.accidental = acc;
                             n.pitch = p;
+                            n.keyScale = fromKey;
                         }
                     }
             if (bestCost < 1e29)
@@ -682,6 +762,23 @@ private:
                     n.link = Note::Link::Glide;
                 else if (rng.chance (s.legato))
                     n.link = Note::Link::Legato;
+            }
+
+        //--- velocities: the metre's accents, louder as the line climbs, a phrase's first note
+        //    stressed and its last one softer; `dynamics` scales it all, 0 writes none
+        if (s.dynamics > 0.0f)
+            for (std::size_t i = 0; i < notes.size(); ++i)
+            {
+                const Slot& sl = slots[i];
+                const double t = static_cast<double> (sl.step - sl.phrase * phraseSteps) / std::max (1, phraseSteps);
+                double accent = (sl.weight - 0.5) * 0.5;
+                accent += 0.12 * (notes[i].pitch - (s.centre + contourAt (s, t))) / std::max (1.0, s.span * 6.0);
+                if (sl.firstOfPhrase)
+                    accent += 0.08;
+                if (sl.lastOfPhrase)
+                    accent -= 0.12;
+                accent += (rng.next() - 0.5) * 0.08;
+                notes[i].velocity = static_cast<float> (std::min (1.0, std::max (0.08, 0.72 + s.dynamics * accent)));
             }
         return notes;
     }
@@ -720,7 +817,7 @@ private:
         if (notes.size() >= 6 && distinct.size() < 3)
             sc -= 2.0;
         const auto& last = notes.back();
-        if (last.degree == chordAt (s, last.step).tones.front() && last.accidental == 0)
+        if (! last.keyScale && last.degree == chordAt (s, last.step).tones.front() && last.accidental == 0)
             sc += 1.0;
         return sc;
     }
