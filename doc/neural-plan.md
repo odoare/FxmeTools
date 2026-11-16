@@ -1,8 +1,8 @@
 # Neural amp models in FxmeTools: plan
 
-Status: decided, 2026-11-09; phase 0 (measurement), phase 1 (`dsp/Resampler.h`) and phase 2 (`FxmeNeural`, `neural/`) done the same day; phase 3, the FxmeFX effect FxmeNeuralAmp, done 2026-11-10 and declared finished the same day (released plugins built for x86-64-v3; what remains is in FxmeFX's `todo.md`, section 6, "After v1"); next, Otomato (phase 4). The project (the FxmeFX
-effect FxmeNeuralAmp, its phases, the decisions) is section 6 of FxmeFX's
-`todo.md`;
+Status: decided, 2026-11-09; phase 0 (measurement), phase 1 (`dsp/Resampler.h`) and phase 2 (`FxmeNeural`, `neural/`) done the same day; phase 3, the FxmeFX effect FxmeNeuralAmp, done 2026-11-10 and declared finished the same day (released plugins built for x86-64-v3; what remains is in FxmeFX's `doc/todo.md`, "FxmeNeuralAmp, after v1"); next, Otomato (phase 4). The project (the FxmeFX
+effect FxmeNeuralAmp, its phases, the decisions) is in FxmeFX's
+`release-notes/v0.6.0.md` and `doc/todo.md`;
 this note is the shared library's side, for whoever picks it up from any
 consumer (FxmeFX, Otomato, Camshaft, Mechanodd).
 

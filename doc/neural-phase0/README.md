@@ -1,7 +1,7 @@
 # FxmeNeuralAmp, phase 0: NeuralAudio against NAM Core
 
-Measured 2026-11-09, for the plan in `../neural-plan.md` (and section 6 of
-FxmeFX's `todo.md`).
+Measured 2026-11-09, for the plan in `../neural-plan.md` (and FxmeFX's
+`release-notes/v0.6.0.md`).
 
 ## Setup
 
