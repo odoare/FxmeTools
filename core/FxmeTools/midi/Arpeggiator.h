@@ -387,8 +387,20 @@ public:
         that their notes get channels of their own), which then decides whether MPE is on; nullptr:
         back to plain notes on the channel given to processBlock(). With MPE, processBlock() also
         returns pitch bends and controllers (ArpMidiEvent::kind). Links `~` and `^` then glide; without
-        MPE they overlap the notes. Change it between blocks, after turnOff(). */
+        MPE they overlap the notes (unless setLinks (false)). Change it between blocks, after turnOff(). */
     void setMpeOut (MpeOut* shared) noexcept { sharedMpe = shared; }
+
+    /** Whether links `~` and `^` play (on by default). Off, they are ignored: `1~3` plays as `1 3`,
+        two notes attacked one after the other; for a host whose synth cannot glide (no MPE), where
+        overlapping notes would only blur a poly synth. Takes effect from the pass playing; change it
+        between blocks, after turnOff(). Allocates nothing. */
+    void setLinks (bool play) noexcept
+    {
+        playLinks = play;
+        if (! play)
+            dropLinks (currentPass);
+    }
+    bool getLinks() const noexcept { return playLinks; }
 
     /** Returns the number of samples remaining until the next step boundary. */
     double getSamplesUntilNextNote() const
@@ -1325,6 +1337,8 @@ private:
     {
         const bool continuing = haveCurrentPass;
         program->realize (makeContext(), currentPass, &carry);
+        if (! playLinks)
+            dropLinks (currentPass);
         ++passIndex;
         ++seedCounter;
         haveCurrentPass = true;
@@ -1336,6 +1350,12 @@ private:
         const double tied = pattern::tiedBeats (currentPass);
         if (tied > 0.0)
             held.extend (boundaryBeat - timeTolerance, tied);
+    }
+
+    static void dropLinks (pattern::Pass& pass) noexcept
+    {
+        for (auto& e : pass.events)
+            e.link = pattern::Event::Link::None;
     }
 
     /** The step boundary has come (and its pass is ready): start its events and set the next boundary. */
@@ -1459,6 +1479,7 @@ private:
     double boundaryBeat = 0.0;                ///< the next step boundary, on the clock the notes' ends are dated on
     MpeOut ownMpe;                            ///< off: plain notes, unless setMpeOut() gives a shared one
     MpeOut* sharedMpe = nullptr;
+    bool playLinks = true;                    ///< false: `~` and `^` ignored (setLinks())
 
     // What GUI threads read about the step that played last (plain ints, as before).
     int shownStep = -1, shownSourceStart = 0, shownSourceEnd = 0;

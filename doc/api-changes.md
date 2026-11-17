@@ -11,6 +11,17 @@ project after a break.
 
 ---
 
+## New: `Arpeggiator::setLinks (bool)` (2026-11-16)
+
+Additive. Links `~` and `^` play by default, as before. `setLinks (false)` ignores them: `1~3`
+plays as `1 3`, two attacks, with or without MPE. For a host whose MPE is optional: without
+MPE, overlapping notes only blur a polyphonic synth. Real time: allocates nothing; change it
+between blocks, after `turnOff()`. Test: "links off: …" in `CoreArpeggiatorTests.cpp`.
+
+- TeAr: uses it (links play only with its MPE option on), `doc/mpe-plan.md`.
+
+---
+
 ## New: `midi/MelodyMaker.h`, melody makers that write pattern-language texts (2026-11-11)
 
 Additive. `fxme::melody`: a `Maker` gets a `Context` (the chords of one cycle: dates, chord scales from each chord's root, chord tones as degrees, roots), a set of `Values` by parameter id and a seed, and returns a `Melody`, one pattern-language text per bar (`byBar()`: `m8 [bar | bar…]`; `flat()`: one long pass). `find (id)`, `all()`; the first maker is `phrase` (form, rhythm by metric weight, pitches by range, proximity and contour, approach notes, the best of twelve candidates). Each maker declares its parameters (`ParameterInfo`), for a host's knobs. `phrase` writes velocities (`dynamics`: a `V` level per bar, `v` on the notes that differ) and, with `passing`, passing tones in the context's key scale (`Context::key`, between double quotes). Header-only, C++17, not real-time.

@@ -1540,6 +1540,36 @@ TEST_CASE("without MPE: only notes, on the channel asked for; a link overlaps th
     CHECK (overlap);
 }
 
+TEST_CASE("links off: `1~3` and `1^3` play as `1 3`, two notes one after the other")
+{
+    for (const char* text : { "m4 1~3 . .", "m4 1^3 . ." })
+    {
+        Arpeggiator arp, plain;
+        linked (arp, text);
+        arp.setLinks (false);
+        linked (plain, "m4 1 3 . .");
+        const auto got = arp.processBlock (1500, 3);
+        std::vector<fxme::ArpMidiEvent> heard (got.begin(), got.end());
+        const auto want = plain.processBlock (1500, 3);
+        REQUIRE (heard.size() == want.size());
+        for (std::size_t i = 0; i < heard.size(); ++i)
+        {
+            CHECK (heard[i].sample == want[i].sample);
+            CHECK (heard[i].note == want[i].note);
+            CHECK (heard[i].noteOn == want[i].noteOn);
+        }
+    }
+
+    fxme::MpeOut mpe;   // with MPE too: two attacks, no glide
+    Arpeggiator arp;
+    linked (arp, "m4 1~3 . .");
+    arp.setMpeOut (&mpe);
+    arp.setLinks (false);
+    const auto p = play (arp, 1500);
+    CHECK (p.ons == 2);
+    CHECK (p.bends == 2);   // each note's own
+}
+
 TEST_CASE("with MPE: a glide is one attack and a moving bend; a legato one attack; engines share the channels")
 {
     fxme::MpeOut mpe;   // on
