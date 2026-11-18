@@ -19,7 +19,9 @@
          with one voice and with two (an octave and a fifth) at full.
       7. reset() is bit-exact.
       8. Early reflections: the first tap arrives at its time, scaled by the
-         time scale; the stairwell pattern is regular.
+         time scale (after reset(), which puts the taps straight there);
+         without a reset a new time scale is glided to, not jumped to; the
+         stairwell pattern is regular.
       9. Freeze on and off with a short decay, Bass up and strong damping in
          a long loop (where the low shelf's ratio is in the thousands): no
          burst through the glides (the output never passes its level before),
@@ -283,13 +285,18 @@ int main()
 
     std::printf ("8. Early reflections\n");
     {
-        auto firstArrival = [] (fxme::EarlyReflections::Pattern p, float scale)
+        auto firstArrival = [] (fxme::EarlyReflections::Pattern p, float scale, int glideSamples = -1)
         {
             fxme::EarlyReflections er;
             er.prepare (fs);
             er.setPattern (p);
             er.setTimeScale (scale);
             float l, r;
+            if (glideSamples < 0)
+                er.reset();
+            else
+                for (int i = 0; i < glideSamples; ++i)   // gliding from scale 1, in silence
+                    er.process (0.0f, 0.0f, l, r);
             for (int i = 0; i < 20000; ++i)
             {
                 er.process (i == 0 ? 1.0f : 0.0f, i == 0 ? 1.0f : 0.0f, l, r);
@@ -303,6 +310,10 @@ int main()
         std::printf ("     room: first reflection at %.2f ms (scale 1), %.2f ms (scale 2)\n", room1, room2);
         check (std::abs (room1 - 4.3) < 0.2, "first tap at its time");
         check (std::abs (room2 - 8.6) < 0.3, "scaled with the time scale");
+        const double gliding = firstArrival (fxme::EarlyReflections::Pattern::room, 2.0f, 0);
+        const double glided = firstArrival (fxme::EarlyReflections::Pattern::room, 2.0f, 48000);
+        std::printf ("     scale 1 -> 2 without a reset: %.2f ms at once, %.2f ms after 1 s\n", gliding, glided);
+        check (gliding < room2 - 0.5 && std::abs (glided - room2) < 0.3, "a new time scale glides");
 
         const auto taps = fxme::EarlyReflections::getTaps (fxme::EarlyReflections::Pattern::stairwell);
         bool regular = true;

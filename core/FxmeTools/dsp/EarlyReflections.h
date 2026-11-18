@@ -91,20 +91,25 @@ public:
     {
         fs = sampleRate > 0.0 ? sampleRate : 48000.0;
         line.prepare (fs, 0.080f * maxTimeScale + 0.01f);
+        delayCoef = 1.0f - (float) std::exp (-1.0 / (0.05 * fs));
         updateTaps();
         reset();
     }
 
+    /** Clears the line, and puts the taps straight at their times (no glide). */
     void reset()
     {
         line.reset();
         lowState.fill (0.0f);
+        delay = delayTarget;
     }
 
     void setPattern (Pattern p) { pattern = p; updateTaps(); }
     Pattern getPattern() const noexcept { return pattern; }
 
-    /** Scales every tap time (0.25 .. maxTimeScale). */
+    /** Scales every tap time (0.25 .. maxTimeScale). The taps glide to their
+        new times (about 50 ms, longer for a big change: their speed is
+        capped), so a change does not click. */
     void setTimeScale (float s) { timeScale = std::clamp (s, 0.25f, maxTimeScale); updateTaps(); }
 
     void process (float inL, float inR, float& outL, float& outR) noexcept
@@ -113,6 +118,7 @@ public:
         float l = 0.0f, r = 0.0f;
         for (size_t i = 0; i < (size_t) numTaps; ++i)
         {
+            delay[i] += std::clamp (delayCoef * (delayTarget[i] - delay[i]), -maxReadSpeed, maxReadSpeed);
             if (gain[i] == 0.0f)
                 continue;
             const float v = line.read (delay[i]);
@@ -131,7 +137,7 @@ private:
         for (size_t i = 0; i < (size_t) numTaps; ++i)
         {
             const auto& t = taps[i];
-            delay[i] = std::max (2.0f, (float) (t.ms * 0.001 * timeScale * fs));
+            delayTarget[i] = std::max (2.0f, (float) (t.ms * 0.001 * timeScale * fs));
             gain[i] = t.gain;
             const float angle = (t.pan + 1.0f) * 0.25f * 3.14159265f;   // equal power
             gainL[i] = t.gain * std::cos (angle);
@@ -143,9 +149,13 @@ private:
 
     double fs = 48000.0;
     Pattern pattern = Pattern::room;
-    float timeScale = 1.0f;
+    /** A tap's glide moves its read point by at most this many samples per
+        sample (a pitch bend of about 4 semitones at most). */
+    static constexpr float maxReadSpeed = 0.25f;
+
+    float timeScale = 1.0f, delayCoef = 0.001f;
     ModDelayLine line;
-    std::array<float, numTaps> delay {}, gain {}, gainL {}, gainR {}, lowCoef {}, lowState {};
+    std::array<float, numTaps> delay {}, delayTarget {}, gain {}, gainL {}, gainR {}, lowCoef {}, lowState {};
 };
 
 } // namespace fxme

@@ -146,17 +146,25 @@ public:
         shifter.prepare (fs, 1, 40.0f);
         shifter2.prepare (fs, 1, 40.0f);
         sizeCoef = 1.0f - (float) std::exp (-1.0 / (0.2 * fs));
+        // The longest line moves by at most maxReadSpeed samples a sample.
+        maxSizeStep = maxReadSpeed / (4453.0f * rateScale);
+        glideCoef = 1.0f - (float) std::exp (-1.0 / (0.03 * fs));
         freezeStep = (float) (1.0 / (0.05 * fs));
         driftCoef = 1.0f - (float) std::exp (-2.0 * 3.141592653589793 * 0.3 / fs);
 
-        currentSize = targetSize = std::clamp (settings.size, minSize, maxSize);
-        freezeAmount = settings.freeze ? 1.0f : 0.0f;
+        targetSize = std::clamp (settings.size, minSize, maxSize);
         updateCoefficients();
         reset();
     }
 
+    /** Clears the tank, and ends every glide on its target: a tank cleared
+        and given new settings starts as if prepared with them. */
     void reset()
     {
+        currentSize = targetSize;
+        freezeAmount = settings.freeze ? 1.0f : 0.0f;
+        snapCoefficients();
+
         for (auto& d : diffusers) d.reset();
         for (auto& br : branches)
         {
@@ -187,8 +195,11 @@ public:
     void process (float inL, float inR, float& outL, float& outR) noexcept
     {
         // Glides: Size per sample (the lines are read at fractional
-        // positions), Freeze over 50 ms.
-        currentSize += sizeCoef * (targetSize - currentSize);
+        // positions), Freeze over 50 ms, the loop's gains and the rest of the
+        // coefficients over about 30 ms (a step in a gain inside the loop
+        // is a click).
+        currentSize += std::clamp (sizeCoef * (targetSize - currentSize), -maxSizeStep, maxSizeStep);
+        glideCoefficients();
         const float freezeTarget = settings.freeze ? 1.0f : 0.0f;
         if (freezeAmount != freezeTarget)
             freezeAmount = freezeAmount < freezeTarget ? std::min (freezeTarget, freezeAmount + freezeStep)
@@ -201,7 +212,7 @@ public:
         bandState += bandCoef * (x - bandState);
         x = bandState;
         for (int i = 0; i < 4; ++i)
-            x = allpass (diffusers[(size_t) i], x, diffuserLengths[i] * scale, inputCoefs[(size_t) i]);
+            x = allpass (diffusers[(size_t) i], x, diffuserLengths[i] * scale, inputCoefs[(size_t) i].current);
         x += shimmerFeed * (1.0f - f);
 
         // Modulation: a sine in quadrature plus a slow drift per branch.
@@ -216,7 +227,7 @@ public:
         {
             auto& br = branches[(size_t) b];
             br.drift += driftCoef * (nextNoise() - br.drift);
-            const float swing = excursion * (lfo[b] + 0.6f * br.drift);
+            const float swing = excursion.current * (lfo[b] + 0.6f * br.drift);
 
             float v = allpass (br.modAp, x + crossIn[b], tankLengths[b][0] * scale + swing,
                                -settings.voicing.decayDiffusion1);
@@ -241,14 +252,15 @@ public:
         }
 
         // Shimmer: the tank's output, high-passed, pitched, fed back.
-        if ((shimmerGain > 0.0f || shimmerGain2 > 0.0f) && f < 1.0f)
+        const float sg1 = shimmerGain.current, sg2 = shimmerGain2.current;
+        if ((sg1 > 1.0e-6f || sg2 > 1.0e-6f) && f < 1.0f)
         {
             const float s = 0.5f * (branches[0].end + branches[1].end);
             shimmerHpState += shimmerHpCoef * (s - shimmerHpState);
             const float hp = s - shimmerHpState;
             shimmerFeed = 0.0f;
-            if (shimmerGain > 0.0f)  shimmerFeed += shimmerGain  * shifter.processSample (hp);
-            if (shimmerGain2 > 0.0f) shimmerFeed += shimmerGain2 * shifter2.processSample (hp);
+            if (sg1 > 1.0e-6f) shimmerFeed += sg1 * shifter.processSample (hp);
+            if (sg2 > 1.0e-6f) shimmerFeed += sg2 * shifter2.processSample (hp);
         }
         else
         {
@@ -297,8 +309,11 @@ private:
     {
         ModDelayLine modAp, delay1, ap2, delay2;
         float lowState = 0.0f, highState = 0.0f;
-        float gMid = 0.9f, gLow = 0.9f, gHigh = 0.9f;   // per-pass gains, each <= 1
+        // Per-pass gains, each <= 1, gliding to their targets (a convex
+        // mix of values <= 1 stays <= 1: stable all along the glide).
+        float gMid = 0.9f, gLow = 0.9f, gHigh = 0.9f;
         float kHigh = 1.0f;                              // gHigh / gMid, <= 1
+        float gMidT = 0.9f, gLowT = 0.9f, gHighT = 0.9f, kHighT = 1.0f;
         float end = 0.0f, drift = 0.0f;
     };
 
@@ -349,7 +364,9 @@ private:
         const double pi = 3.141592653589793;
         const auto& v = settings.voicing;
         const float d = std::clamp (settings.diffusion, 0.0f, 1.0f);
-        inputCoefs = { v.inputDiffusion1 * d, v.inputDiffusion1 * d, v.inputDiffusion2 * d, v.inputDiffusion2 * d };
+        const float coefs[4] { v.inputDiffusion1 * d, v.inputDiffusion1 * d, v.inputDiffusion2 * d, v.inputDiffusion2 * d };
+        for (size_t i = 0; i < 4; ++i)
+            inputCoefs[i].target = coefs[i];
 
         bandCoef = 1.0f - (float) std::exp (-2.0 * pi * std::clamp ((double) v.inputLowpassHz, 100.0, 0.45 * fs) / fs);
         lowG  = (float) std::tan (pi * std::clamp ((double) settings.crossoverHz, 10.0, 0.45 * fs) / fs);
@@ -360,23 +377,58 @@ private:
         {
             const auto g = gains (settings, branchLength (b, targetSize * rateScale), fs);
             auto& br = branches[(size_t) b];
-            br.gMid = (float) g.mid;
-            br.gLow = (float) g.low;
-            br.gHigh = (float) g.high;
-            br.kHigh = g.mid > 0.0 ? (float) std::min (1.0, g.high / g.mid) : 0.0f;
+            br.gMidT = (float) g.mid;
+            br.gLowT = (float) g.low;
+            br.gHighT = (float) g.high;
+            br.kHighT = g.mid > 0.0 ? (float) std::min (1.0, g.high / g.mid) : 0.0f;
             loopGain *= g.mid;
         }
 
         modIncrement = std::clamp ((double) settings.modRateHz, 0.01, 20.0) / fs;
-        excursion = 24.0f * rateScale * std::clamp (settings.modDepth, 0.0f, 1.0f);
+        excursion.target = 24.0f * rateScale * std::clamp (settings.modDepth, 0.0f, 1.0f);
 
         shimmerHpCoef = 1.0f - (float) std::exp (-2.0 * pi * 400.0 / fs);
         // The two voices share the loop's headroom: their gains sum to at
         // most what one voice at full amount gets.
         const float a1 = std::clamp (settings.shimmer, 0.0f, 1.0f), a2 = std::clamp (settings.shimmer2, 0.0f, 1.0f);
         const float budget = shimmerHeadroom * (float) (1.0 - loopGain) / std::max (1.0f, a1 + a2);
-        shimmerGain = a1 * budget;
-        shimmerGain2 = a2 * budget;
+        // Gliding with the loop's gains at the same rate: the budget is a
+        // concave function of the gain, so the glide stays under it.
+        shimmerGain.target = a1 * budget;
+        shimmerGain2.target = a2 * budget;
+    }
+
+    void glideCoefficients() noexcept
+    {
+        const float c = glideCoef;
+        for (auto& br : branches)
+        {
+            br.gMid  += c * (br.gMidT  - br.gMid);
+            br.gLow  += c * (br.gLowT  - br.gLow);
+            br.gHigh += c * (br.gHighT - br.gHigh);
+            br.kHigh += c * (br.kHighT - br.kHigh);
+        }
+        for (auto& k : inputCoefs)
+            k.next (c);
+        excursion.next (c);
+        shimmerGain.next (c);
+        shimmerGain2.next (c);
+    }
+
+    void snapCoefficients() noexcept
+    {
+        for (auto& br : branches)
+        {
+            br.gMid = br.gMidT;
+            br.gLow = br.gLowT;
+            br.gHigh = br.gHighT;
+            br.kHigh = br.kHighT;
+        }
+        for (auto& k : inputCoefs)
+            k.snap();
+        excursion.snap();
+        shimmerGain.snap();
+        shimmerGain2.snap();
     }
 
     float absorb (Branch& br, float x, int /*branch*/, float freeze) noexcept
@@ -456,14 +508,28 @@ private:
     std::array<Branch, 2> branches;
     SplicePitchShifter shifter, shifter2;
 
-    std::array<float, 4> inputCoefs {};
+    /** A coefficient gliding to its target (one pole, glideCoef). */
+    struct Glide
+    {
+        float current = 0.0f, target = 0.0f;
+        void next (float c) noexcept { current += c * (target - current); }
+        void snap() noexcept         { current = target; }
+    };
+
+    std::array<Glide, 4> inputCoefs {};
     float bandCoef = 0.5f, bandState = 0.0f;
     float lowG = 0.03f, highG = 0.3f;
-    float currentSize = 1.0f, targetSize = 1.0f, sizeCoef = 0.001f;
+    /** A Size glide moves a line's read point by at most this many samples
+        per sample: a pitch bend of about 4 semitones at most, not a chirp. */
+    static constexpr float maxReadSpeed = 0.25f;
+
+    float currentSize = 1.0f, targetSize = 1.0f, sizeCoef = 0.001f, maxSizeStep = 1.0e-5f;
     float freezeAmount = 0.0f, freezeStep = 0.001f;
     double lfoPhase = 0.0, modIncrement = 0.0;
-    float excursion = 0.0f, driftCoef = 0.001f;
-    float shimmerGain = 0.0f, shimmerGain2 = 0.0f, shimmerHpCoef = 0.05f, shimmerHpState = 0.0f, shimmerFeed = 0.0f;
+    Glide excursion;
+    float driftCoef = 0.001f, glideCoef = 0.001f;
+    Glide shimmerGain, shimmerGain2;
+    float shimmerHpCoef = 0.05f, shimmerHpState = 0.0f, shimmerFeed = 0.0f;
     std::uint32_t rng = 0x5eed5eedu;
 };
 
