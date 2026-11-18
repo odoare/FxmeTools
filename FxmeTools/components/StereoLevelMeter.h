@@ -49,12 +49,15 @@ public:
         repaint();
     }
 
-    /** Channel `ch` (0 or 1): its RMS and its peak since the last update, in dBFS. */
+    /** Channel `ch` (0 or 1): its RMS and its peak since the last update, in
+        dBFS. Repaints only when what is drawn moves (by 0.1 dB, inside the
+        range): a silent or steady meter costs nothing. */
     void update (int ch, float rmsDb, float peakDbIn)
     {
         if (! juce::isPositiveAndBelow (ch, 2))
             return;
         auto& c = chans[(size_t) ch];
+        const float heldBefore = c.held, rmsBefore = c.rms;
         const auto now = juce::Time::getMillisecondCounter();
         if (peakDbIn >= c.held || now - c.heldTime > 1000)
         {
@@ -62,7 +65,13 @@ public:
             c.heldTime = now;
         }
         c.rms = rmsDb;
-        repaint();
+
+        auto moved = [this] (float a, float b)
+        {
+            return std::abs (juce::jlimit (minDb, maxDb, a) - juce::jlimit (minDb, maxDb, b)) > 0.1f;
+        };
+        if (moved (c.rms, rmsBefore) || moved (c.held, heldBefore))
+            repaint();
     }
 
     void paint (juce::Graphics& g) override
