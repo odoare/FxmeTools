@@ -149,7 +149,7 @@ public:
             return;
 
         auto area = getLocalBounds().reduced (12, 6);
-        area.removeFromRight (kVersionWidth + 8);   // leave the version alone
+        area.removeFromRight (versionWidth() + 8);   // leave the version alone
 
         // The strip is exactly as wide as the controls plus their gaps, so
         // filling it left to right lands the last one against the version.
@@ -219,7 +219,7 @@ public:
         {
             const juce::Font font (juce::FontOptions (12.0f));
             g.setFont (font);
-            auto versionArea = area.removeFromRight (kVersionWidth);
+            auto versionArea = area.removeFromRight (versionWidth());
 
             const juce::String company ("FX-Mechanics");
             const int companyW = juce::GlyphArrangement::getStringWidthInt (font, company) + 1;
@@ -297,7 +297,16 @@ private:
         return logoHit.contains (p) || decorationHit.contains (p);
     }
 
-    static constexpr int kVersionWidth   = 150;
+    static constexpr int kVersionWidth   = 150;   // at least; more for a long version
+
+    /** The width of "v<version>  -  FX-Mechanics": kVersionWidth, or what a
+        longer version (a dev build's "0.1.0-3-gabc1234") needs. */
+    int versionWidth() const
+    {
+        const juce::Font font (juce::FontOptions (12.0f));
+        const int needed = juce::GlyphArrangement::getStringWidthInt (font, "v" + version + "  -  FX-Mechanics") + 6;
+        return juce::jmax (kVersionWidth, needed);
+    }
     static constexpr int kControlGap     = 6;
     static constexpr int kControlHeight  = 28;
     static constexpr int kDecorationGap  = 12;
