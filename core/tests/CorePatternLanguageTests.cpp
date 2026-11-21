@@ -953,6 +953,61 @@ TEST_CASE("draws: same seed, same pass; different seeds differ; frequencies")
 }
 
 //==============================================================================
+// The chord's tones: < >
+
+TEST_CASE("chord tones: digits between < and > count the host's chord, from its root")
+{
+    Context c;
+    c.toneCount = 4;                                   // say C E G D (an add9)
+    const auto p = run ("1 <1 2 3 4 5> \"3\" <2> 2", 3, c);
+    REQUIRE (p.events.size() == 9);
+    std::vector<ScaleKind> kinds;
+    for (std::size_t i = 0; i < p.events.size(); ++i)
+        kinds.push_back (noteOf (p, static_cast<int> (i)).scale);
+    CHECK (kinds == std::vector<ScaleKind> { ScaleKind::Chord, ScaleKind::Tones, ScaleKind::Tones, ScaleKind::Tones, ScaleKind::Tones,
+                                             ScaleKind::Tones, ScaleKind::Key, ScaleKind::Tones, ScaleKind::Chord });
+    CHECK (degrees (p) == std::vector<int> { 0, 0, 1, 2, 3, 4, 2, 1, 1 });   // 5 past 4 tones: the host goes up an octave
+
+    // + and - step through the tones (cycling within them), ? draws among them.
+    const auto steps = run ("<1 + + + + - ->", 3, c);
+    CHECK (degrees (steps) == std::vector<int> { 0, 1, 2, 3, 0, 3, 2 });
+    for (std::uint64_t seed = 1; seed < 64; ++seed)
+    {
+        Context r = c;
+        r.seed = seed;
+        const auto drawn = run (build ("<? ? ? ?>"), r);
+        for (std::size_t i = 0; i < drawn.events.size(); ++i)
+        {
+            CHECK (deg (drawn, static_cast<int> (i)) < 4);
+            CHECK (noteOf (drawn, static_cast<int> (i)).scale == ScaleKind::Tones);
+        }
+    }
+
+    // A chord inside, the prefixes as anywhere; inside quotes, the tones win until '>'.
+    const auto mixed = run ("<o+{13} #2> \"1 <3> 5\"", 3, c);
+    REQUIRE (mixed.events.size() == 5);
+    CHECK (noteOf (mixed, 0, 1).scale == ScaleKind::Tones);
+    CHECK (noteOf (mixed, 0, 1).degree == 2);
+    CHECK (noteOf (mixed, 1).accidental == 1);
+    CHECK (noteOf (mixed, 2).scale == ScaleKind::Key);
+    CHECK (noteOf (mixed, 3).scale == ScaleKind::Tones);
+    CHECK (noteOf (mixed, 4).scale == ScaleKind::Key);
+}
+
+TEST_CASE("chord tones: a host without tones (TeAr) reads < > as the chord scale; syntax 2 has none")
+{
+    const auto p = run ("<1 2 3> 4");                 // toneCount 0
+    for (std::size_t i = 0; i < p.events.size(); ++i)
+        CHECK (noteOf (p, static_cast<int> (i)).scale == ScaleKind::Chord);
+    CHECK (degrees (p) == std::vector<int> { 0, 1, 2, 3 });
+    CHECK (degrees (run ("<1 + +>")) == std::vector<int> { 0, 1, 2 });   // cycling in the chord scale's 7
+
+    CHECK (hasError (build ("1 <2 3"), 2, "'<' without its '>'"));
+    CHECK (hasError (build ("1 2> 3"), 3, "'>' without its '<'"));
+    CHECK (hasError (build ("<1 <2> 3>"), 3, "'<' inside '<…>'"));
+}
+
+//==============================================================================
 // Errors
 
 TEST_CASE("errors: one per message of section 11, with its position")

@@ -89,7 +89,10 @@ struct Info
 };
 
 //==============================================================================
-enum class ScaleKind { Chord, Key };   ///< digits; digits between double quotes
+/** What a note's degree counts in: the chord scale (digits), the key scale (digits between double
+    quotes), or the chord's own tones (3: digits between `<` and `>`, the host's chord in order, from its
+    root; a host that gives no tones, `Context::toneCount` 0, gets Chord instead). */
+enum class ScaleKind { Chord, Key, Tones };
 
 /** One note of an event, as written: the host maps it through its scale. */
 struct Note
@@ -151,6 +154,7 @@ struct Context
     int chordSize = 7;                 ///< degrees of the chord scale: `+` `-` cycle within them, `?` draws among them
     int keySize = 7;                   ///< the same for the key scale (between double quotes)
     std::uint32_t chordPresent = ~0u;  ///< bit d: degree d of the chord scale is present (`?` draws only those); all by default
+    int toneCount = 0;                 ///< the chord's tones, for `<…>` (3): `+` `-` cycle within them, `?` draws among them; 0: the host has none, `<…>` reads as the chord scale (TeAr)
     int baseOctave = 4;                ///< the octave a pass starts at (TeAr: from the pressed note)
     float hostVelocity = 96.0f / 127.0f;   ///< what `v+` `v-` `V+` `V-` step from when the text set no velocity (TeAr: the played note's)
 };

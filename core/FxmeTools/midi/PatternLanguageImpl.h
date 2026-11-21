@@ -123,7 +123,7 @@ struct Prefix
     int pos = 0;
 };
 
-enum class Core { None, Step, Chord, Group, Variation, Generator, Quote };
+enum class Core { None, Step, Chord, Group, Variation, Generator, Quote, ToneOpen, ToneClose };
 enum class Cmd { Degree, Same, Next, Prev, Random, Rest, Hold, Hit };
 
 inline bool isPitchedCmd (Cmd c) noexcept
@@ -196,6 +196,8 @@ public:
         parseSequence (out.items, 0, 0);
         if (syn3 && quoteOpen >= 0)
             error (quoteOpen, "unbalanced '\"'");
+        if (syn3 && toneOpen >= 0)
+            error (toneOpen, "'<' without its '>'");
         if (syn3 && ! out.items.empty() && out.items.back().link != 0)
             warn (out.items.back().linkPos, std::string ("nothing after '") + out.items.back().link + "': ignored (no link across passes)");
     }
@@ -207,6 +209,7 @@ private:
     int at = 0;
     int depth = 0;
     int quoteOpen = -1;
+    int toneOpen = -1;                 // where a `<` opened chord tones, -1: none open
     bool seen = false;                 // a token other than a `let` line was read
 
     int size() const noexcept { return static_cast<int> (text.size()); }
@@ -266,7 +269,7 @@ private:
     bool isCoreStart (char c) const noexcept
     {
         if (isStepStart (c) || c == '(' || c == '"') return true;
-        return syn3 && (c == '{' || c == '[' || c == 'e' || c == 'n');
+        return syn3 && (c == '{' || c == '[' || c == 'e' || c == 'n' || c == '<' || c == '>');
     }
 
     //--------------------------------------------------------------------------
@@ -738,6 +741,19 @@ private:
             it.end = at;
             return;
         }
+        if (syn3 && (c == '<' || c == '>'))
+        {
+            // The chord's own tones (3): `<1 2 3>` its root, its second tone, its third.
+            if (c == '<' && toneOpen >= 0)
+                error (at, "'<' inside '<…>'");
+            else if (c == '>' && toneOpen < 0)
+                error (at, "'>' without its '<'");
+            toneOpen = c == '<' ? at : -1;
+            it.core = c == '<' ? Core::ToneOpen : Core::ToneClose;
+            ++at;
+            it.end = at;
+            return;
+        }
         if (c == '(') { parseGroup (it, true); }
         else if (c == '[') { parseVariation (it); }
         else if (c == '{') { parseChord (it); }
@@ -1030,6 +1046,8 @@ private:
                 break;
             }
             case Core::Quote:
+            case Core::ToneOpen:
+            case Core::ToneClose:
             case Core::None:
                 break;
         }
@@ -1102,8 +1120,13 @@ private:
     double noteValue = 0.25;
     int lastDegree = 0;
     bool keyScale = false;
+    bool tones = false;                // between `<` and `>`
 
     Pending pend;
+
+    // The chord's tones count only where the host gives them; elsewhere (TeAr) `<…>` is ignored.
+    bool inTones() const noexcept { return tones && cx.toneCount > 0; }
+    ScaleKind scaleNow() const noexcept { return inTones() ? ScaleKind::Tones : keyScale ? ScaleKind::Key : ScaleKind::Chord; }
 
     double now = 0.0;
     bool tiedRun = true;               // no step but tied holds so far
@@ -1236,6 +1259,8 @@ private:
     //--------------------------------------------------------------------------
     int randomDegree() noexcept
     {
+        if (inTones())
+            return pick (cx.toneCount);
         if (keyScale)
         {
             if (cx.keySize <= 0) return -1;
@@ -1256,7 +1281,7 @@ private:
     // The degree a pitched command names now; -1: none.
     int degreeFor (Cmd cmd, int degree) noexcept
     {
-        const int size = std::max (1, keyScale ? cx.keySize : cx.chordSize);
+        const int size = std::max (1, inTones() ? cx.toneCount : keyScale ? cx.keySize : cx.chordSize);
         switch (cmd)
         {
             case Cmd::Degree: return degree;
@@ -1364,7 +1389,7 @@ private:
         if (act == Act::Notes)
         {
             Note n;
-            n.scale = keyScale ? ScaleKind::Key : ScaleKind::Chord;
+            n.scale = scaleNow();
             n.degree = deg;
             n.octave = pend.octave >= 0 ? pend.octave : octave;
             n.accidental = pend.accidental;
@@ -1394,7 +1419,7 @@ private:
             const int deg = degreeFor (cn.cmd, cn.degree);
             if (deg < 0) continue;
             Note n;
-            n.scale = keyScale ? ScaleKind::Key : ScaleKind::Chord;
+            n.scale = scaleNow();
             n.degree = deg;
             n.octave = oct;
             n.accidental = acc;
@@ -1633,6 +1658,12 @@ private:
                 break;
             case Core::Quote:
                 keyScale = ! keyScale;
+                break;
+            case Core::ToneOpen:
+                tones = true;
+                break;
+            case Core::ToneClose:
+                tones = false;
                 break;
             case Core::None:
                 break;

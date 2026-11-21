@@ -74,6 +74,7 @@ struct ParameterInfo
     float min = 0.0f, max = 1.0f, def = 0.5f;
     bool advanced = false;           ///< folded in a window
     std::vector<std::string> choices;
+    std::string help;                ///< what it does, a sentence or two: a window's tooltip
 };
 
 using Values = std::map<std::string, float>;   ///< by parameter id; a missing one takes its default
@@ -239,23 +240,40 @@ public:
     const std::vector<ParameterInfo>& parameters() const override
     {
         static const std::vector<ParameterInfo> list {
-            { "density", "Density", 0.0f, 1.0f, 0.5f, false, {} },
-            { "span", "Span", 0.5f, 2.5f, 1.2f, false, {} },
-            { "leaps", "Leaps", 0.0f, 1.0f, 0.3f, false, {} },
-            { "consonance", "Consonance", 0.0f, 1.0f, 0.7f, false, {} },
-            { "repetition", "Repetition", 0.0f, 1.0f, 0.6f, false, {} },
-            { "register", "Register", -12.0f, 12.0f, 0.0f, false, {} },
-            { "syncopation", "Syncopation", 0.0f, 1.0f, 0.15f, true, {} },
-            { "colour", "Colour", 0.0f, 1.0f, 0.2f, true, {} },
-            { "chromatic", "Chromatic", 0.0f, 1.0f, 0.0f, true, {} },
-            { "legato", "Legato", 0.0f, 1.0f, 0.0f, true, {} },
-            { "slide", "Slide", 0.0f, 1.0f, 0.0f, true, {} },
-            { "dynamics", "Dynamics", 0.0f, 1.0f, 0.5f, true, {} },
-            { "passing", "Passing in key", 0.0f, 1.0f, 0.0f, true, {} },
-            { "contour", "Contour", 0.0f, 4.0f, 0.0f, true, { "arch", "rise", "fall", "wave", "free" } },
-            { "form", "Form", 0.0f, 4.0f, 0.0f, true, { "auto", "sentence", "period", "aaba", "free" } },
-            { "bars", "Phrase", 0.0f, 4.0f, 0.0f, true, { "auto", "1", "2", "4", "8" } },
-            { "grid", "Grid", 0.0f, 1.0f, 0.0f, true, { "8", "16" } },
+            { "density", "Density", 0.0f, 1.0f, 0.5f, false, {},
+              "How many notes per bar: about one at 0, one on every step at 1." },
+            { "span", "Span", 0.5f, 2.5f, 1.2f, false, {},
+              "How many octaves the line may cover." },
+            { "leaps", "Leaps", 0.0f, 1.0f, 0.3f, false, {},
+              "How the line moves: by step at 0; leaps are welcome at 1." },
+            { "consonance", "Consonance", 0.0f, 1.0f, 0.7f, false, {},
+              "How often a note is a chord tone rather than a passing or approach note. Chord tones fall on the strong beats." },
+            { "repetition", "Repetition", 0.0f, 1.0f, 0.6f, false, {},
+              "How much the motif comes back: through-composed at 0; at 1 the units repeat and the motif insists." },
+            { "register", "Register", -12.0f, 12.0f, 0.0f, false, {},
+              "Moves the line's centre up or down, in semitones, inside the player's octaves." },
+            { "syncopation", "Syncopation", 0.0f, 1.0f, 0.15f, true, {},
+              "Moves the notes toward the weak places of the bar." },
+            { "colour", "Colour", 0.0f, 1.0f, 0.2f, true, {},
+              "Now and then a tension (a note outside the chord) on a strong beat." },
+            { "chromatic", "Chromatic", 0.0f, 1.0f, 0.0f, true, {},
+              "Chance that an approach note comes a semitone from its target, with a sharp or a flat." },
+            { "legato", "Legato", 0.0f, 1.0f, 0.0f, true, {},
+              "Chance that a note is tied to the next one (^)." },
+            { "slide", "Slide", 0.0f, 1.0f, 0.0f, true, {},
+              "Chance that a note slides into the next one (~)." },
+            { "dynamics", "Dynamics", 0.0f, 1.0f, 0.5f, true, {},
+              "How much the velocities move: accents of the bar, the line's climbs, a phrase's first and last notes. At 0 none is written: the player's velocity applies." },
+            { "passing", "Passing in key", 0.0f, 1.0f, 0.0f, true, {},
+              "Chance that a passing note comes from the key's scale instead of the chord's: over a borrowed chord, the line stays in the key." },
+            { "contour", "Contour", 0.0f, 4.0f, 0.0f, true, { "arch", "rise", "fall", "wave", "free" },
+              "The line's shape over a phrase: arch, rise, fall, wave, or free." },
+            { "form", "Form", 0.0f, 4.0f, 0.0f, true, { "auto", "sentence", "period", "aaba", "free" },
+              "How a phrase is built from its units: sentence (an idea, its sequence, a continuation, a cadence), period (a, b, a, cadence), aaba, free (all new), or auto (one of the first three, drawn)." },
+            { "bars", "Phrase", 0.0f, 4.0f, 0.0f, true, { "auto", "1", "2", "4", "8" },
+              "A phrase's length in bars (auto: 4)." },
+            { "grid", "Grid", 0.0f, 1.0f, 0.0f, true, { "8", "16" },
+              "The rhythm's step: eighths or sixteenths." },
         };
         return list;
     }

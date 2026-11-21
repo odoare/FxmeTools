@@ -11,6 +11,21 @@ project after a break.
 
 ---
 
+## `melody::ParameterInfo::help` (2026-11-20)
+
+- A sentence or two on what a maker's setting does, for a window's tooltip; `phrase` fills it for
+  each of its settings. Added at the end of the struct: brace initializers that stop before it compile
+  unchanged. Otomatotamoto's melody window and `tear` show it.
+
+## Pattern language: `< … >`, the chord's own tones (2026-11-21)
+
+- Syntax 3: digits between `<` and `>` count the host's chord, from its root (`<1 2 3 4>`: root,
+  its next tone…; past the last, an octave up). `+` `-` cycle within the tones, `?` draws among them.
+  Balanced, not nested; errors `'<' without its '>'`, `'>' without its '<'`, `'<' inside '<…>'`.
+- `ScaleKind::Tones` (new), `Context::toneCount` (new, 0 by default). **A host that leaves
+  `toneCount` at 0 (TeAr) gets `ScaleKind::Chord` notes: the brackets are ignored**, nothing to change.
+- Otomatotamoto gives the tones (its `/oto/harmony/chord`); its `doc/pattern-language.md` §6.3.
+
 ## New: `Arpeggiator::setLinks (bool)` (2026-11-16)
 
 Additive. Links `~` and `^` play by default, as before. `setLinks (false)` ignores them: `1~3`
